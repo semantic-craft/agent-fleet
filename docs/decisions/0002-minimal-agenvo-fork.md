@@ -17,7 +17,7 @@ fork 上游，只做三件事：
 fork 里不放部署记录、个人值或本仓库的文档。
 
 ## 去掉 fork 的条件
-- `apps/dsh` 不含个人值，可以作为 DSH connector 提给上游 Xuanwo/agenvo（连同 `dsh` kind）。它依赖桌面插件提供的 native bridge；上游若接受，需要把 bridge 的契约写进上游文档，或 DSH 官方提供等价的本机附着入口。
+- `apps/dsh` 不含个人值，可以作为 DSH connector 提给上游 Xuanwo/agenvo（连同 `dsh` kind）。它依赖桌面插件提供的 native bridge；bridge 的契约已写进 #53 的上游设计文档；DSH 官方若提供等价的本机附着入口，可以换掉 bridge。
 - ZCode 仍只有我们的接收端契约，不提交上游；上游支持外部或插件式的 connector kind 后，把 `apps/dispatch` 移成独立包。
 - 两部分都离开 fork 时，删除 fork。
 
@@ -31,4 +31,4 @@ fork 里不放部署记录、个人值或本仓库的文档。
 - `semantic-craft/agenvo` 是上游的**公开 GitHub fork**。`main` 只用来镜像上游，通过 GitHub 的 "Sync fork" 同步；我们的改动全部在 `xw/dispatch-connectors` 分支上，结构始终是"某个上游提交加上我们的补丁"，不在 `main` 上提交。
 - 跟进上游靠 `fleet.mjs upstream --try-merge`，每周自动跑（见 [maintenance](../maintenance.md)）。
 - 早期带个人信息的提交历史保存在私有仓库 `agenvo-history`，不再使用。
-- 下一步：把 `apps/dsh` 提给上游。上游收下后，DSH 这部分就不再需要 fork。
+- 2026-10-19 已把 `apps/dsh`（连同 `dsh` kind、bridge 契约与安装说明、用户指南和隔离测试）提给上游：[Xuanwo/agenvo#53](https://github.com/Xuanwo/agenvo/pull/53)，分支 `semantic-craft/agenvo:dsh-connector`。评审意见在该 PR 里跟进；合并后从 `xw/dispatch-connectors` 删掉 DSH 部分，fork 只剩 ZCode。
