@@ -23,7 +23,7 @@
 
 ## 各批次清单（主力 Mac，2026-10-19 核对）
 
-触发条件满足的当天，按下表逐批执行退役步骤。部署副本与状态目录不在 `~/Projects`，一并移进同一个 `_archive` 子目录，不删除。
+触发条件满足的当天，按下表逐批执行退役步骤。部署副本与状态目录不在 `~/Projects`，与仓库目录一起删除（2026-10-19 起不再归档，见下方执行记录）。
 
 | 批次 | 触发 | launchd label | 部署副本与状态目录 | `~/Projects` 目录 |
 | --- | --- | --- | --- | --- |
@@ -38,10 +38,12 @@
 
 2026-10-19（续）：Hermes 已不用，`hermes-dsh-dispatch` 退役。第二台 Mac 的 DSH 桌面版改装 dsh-grokbot-dispatch（`/v1/jobs` 只绑本机回环），该机 DSH 实例改附着 `~/.local/state/dsh-grokbot-dispatch/native.sock` 并在 relay 重新批准，`fleet.mjs check --dispatch --instance <该实例>` 通过；那台的 checkout 与状态目录移到它自己的 `_archive/hermes-dsh-dispatch-20261019/`，Hermes 侧 key 已删；GitHub 仓库已归档。
 
+2026-10-19（再续）：用户决定退役路线一律删除、不留归档（“这些都是过去探索的错误路线”）。两台 Mac 上 `_archive/` 里的 dot-path、yobiru-grok、agent-fleet、hermes-dsh-dispatch、legacy-transport 目录，`agent-interop-private` checkout 及其 worktree，`~/.local/share/{dot-direct-project,agent-infra-lessons,zcode-dispatch}`、`~/.local/state/zcode-dispatch/dot-worktrees`、`_retired/` 里对应的 plist 全部删除。ZCode 接收端部署改由 `fleet.mjs release zcode` 负责。
+
 ## 退役步骤
 
 1. 在 [landscape](../landscape.md) 把状态改成"退役中"。
 2. 用 `launchctl bootout` 停掉服务，plist 移进 `~/Library/LaunchAgents/_retired/`。
 3. 跑一次 `fleet.mjs check`。
-4. 把目录移到 `~/Projects/_archive/<主题>-<YYYYMMDD>/`，并把这些仓库从每日维护任务里摘掉。
+4. 删除本地目录、部署副本、状态目录和 `_retired/` 里的 plist（先确认没有未推送的有用工作），并把这些仓库从每日维护任务里摘掉。不留 `_archive` 副本。
 5. 归档对应的 GitHub 仓库。
