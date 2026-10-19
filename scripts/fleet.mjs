@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// agent-fleet CLI: doctor | contexts [--apply] | launchd NAME | check [--dispatch] [--project P] [--instance ID --session SID]
+// agent-fleet CLI: doctor | contexts [--apply] | launchd NAME | check [--dispatch] [--project P] [--instance ID --session SID] | release agenvo|zcode [--sha SHA] [--rollback]
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -30,6 +30,8 @@ const { values: opt, positionals } = parseArgs({
     instance: { type: "string" },
     session: { type: "string" },
     config: { type: "string" },
+    sha: { type: "string" },
+    rollback: { type: "boolean" },
   },
 });
 const [command, arg] = positionals;
@@ -326,13 +328,13 @@ function upstream() {
     process.exitCode = 1;
     return;
   }
-  console.log(`READY: ${latestTag} merges cleanly and passes check + test in ${wt} (branch ${branch}).\nTo adopt: fast-forward xw/dispatch-connectors to ${branch}, push, redeploy the relay, rebuild and restart connectors, run fleet.mjs check --dispatch (see docs/maintenance.md).`);
+  console.log(`READY: ${latestTag} merges cleanly and passes check + test in ${wt} (branch ${branch}).\nTo adopt: fast-forward xw/dispatch-connectors to ${branch}, push, redeploy the relay, fleet.mjs release agenvo, run fleet.mjs check --dispatch (see docs/maintenance.md).`);
   process.exitCode = 1; // a pending upgrade needs attention, so the weekly job notifies
 }
 
-const commands = { doctor, contexts, launchd: () => launchd(arg), check, upstream };
+const commands = { doctor, contexts, launchd: () => launchd(arg), check, upstream, release: async () => (await import("./release.mjs")).release(arg, { cfg: config(), sha: opt.sha, rollback: opt.rollback }) };
 if (!commands[command]) {
-  console.error("usage: fleet.mjs doctor | contexts [--apply] | launchd NAME | check [--dispatch] [--project P] [--instance ID --session SID] | upstream [--try-merge]  [--machine NAME] [--config PATH]");
+  console.error("usage: fleet.mjs doctor | contexts [--apply] | launchd NAME | check [--dispatch] [--project P] [--instance ID --session SID] | upstream [--try-merge] | release agenvo|zcode [--sha SHA] [--rollback]  [--machine NAME] [--config PATH]");
   process.exit(2);
 }
 await commands[command]();
