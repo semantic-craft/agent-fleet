@@ -25,7 +25,7 @@ description: Hand work to another coding agent (DeepSeek Harness/DSH, ZCode, Cod
 
 - 用户点名了就用点名的。
 - 要在桌面 app 里看得见、能手动接手：选 DSH 或 ZCode 实例。ZCode 适合本机验证和 iOS 真机测试。
-- 要长时间运行、不怕 Helios 合盖：选第二台 Mac 上的实例。
+- 要长时间运行、不怕笔记本合盖：选第二台 Mac 上的实例。
 - 要多轮对话，或要用 claude、agy：选 Herdr 实例（`agent.start` 起 agent，`agent.prompt` 追加输入）。
 - 默认是 full access。用户没有要求时，不要降低权限，也不要替用户回答对方 agent 提出的业务决定问题。
 
