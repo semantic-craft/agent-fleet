@@ -42,6 +42,8 @@
 
 2026-10-19（再续二）：`agent-collab` 删除（本地、`~/.local/state/dot-hub/` 里的 Dot 任务工作副本、GitHub 仓库）；`lcu-dsh/` 先带提交历史拆成独立仓库 `semantic-craft/lcu-dsh`（`~/Projects/lcu-dsh`），线上 `~/.local/share/lcu-dsh/config.json` 的 `workspaceRoot` 改指向它并用线上 release 的加载器校验通过。GitHub 上 agent-interop-private、dot-relay、deepseek-grok-bridge、hermes-grokbot-api-bridge、tailmsg-adapters、grokbot-to-codex、hermes-dsh-dispatch、agent-dispatch-mesh、agent-scripts、pplx-zcode-handshake 已永久删除。
 
+2026-10-19（再续三）：dsh-grokbot-dispatch 与 zcode-dispatch 精简后并入本仓库 `adapters/dsh`、`adapters/zcode`；两台 Mac 的 DSH 改装 `agent-fleet-dsh`（socket `~/.local/state/agent-fleet-dsh/native.sock`，两个 dsh 实例在 relay 重新批准），主力 Mac 的 ZCode 接收端改从 `adapters/zcode` 发布；`fleet.mjs check --dispatch` 全部 OK 后，两个旧仓库（本地、状态目录、GitHub）删除。
+
 ## 退役步骤
 
 1. 在 [landscape](../landscape.md) 把状态改成"退役中"。
