@@ -19,17 +19,17 @@
 | `dsh-grokbot-dispatch` | DSH 桌面插件：`/v1/jobs` 接收端；支持 `source: agenvo`、严格 runner | 接收端 |
 | `zcode-dispatch` | ZCode 接收端与插件；线上通过 agent-interop 的部署脚本固定在指定提交 | 接收端 |
 | `hermes-dsh-dispatch` | 第二台 Mac 上的 DSH 插件（Hermes ↔ DSH），vendored dsh-grokbot-dispatch | 接收端 |
-| `agent-interop-private` / `-hub` / `-hub-lease` / `-prod` | 同一个私有仓库的四个 checkout：`hub_run` 受控派发（保留），以及 dot 网关、门铃和 reason-net（退役中或冻结）。合并方案见其 `docs/operations/AGENT_INFRA_MIGRATION.md` | 治理 + 退役中 |
+| `agent-interop-private` / `-hub` / `-hub-lease` / `-prod` | 同一个私有仓库的四个 checkout：`hub_run`（远程入口随 dot 网关退役，代码冻结）、dot 网关、门铃和 reason-net（退役中）。合并方案见其 `docs/operations/AGENT_INFRA_MIGRATION.md` | 治理 + 退役中 |
 | `agent-collab` | Issue/CLAIM/非作者评审合并的协作协议 | 治理 |
-| `bot-handbook` | Grok Bot 共用的经验与决策正本 | 治理（随 Grok 迁出再评估） |
-| `grokbot-box-services` | Grok Bot 那台机器上的第三方服务台账 | 治理（随 Grok 迁出再评估） |
-| `agent-bridges` | 后台 bridge 服务的部署源码（launchd 仍在用） | 退役中：Grok 直连 relay 后 |
+| `bot-handbook` | Grok Bot 共用的经验与决策正本 | 治理：Grok 机器停用后归档 |
+| `grokbot-box-services` | Grok Bot 那台机器上的第三方服务台账 | 治理：Grok 机器停用后归档 |
+| `agent-bridges` | 后台 bridge 服务的部署源码（launchd 仍在用） | 退役中：Grok 接入 relay 尝试之后（成败都退役） |
 | `dot-relay` | dot-relay 的开发 checkout（ChatGPT DOT 旧通路） | 退役中：ChatGPT 接上 Agenvo 当天 |
-| `codex-task-bridge` | Grok Bot → Codex Desktop 的桥（公开仓库 grokbot-to-codex） | 退役中：Grok 直连 relay 后 |
-| `deepseek-grok-bridge` | Grok Bot → DSH 的插件 | 退役中：Grok 直连 relay 后 |
-| `hermes-grokbot-api-bridge` | Grok Bot → Hermes 的桥 | 退役中：Grok 直连 relay 后 |
-| `tailmsg-adapters` | Yobiru/tailmsg 适配器 | 退役中：Grok 直连 relay 后 |
-| `dispatch-deploy-semantic-craft` | tailmsg 配置引用的接收端部署副本 | 退役中：Grok 直连 relay 后 |
+| `codex-task-bridge` | Grok Bot → Codex Desktop 的桥（公开仓库 grokbot-to-codex） | 退役中：Grok 接入 relay 尝试之后（成败都退役） |
+| `deepseek-grok-bridge` | Grok Bot → DSH 的插件 | 退役中：Grok 接入 relay 尝试之后（成败都退役） |
+| `hermes-grokbot-api-bridge` | Grok Bot → Hermes 的桥 | 退役中：Grok 接入 relay 尝试之后（成败都退役） |
+| `tailmsg-adapters` | Yobiru/tailmsg 适配器 | 退役中：Grok 接入 relay 尝试之后（成败都退役） |
+| `dispatch-deploy-semantic-craft` | tailmsg 配置引用的接收端部署副本 | 退役中：Grok 接入 relay 尝试之后（成败都退役） |
 | `agent-dispatch-mesh` | Yobiru 时代派发网的说明与恢复文档 | 已归档 |
 | `agent-scripts` | `cas.py`（Codex app-server 客户端）和 sonori 派发脚本，功能已被 codex connector 取代 | 已归档 |
 | `zcode-acp` | 第三方上游的克隆（william0wang/zcode-acp），没有引用 | 已归档 |

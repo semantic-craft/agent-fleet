@@ -68,3 +68,11 @@
 - 起因与后果：app 没开时，派活会立刻得到 503。这是预期行为，但手机端会频繁失败。
 - 修复与证据：`templates/launchd/desktop-agents-autostart.plist`。
 - 复发记录：待核实。
+
+### grok.com 拦截 Worker 获取它的 CIMD 文档
+
+**Cloudflare Worker 上的 relay 不要为 Grok 打开 CIMD；让它走动态注册，不行就放弃 Grok，不写绕过方案。**
+
+- 起因与后果：打开 `clientIdMetadataDocumentEnabled` 后，Grok 的授权请求返回 400。临时 Worker 探测 `https://grok.com/oauth/mcp-client.json` 得到的是 403 challenge 页。
+- 修复与证据：撤回改动，fork 保持上游原样；记入 [ADR-0006](docs/decisions/0006-coexistence-and-retirement.md)。
+- 复发记录：Seen 1x (2026-10-19)。

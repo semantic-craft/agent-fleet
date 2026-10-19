@@ -38,7 +38,7 @@ Codex 和 Herdr 的路径相同，只是原生方法不同（`thread/start` + `t
 
 | 旧机制 | 去向 |
 | --- | --- |
-| Yobiru/tailmsg、dot-relay、agent-interop 的 dot 网关与门铃、各种 Grok↔X bridge | 被 Agenvo 取代，稳定运行一周后退役（[ADR-0006](decisions/0006-coexistence-and-retirement.md)） |
-| `hub_run`（lease、锁定 head、独立评审） | 保留，用于需要可审计、锁定 head 的代码任务 |
+| Yobiru/tailmsg、dot-relay、agent-interop 的 dot 网关与门铃、各种 Grok↔X bridge | 被 Agenvo 取代，只保留一条通路（[ADR-0006](decisions/0006-coexistence-and-retirement.md)） |
+| `hub_run`（lease、锁定 head、独立评审） | 远程入口退役，代码冻结；需要审计的任务走 agent-collab 的 PR 评审 |
 | agent-collab（Issue/CLAIM/非作者评审合并） | 保留，是治理规则而不是传输方式 |
 | reason-net（agent 会话间互发消息） | 冻结；本架构不需要横向消息 |
