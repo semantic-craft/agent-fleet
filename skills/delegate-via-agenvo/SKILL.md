@@ -24,6 +24,7 @@ description: Hand work to another coding agent (DeepSeek Harness/DSH, ZCode, Cod
 ## 选哪个 agent
 
 - 用户点名了就用点名的。
+- 没点名时默认用 Codex。Codex 不可用（额度用尽、离线、报错）时改用 DSH：DSH 能力和 Codex 同级，能新建、追问、中断。
 - 要在桌面 app 里看得见、能手动接手：选 DSH 或 ZCode 实例。ZCode 适合本机验证和 iOS 真机测试。
 - 要长时间运行、不怕笔记本合盖：选第二台 Mac 上的实例。
 - 要多轮对话，或要用 agy、codex CLI：选 Herdr 实例（`agent.start` 起 agent，`agent.prompt` 追加输入）。不要在 Herdr 里起 claude，那里的 claude 有意不登录。读实例 `context` 里的首次信任目录处理和 `dsh headless` 用法。
