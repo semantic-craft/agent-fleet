@@ -7,12 +7,15 @@
 | 任务 | 读 |
 | --- | --- |
 | 任何改动前 | [docs/architecture.md](docs/architecture.md)、[lessons.md](lessons.md) |
+| 新 Mac 加入、重装 | [docs/new-mac.md](docs/new-mac.md) |
 | 接入新的 agent 运行时或新机器 | [docs/decisions/](docs/decisions/) 全部、[docs/runbook.md](docs/runbook.md) |
 | 判断某个 `~/Projects` 目录能否动 | [docs/landscape.md](docs/landscape.md) |
 | 改脚本 | [scripts/fleet.mjs](scripts/fleet.mjs)、[test/](test/)；`npm test` |
 | 例行维护、跟进上游、新增组件前 | [docs/maintenance.md](docs/maintenance.md) |
 
 ## 决策规则（按优先级）
+
+0. **DSH 桌面版的体验优先。** 任何取舍都不能让 DSH 退化：任务要在 DSH 桌面可见、可接手，派活、追问、中断都走它的原生会话。
 
 1. **先用上游。** 运行时若已有 Agenvo 官方 connector（Codex app-server、Herdr、Paseo、OpenCode、Amp、Lody），直接用，不写自己的。CLI 型 agent（claude、codex CLI、agy 等）一律放进 Herdr pane，不新增 connector。见 [ADR-0003](docs/decisions/0003-herdr-for-cli-agents.md)。
 2. **只为上游没有 connector、但用户要求在其桌面 app 里可见的运行时写 connector**。优先附着运行时自己的原生会话接口（DSH：桌面 Host 的 Typert 端点，经插件 native bridge），保留原生方法名；只有拿不到原生接口时才薄封装接收端 HTTP 契约（ZCode）。都不引入调度、队列或状态机。见 [ADR-0002](docs/decisions/0002-minimal-agenvo-fork.md)。

@@ -25,6 +25,7 @@ const { values: opt, positionals } = parseArgs({
     machine: { type: "string" },
     apply: { type: "boolean" },
     dispatch: { type: "boolean" },
+    "try-merge": { type: "boolean" },
     project: { type: "string", default: "agenvo" },
     instance: { type: "string" },
     session: { type: "string" },
@@ -293,11 +294,45 @@ function upstream() {
   console.log(`fork ${head}: ${ours} own commits, ${behind} upstream commits not merged; latest upstream release ${latestTag || "-"}`);
   console.log(touched ? `upstream changed files our patch touches (expect conflicts):\n${touched}` : "upstream has not touched the patched files since the merge base");
   console.log(upstreamKinds ? "upstream kind enum now looks extensible or includes dsh/zcode: review ADR-0002 exit condition" : "upstream still has a closed kind enum: keep the fork");
+  if (!opt["try-merge"] || !latestTag) return;
+  let merged = true;
+  try {
+    git("merge-base", "--is-ancestor", latestTag, "HEAD");
+  } catch {
+    merged = false;
+  }
+  if (merged) return console.log(`release ${latestTag} is already merged`);
+  // Rehearse the merge in a throwaway worktree; the live checkout and running connectors stay untouched.
+  const wt = join(homedir(), "Projects/.worktrees/agenvo", `upstream-${latestTag}`);
+  const branch = `xw/upstream-${latestTag}`;
+  if (existsSync(wt)) return console.log(`rehearsal already exists: ${wt} (branch ${branch}); review or remove it with git worktree remove`);
+  git("worktree", "add", "-q", "-b", branch, wt, "HEAD");
+  const inWt = (cmd, args) => execFileSync(cmd, args, { cwd: wt, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  try {
+    inWt("git", ["-c", "user.name=agent-fleet", "-c", "user.email=agent-fleet@localhost", "merge", "--no-edit", latestTag]);
+  } catch {
+    const conflicts = inWt("git", ["diff", "--name-only", "--diff-filter=U"]).trim();
+    inWt("git", ["merge", "--abort"]);
+    git("worktree", "remove", "--force", wt);
+    git("branch", "-D", branch);
+    console.log(`MERGE CONFLICT with ${latestTag}:\n${conflicts}\nresolve by hand: git merge ${latestTag} on a branch from xw/dispatch-connectors`);
+    process.exitCode = 1;
+    return;
+  }
+  try {
+    for (const [cmd, args] of [["npm", ["ci", "--no-audit", "--no-fund"]], ["npm", ["run", "check"]], ["npm", ["test"]]]) inWt(cmd, args);
+  } catch (e) {
+    console.log(`merged ${latestTag} cleanly but checks failed in ${wt}:\n${String(e.stdout ?? e.message).slice(-1500)}`);
+    process.exitCode = 1;
+    return;
+  }
+  console.log(`READY: ${latestTag} merges cleanly and passes check + test in ${wt} (branch ${branch}).\nTo adopt: fast-forward xw/dispatch-connectors to ${branch}, push, redeploy the relay, rebuild and restart connectors, run fleet.mjs check --dispatch (see docs/maintenance.md).`);
+  process.exitCode = 1; // a pending upgrade needs attention, so the weekly job notifies
 }
 
 const commands = { doctor, contexts, launchd: () => launchd(arg), check, upstream };
 if (!commands[command]) {
-  console.error("usage: fleet.mjs doctor | contexts [--apply] | launchd NAME | check [--dispatch] [--project P] [--instance ID --session SID] | upstream  [--machine NAME] [--config PATH]");
+  console.error("usage: fleet.mjs doctor | contexts [--apply] | launchd NAME | check [--dispatch] [--project P] [--instance ID --session SID] | upstream [--try-merge]  [--machine NAME] [--config PATH]");
   process.exit(2);
 }
 await commands[command]();

@@ -37,7 +37,7 @@ ChatGPT / dots / Grok Bot ──MCP(OAuth, HTTPS)──► Agenvo relay（Cloudf
 ## 从哪里开始
 
 - 想理解为什么这样设计：[docs/architecture.md](docs/architecture.md)、[docs/decisions/](docs/decisions/)。
-- 从零搭一台机器或一整套：[docs/runbook.md](docs/runbook.md)。
+- 新 Mac 加入（例如再添一台 Mac mini）：[docs/new-mac.md](docs/new-mac.md)；完整命令：[docs/runbook.md](docs/runbook.md)。
 - 想知道本机 `~/Projects` 里那么多相似目录各是什么：[docs/landscape.md](docs/landscape.md)。
 - 给 ChatGPT、dot、Grok、Codex 的现成提示词：[prompts/](prompts/)；让 agent 经 Agenvo 把活交给其他 agent 的技能：[skills/delegate-via-agenvo](skills/delegate-via-agenvo/SKILL.md)。
 - 例行维护和跟进上游：[docs/maintenance.md](docs/maintenance.md)。

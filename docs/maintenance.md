@@ -6,7 +6,7 @@
 | --- | --- | --- | --- |
 | 每次改配置、升级、重启电脑后 | 本机自检 | `node scripts/fleet.mjs doctor` | 按缺的服务或 connector 去 [runbook](runbook.md) 对应小节处理 |
 | 每周（launchd `fleet-weekly-check` 自动跑，周一 9:30，失败弹通知） | guard + doctor + 全链路检查 | `npm run guard && node scripts/fleet.mjs check --dispatch` | 先读输出里失败实例的原生状态，再修；修好后在 [lessons.md](../lessons.md) 记一条 |
-| 每周 | 跟进上游 | `node scripts/fleet.mjs upstream` | 有新的正式 release 就合并进 fork（见 agenvo 的 FORK.md），重新部署 relay，重启全部 connector，再跑 `check` |
+| 每周（同一个 launchd 任务自动跑） | 跟进上游：上游一出新 release，就在 `~/Projects/.worktrees/agenvo/upstream-<tag>` 里试合并，并跑 check 和 test | `node scripts/fleet.mjs upstream --try-merge` | 结果是 READY：把 `xw/dispatch-connectors` 快进到那个分支，推送，重新部署 relay，重建并重启 connector，跑 `check --dispatch`，再删掉 worktree。结果是冲突：只会落在 protocol 枚举和 releases 映射，手动合并 |
 | 上游支持外部 kind 时 | 去掉 fork | 按 [ADR-0002](decisions/0002-minimal-agenvo-fork.md) 的退出条件 | — |
 | 每个入口不再依赖旧组件时 | 退役旧组件 | 按 [ADR-0006](decisions/0006-coexistence-and-retirement.md) 的步骤 | — |
 

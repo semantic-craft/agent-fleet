@@ -25,3 +25,10 @@ fork 里不放部署记录、个人值或本仓库的文档。
 - 不在 connector 里加队列、重试或调度；原生服务或接收端负责执行，助手负责判断。
 - DSH 不再走 jobs 封装：原生接口能做到的，不另造任务模型。
 - 不为 CLI 型 agent 写 connector（见 ADR-0003）。
+
+## 补丁怎么放（2026-10-19 起）
+
+- `semantic-craft/agenvo` 是上游的**公开 GitHub fork**。`main` 只用来镜像上游，通过 GitHub 的 "Sync fork" 同步；我们的改动全部在 `xw/dispatch-connectors` 分支上，结构始终是"某个上游提交加上我们的补丁"，不在 `main` 上提交。
+- 跟进上游靠 `fleet.mjs upstream --try-merge`，每周自动跑（见 [maintenance](../maintenance.md)）。
+- 早期带个人信息的提交历史保存在私有仓库 `agenvo-history`，不再使用。
+- 下一步：把 `apps/dsh` 提给上游。上游收下后，DSH 这部分就不再需要 fork。
