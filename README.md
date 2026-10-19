@@ -31,7 +31,7 @@ ChatGPT / dots / Grok Bot ──MCP(OAuth, HTTPS)──► Agenvo relay（Cloudf
 | --- | --- | --- |
 | relay 与 Codex/Herdr connector | 上游 [Xuanwo/agenvo](https://github.com/Xuanwo/agenvo)，原样使用 | 记录部署方式与验收 |
 | `dsh` / `zcode` connector | agenvo 的小补丁分支（新增两个实例 kind、原生的 `apps/dsh` 和 ZCode 用的 `apps/dispatch`），见 [ADR-0002](docs/decisions/0002-minimal-agenvo-fork.md) | 固定分支、说明何时可以去掉 |
-| 桌面插件与接收端 | [dsh-grokbot-dispatch](https://github.com/semantic-craft/dsh-grokbot-dispatch)、hermes-dsh-dispatch（DSH 原生桥接）、[zcode-dispatch](https://github.com/semantic-craft/zcode-dispatch)（`source: "agenvo"`、`runner: "app"`） | 规定契约 |
+| 桌面插件与接收端 | [dsh-grokbot-dispatch](https://github.com/semantic-craft/dsh-grokbot-dispatch)（DSH 原生桥接，两台 Mac 都用它）、[zcode-dispatch](https://github.com/semantic-craft/zcode-dispatch)（`source: "agenvo"`、`runner: "app"`） | 规定契约 |
 | 机器清单、context、launchd、验收 | 本仓库 | [scripts/fleet.mjs](scripts/fleet.mjs)、[templates/](templates/)、[prompts/](prompts/) |
 
 ## 从哪里开始
