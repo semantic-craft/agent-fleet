@@ -85,3 +85,33 @@
 - 修复与证据：dsh-grokbot-dispatch #6 去掉 umask 写法并加回归测试；插件日志显示 04:09:54Z、04:12:06Z 两次重载。
 - 正确做法：桌面插件的开发与隔离验证用 `DSH_HOME`/`HOME` 临时目录下的 `dsh web`；要上生产时再让链接的 checkout 前进到 main，并在桌面空闲时重载或重启。
 - 复发记录：Seen 1x (2026-10-19)。
+
+### DSH 单条消息就可能超过 64 KiB
+
+**读 DSH 输出时 `session/follow` 用 `maxMessages: 1`，判断 turn/end 只看最后一条；遇到 `result_too_large` 等下一次轮询，不要按范围往回翻。**
+
+- 起因与后果：`check --dispatch` 用 `maxMessages: 6` 读快照，真实会话（含读文件的 tool 结果）超过 64 KiB，返回的错误被当成"还没完成"，轮次早已 completed，检查却等满 10 分钟报失败；实例 context 里写的"4–8"也会让助手踩同一个坑。
+- 修复与证据：`scripts/fleet.mjs` 的 `dshTurn`；两台 DSH 的 `check --dispatch` 均 turn/end completed；overlay 的 DSH context 改为 1–2 并写明超限时怎么办。
+- 复发记录：Seen 1x (2026-10-19)。
+
+### Herdr 的 runtime_unavailable 多半是 session 名错
+
+**Herdr 方法的 `session` 参数必须是 `session.list` 返回的名字（本机只有 `default`）；传错名字也报 `runtime_unavailable`。**
+
+- 起因与后果：验收时 ChatGPT 调 Herdr 得到 `runtime_unavailable`，报告据此判断"发现正常但执行不可用"；经 relay 用 `session: "default"` 实测 workspace.create、agent.start、agent.prompt 全部 accepted，传 `session: "agenvo"` 复现同一错误。
+- 修复与证据：overlay 的 Herdr context 写明 session 取值和完整流程。
+- 复发记录：Seen 1x (2026-10-19)。
+
+### 验收用的 Herdr claude 需要先登录
+
+**Herdr pane 里第一次起 `claude` 会停在选择登录方式；派活前在终端里跑一次 `claude` 完成登录。**
+
+- 起因与后果：agent.start 和 agent.prompt 都返回 accepted，但输入落在登录菜单上，不会产生回答。"输入已接受"不等于"原生轮次完成"。
+- 复发记录：Seen 1x (2026-10-19)，待用户登录后复验。
+
+### 从 DSH 的 shell 启动 Electron app 要去掉 ELECTRON_RUN_AS_NODE
+
+**DSH 本身是 Electron，它的 agent shell 继承了 `ELECTRON_RUN_AS_NODE=1`；用 `env -u ELECTRON_RUN_AS_NODE open -a <App>` 启动 ZCode 等 Electron app。**
+
+- 起因与后果：DSH 执行验收时 `open -a ZCode` 让 ZCode 以 Node 模式启动后立刻退出，看起来像 app 坏了。登录 shell 和 launchd 里没有这个变量。
+- 复发记录：Seen 1x (2026-10-19)。

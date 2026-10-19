@@ -24,8 +24,8 @@
    - 「让 <dsh 实例> 在 ~/Projects/agenvo 新建会话，只读地列出 apps/ 下的子目录名，等完成后把结果给我；再在同一个会话里追问一句"哪个是 DSH 的 connector"。」
    - 「让 <zcode 实例> 在 project=agenvo 里只读地说明 apps/dispatch/src/config.ts 中 fullAccess 的作用，等完成后给我结果。」
    - 「让 <第二台的 dsh 实例> 在 project=agenvo 里只读地读 FORK.md 第一行，等完成后给我结果。」
-   - 「让 <codex 实例> 在 ~/Projects/agenvo 新建一个 thread，只读地总结 FORK.md 的迁移方案表，给我结果。」（如果 Codex 报用量上限，如实记录。）
-   - 「在 <herdr 实例> 里用 agent.start 起一个 claude（带 --dangerously-skip-permissions），cwd 为 ~/Projects/agenvo，让它只读地列出 tests/ 下的文件；完成后再用 agent.prompt 追问一句"其中哪个和 dispatch 有关"，把两次回答都给我。」
+   - 「让 <codex 实例> 在 ~/Projects/agenvo 新建一个 thread，只读地用三句话总结 FORK.md 说明的补丁范围，给我结果。」（如果 Codex 报用量上限，如实记录。）
+   - 「在 <herdr 实例> 里（session 用 session.list 返回的名字，通常是 default）用 agent.start 起一个 claude（带 --dangerously-skip-permissions），cwd 为 ~/Projects/agenvo，让它只读地列出 tests/ 下的文件；完成后再用 agent.prompt 追问一句"其中哪个和 dispatch 有关"，把两次回答都给我。」
    每个任务截两张图：ChatGPT 里的结果；对应桌面 app 里新出现的会话。DSH（<主力 Mac> 和 <第二台 Mac>）的会话应出现在左栏 agenvo 工作区下，两轮对话都在；ZCode 的会话应带 agenvo 来源标记；Codex 的新 thread 应出现在 Codex Desktop 里；Herdr 的会话用终端 `herdr` 查看。<第二台的 dsh 实例> 的会话在 Mac mini 上，无法截图就写明，以 ChatGPT 返回的 completed 结果为准。
 5. 严格桌面模式：退出 ZCode app，在 ChatGPT 里再给 <zcode 实例> 派一个只读任务。预期立刻返回拒绝（HTTP 503 或 rejected），不会在后台无界面执行。截图后重新打开 ZCode。
 6. 事件与 dots：在 ChatGPT 里尝试创建一个 dot，让它订阅 Agenvo 的 runtime.changed 事件（DSH 的 turn/end、ZCode 的 job.finished）。然后给 <zcode 实例> 派一个只读小任务，观察 dot 是否在任务完成后自动收到事件并告诉我结果。如果 ChatGPT 账号里没有 dots 功能或找不到入口，写明并跳过。

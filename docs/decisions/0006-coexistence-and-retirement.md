@@ -19,6 +19,7 @@
 - Grok 在 grok.com/connectors 支持自定义远程 MCP 加 OAuth。它优先用 URL 形式的 client 身份（CIMD，`https://grok.com/oauth/mcp-client.json`）。
 - grok.com 的 Cloudflare 防护会拦截 Worker 发出的请求，返回 403 challenge 页。所以即使在 relay 上打开 CIMD，relay 也取不到这份元数据。因此不打开 CIMD，让 Grok 走动态注册（relay 默认支持）。
 - 如果 Grok 不接受动态注册，按上表直接放弃 Grok 派活，不写绕过方案。
+- 2026-10-19 实测：Grok 走动态注册成功，授权页显示 client Grok、回调 grok.com；search 与 ZCode 派活都通过。
 
 ## 各批次清单（主力 Mac，2026-10-19 核对）
 
@@ -30,6 +31,10 @@
 | B：Yobiru 与 Grok 桥 | grok.com 添加 relay 连接器的尝试结束（成败都算） | `dev.tailmsg`、`dev.tailmsg.codex-bridge`、`dev.tailmsg.agy-e2e`、`dev.codex.bridge`、`dev.dsh.bridge`、`dev.zcode.bridge` | `~/.tailmsg/` | `agent-bridges`、`codex-task-bridge`、`deepseek-grok-bridge`、`hermes-grokbot-api-bridge`、`tailmsg-adapters`、`dispatch-deploy-semantic-craft` |
 
 不在清单里、必须保留的：`dev.semantic-craft.dsh-grokbot-dispatch` 和 `dev.semantic-craft.zcode-dispatch` 是接收端（名字带 grokbot 也不退役）；`io.agenvo.connector.*` 与 `dev.xw.*` 属于本架构。第二台 Mac 上的 Grok 桥未核对，执行 B 批时在那台机器上按同样方法查 launchd。
+
+## 执行记录
+
+2026-10-19：ChatGPT 连接器验收通过，Grok 经动态注册接入 relay 成功（报告在 overlay 外的验收目录）。当天执行 A、B 两批：两台 Mac 的服务已停、plist 在 `_retired/`；目录与部署副本在 `~/Projects/_archive/dot-path-20261019/`、`yobiru-grok-20261019/`（第二台 Mac 的部署副本在它自己的 `_archive/legacy-transport-20261019/`）；GitHub 上 dot-relay、deepseek-grok-bridge、hermes-grokbot-api-bridge、tailmsg-adapters 已归档（grokbot-to-codex 此前已归档）。剩下 `bot-handbook`、`grokbot-box-services` 按表在 Grok 机器停用后归档。
 
 ## 退役步骤
 

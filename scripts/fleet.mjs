@@ -230,25 +230,49 @@ async function dshTurn(call, { root, project, sessionId }) {
     sessionId = created.nativeIds?.sessionId;
     if (!sessionId) return fail(JSON.stringify(created.error ?? created));
   }
-  const requestId = `fleet-check-${Date.now()}`;
-  const prompt = await call("session/prompt", { request: { requestId, sessionId, mode: "queue", content: [{ type: "text", text: READ_ONLY }] } });
-  if (prompt.error) return fail(JSON.stringify(prompt.error));
-  const deadline = Date.now() + 10 * 60_000;
-  while (Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, 10_000));
-    const snap = await call("session/follow", { request: { address: { kind: "session", sessionId }, maxMessages: 6 } });
-    const events = (snap.result?.records ?? []).map((r) => r.event);
-    const input = events.find((e) => e.type === "user/message" && e.data?.source?.rpcId === requestId);
-    const end = input && events.find((e) => e.type === "turn/end" && e.seq > input.seq);
-    if (!end) continue;
-    const text = events
-      .filter((e) => e.type === "assistant/message" && e.seq > input.seq)
-      .flatMap((e) => e.data?.message?.content ?? [])
-      .filter((c) => c.type === "text")
-      .map((c) => c.text)
-      .join(" ")
-      .replace(/\s+/g, " ");
-    return { ok: end.data?.reason?.kind === "completed", sessionId, text: `${end.data?.reason?.kind}: ${text.slice(0, 160)}` };
+  const address = { kind: "session", sessionId };
+  // A single DSH message (a tool result, a long reply) can exceed the 64 KiB result cap, so never read
+  // ranges: watch the last message for turn/end, then look up our input as the first message after `base`.
+  const tooLarge = (r) => r.error?.code === "result_too_large";
+  const tail = async () => {
+    const r = await call("session/follow", { request: { address, maxMessages: 1 } });
+    if (tooLarge(r)) return null;
+    if (r.error) throw new Error(JSON.stringify(r.error));
+    return r.result;
+  };
+  try {
+    const first = await tail();
+    if (!first) return fail("session/follow: last message exceeds 64 KiB before prompting");
+    const base = first.cursor;
+    const requestId = `fleet-check-${Date.now()}`;
+    const prompt = await call("session/prompt", { request: { requestId, sessionId, mode: "queue", content: [{ type: "text", text: READ_ONLY }] } });
+    if (prompt.error) return fail(JSON.stringify(prompt.error));
+    let input;
+    const deadline = Date.now() + 10 * 60_000;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 10_000));
+      const snap = await tail();
+      if (!snap || snap.cursor <= base) continue;
+      for (let before = base + 2; !input && before <= snap.cursor + 1; before++) {
+        const r = await call("session/page", { request: { address, beforeSeq: before, throughSeq: snap.cursor, maxMessages: 1 } });
+        if (tooLarge(r)) continue;
+        if (r.error) throw new Error(JSON.stringify(r.error));
+        input = (r.result.records ?? []).map((x) => x.event).find((e) => e.seq > base && e.type === "user/message" && e.data?.source?.rpcId === requestId);
+      }
+      const events = (snap.records ?? []).map((r) => r.event);
+      const end = input && events.find((e) => e.type === "turn/end" && e.seq > input.seq);
+      if (!end) continue;
+      const text = events
+        .filter((e) => e.type === "assistant/message")
+        .flatMap((e) => e.data?.message?.content ?? [])
+        .filter((c) => c.type === "text")
+        .map((c) => c.text)
+        .join(" ")
+        .replace(/\s+/g, " ");
+      return { ok: end.data?.reason?.kind === "completed", sessionId, text: `${end.data?.reason?.kind}: ${text.slice(0, 160)}` };
+    }
+  } catch (e) {
+    return fail(e.message);
   }
   return fail("no turn/end within 10 min");
 }
