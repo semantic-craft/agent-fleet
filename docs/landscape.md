@@ -1,6 +1,6 @@
 # `~/Projects` 里与 agent 协作相关的目录
 
-快照：2026-10-19。用来回答"这个目录能不能动、该去哪改"。状态的含义：
+快照：2026-10-19。各项何时退役按依赖判断，见 [ADR-0006](decisions/0006-coexistence-and-retirement.md)。用来回答"这个目录能不能动、该去哪改"。状态的含义：
 
 - **核心**：本架构的组成部分。
 - **接收端**：桌面 app 的原生适配层。
@@ -23,15 +23,15 @@
 | `agent-collab` | Issue/CLAIM/非作者评审合并的协作协议 | 治理 |
 | `bot-handbook` | Grok Bot 共用的经验与决策正本 | 治理（随 Grok 迁出再评估） |
 | `grokbot-box-services` | Grok Bot 那台机器上的第三方服务台账 | 治理（随 Grok 迁出再评估） |
-| `agent-bridges` | 后台 bridge 服务的部署源码（launchd 仍在用） | 退役中 |
-| `dot-relay` | dot-relay 的开发 checkout | 退役中 |
-| `codex-task-bridge` | Grok Bot → Codex Desktop 的桥（公开仓库 grokbot-to-codex） | 退役中（Grok 直连 relay 后） |
-| `deepseek-grok-bridge` | Grok Bot → DSH 的插件 | 退役中 |
-| `hermes-grokbot-api-bridge` | Grok Bot → Hermes 的桥 | 退役中 |
-| `tailmsg-adapters` | Yobiru/tailmsg 适配器 | 退役中 |
-| `dispatch-deploy-semantic-craft` | tailmsg 配置引用的接收端部署副本 | 退役中 |
-| `agent-dispatch-mesh` | Yobiru 时代派发网的说明与恢复文档 | 冻结（待归档） |
-| `agent-scripts` | `cas.py`（Codex app-server 客户端）和 sonori 派发脚本；`~/.codex/config.toml` 仍引用它 | 冻结（功能已被 codex connector 取代） |
+| `agent-bridges` | 后台 bridge 服务的部署源码（launchd 仍在用） | 退役中：Grok 直连 relay 后 |
+| `dot-relay` | dot-relay 的开发 checkout（ChatGPT DOT 旧通路） | 退役中：ChatGPT 接上 Agenvo 当天 |
+| `codex-task-bridge` | Grok Bot → Codex Desktop 的桥（公开仓库 grokbot-to-codex） | 退役中：Grok 直连 relay 后 |
+| `deepseek-grok-bridge` | Grok Bot → DSH 的插件 | 退役中：Grok 直连 relay 后 |
+| `hermes-grokbot-api-bridge` | Grok Bot → Hermes 的桥 | 退役中：Grok 直连 relay 后 |
+| `tailmsg-adapters` | Yobiru/tailmsg 适配器 | 退役中：Grok 直连 relay 后 |
+| `dispatch-deploy-semantic-craft` | tailmsg 配置引用的接收端部署副本 | 退役中：Grok 直连 relay 后 |
+| `agent-dispatch-mesh` | Yobiru 时代派发网的说明与恢复文档 | 已归档 |
+| `agent-scripts` | `cas.py`（Codex app-server 客户端）和 sonori 派发脚本，功能已被 codex connector 取代 | 已归档 |
 | `zcode-acp` | 第三方上游的克隆（william0wang/zcode-acp），没有引用 | 已归档 |
 | `pplx-zcode-handshake` | 一次性握手试验仓库，没有引用 | 已归档 |
 | `dsh-zlib`、`zcode-plugins` | Z-Library 图书技能和插件 | 无关 |
