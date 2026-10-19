@@ -102,12 +102,13 @@
 - 修复与证据：overlay 的 Herdr context 写明 session 取值和完整流程。
 - 复发记录：Seen 1x (2026-10-19)。
 
-### 验收用的 Herdr claude 需要先登录
+### Herdr 里不用 claude；agy 首次进目录要确认信任
 
-**Herdr pane 里第一次起 `claude` 会停在选择登录方式；派活前在终端里跑一次 `claude` 完成登录。**
+**这台机器的 claude CLI 有意不登录，Herdr 里起 agy 或 codex；agy 第一次进某个项目会停在信任提示（agent.get 为 blocked），用 `pane.run` 发空命令回车确认。**
 
-- 起因与后果：agent.start 和 agent.prompt 都返回 accepted，但输入落在登录菜单上，不会产生回答。"输入已接受"不等于"原生轮次完成"。
-- 复发记录：Seen 1x (2026-10-19)，待用户登录后复验。
+- 起因与后果：起 claude 后 agent.start、agent.prompt 都返回 accepted，输入却落在登录菜单上，不会有回答；agy 停在信任提示时 agent.prompt 返回 `agent_blocked`。"输入已接受"不等于"原生轮次完成"。
+- 修复与证据：经 relay 实测 agy 回车确认后 agent.prompt 得到正确回答；`dsh --profile headless` 在 pane 里也能跑完一轮（`__EXIT=0`）。规则写在 overlay 的 Herdr context。
+- 复发记录：Seen 1x (2026-10-19)。
 
 ### 从 DSH 的 shell 启动 Electron app 要去掉 ELECTRON_RUN_AS_NODE
 

@@ -4,7 +4,7 @@
 
 1. 人只面对一个入口：手机上的 ChatGPT（主力是 dots），也可以是 Grok Bot。
 2. 助手能看到每台电脑上的 agent 在做什么，并能新建任务、追加输入、读结果。
-3. 任务在用户平时用的桌面 app 里可见（Codex Desktop、DSH、ZCode），也可以在 Herdr 终端里运行（claude、codex CLI、agy）。
+3. 任务在用户平时用的桌面 app 里可见（Codex Desktop、DSH、ZCode），也可以在 Herdr 终端里运行（agy、codex CLI、dsh headless）。
 4. 电脑不开入站端口；合盖、断网、关闭聊天都不会中断已经在跑的 agent。
 
 ## 组件与职责

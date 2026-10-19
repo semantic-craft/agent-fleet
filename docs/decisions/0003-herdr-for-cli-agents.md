@@ -11,4 +11,4 @@ Herdr 以 headless 服务常驻（launchd 运行 `herdr server`）；用户需�
 - 这是唯一能对 DSH/ZCode 以外的 agent 远程追加输入的路径。
 
 ## 约定
-- full access 参数由调用方在 `agent.start` 的 `args` 里传，例如 `claude --dangerously-skip-permissions`、`codex --dangerously-bypass-approvals-and-sandbox`；写进实例 `context`，connector 不强制。
+- full access 参数由调用方在 `agent.start` 的 `args` 里传，例如 `agy --dangerously-skip-permissions`、`codex --dangerously-bypass-approvals-and-sandbox`；写进实例 `context`，connector 不强制。

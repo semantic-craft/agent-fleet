@@ -12,7 +12,7 @@
 ## 怎么选 agent
 - 先读实例的 context，那里写了机器、项目目录、默认权限和适合干什么。
 - 需要在桌面 app 里看到的任务：DSH 用 workspace/create + session/create + session/prompt（参数按实例 context 和 schema）；ZCode 用 jobs.create {project, text}；Codex 用 thread/start + turn/start。
-- 需要多轮追加输入的任务：DSH（同一个 sessionId 上继续 session/prompt）、Codex（同一个 thread 上继续 turn/start），或 Herdr（agent.start 起 claude/codex/agy，再用 agent.prompt）。
+- 需要多轮追加输入的任务：DSH（同一个 sessionId 上继续 session/prompt）、Codex（同一个 thread 上继续 turn/start），或 Herdr（agent.start 起 agy/codex，再用 agent.prompt；claude 在这里不登录，不要起）。
 - project 必须是 ~/Projects 下真实存在的目录名，不要编造；不确定就问我。
 
 ## 规矩

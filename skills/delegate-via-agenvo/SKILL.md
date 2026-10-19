@@ -1,6 +1,6 @@
 ---
 name: delegate-via-agenvo
-description: Hand work to another coding agent (DeepSeek Harness/DSH, ZCode, Codex, or claude/codex/agy in Herdr, on this or another Mac) through the Agenvo MCP server, then follow it to a verified result. Use when the user asks to have DSH/ZCode/another agent do something, to run work in parallel on another agent, or to check on or continue such work.
+description: Hand work to another coding agent (DeepSeek Harness/DSH, ZCode, Codex, or agy/codex/dsh headless in Herdr, on this or another Mac) through the Agenvo MCP server, then follow it to a verified result. Use when the user asks to have DSH/ZCode/another agent do something, to run work in parallel on another agent, or to check on or continue such work.
 ---
 
 # 经 Agenvo 把活交给其他 agent
@@ -26,7 +26,7 @@ description: Hand work to another coding agent (DeepSeek Harness/DSH, ZCode, Cod
 - 用户点名了就用点名的。
 - 要在桌面 app 里看得见、能手动接手：选 DSH 或 ZCode 实例。ZCode 适合本机验证和 iOS 真机测试。
 - 要长时间运行、不怕笔记本合盖：选第二台 Mac 上的实例。
-- 要多轮对话，或要用 claude、agy：选 Herdr 实例（`agent.start` 起 agent，`agent.prompt` 追加输入）。
+- 要多轮对话，或要用 agy、codex CLI：选 Herdr 实例（`agent.start` 起 agent，`agent.prompt` 追加输入）。不要在 Herdr 里起 claude，那里的 claude 有意不登录。读实例 `context` 里的首次信任目录处理和 `dsh headless` 用法。
 - 默认是 full access。用户没有要求时，不要降低权限，也不要替用户回答对方 agent 提出的业务决定问题。
 
 出错时，先读原生状态再决定是否重试。返回 `unknown` 的写操作不要直接重发。
