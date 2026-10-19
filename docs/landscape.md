@@ -16,8 +16,8 @@
 | `agenvo` | 上游 Agenvo 的最小 fork（新增 `dsh`/`zcode` kind、原生 DSH connector `apps/dsh` 和 ZCode 用的 `apps/dispatch`）；relay 与所有 connector 都从这里构建，connector 由 `fleet.mjs release agenvo` 装进发布目录运行，checkout 可以随意切分支 | 核心 |
 | `dsh-grokbot-dispatch` | DSH 桌面插件：native bridge（Unix socket 上转发桌面 Host 原生会话接口，供 `agenvo-dsh` 附着）；另有 Grok 用的 `/v1/jobs` 接收端。只走 HTTP 直连，Yobiru 传输已删（[#9](https://github.com/semantic-craft/dsh-grokbot-dispatch/pull/9)） | 接收端 |
 | `zcode-dispatch` | ZCode 接收端与插件；线上由 `fleet.mjs release zcode` 固定在指定提交。只走 HTTP 直连，Yobiru 传输已删（[#9](https://github.com/semantic-craft/zcode-dispatch/pull/9)） | 接收端 |
-| `agent-collab` | Issue/CLAIM/非作者评审合并的协作协议 | 治理 |
 | `bot-handbook` | Grok Bot 共用的经验与决策正本 | 治理：Grok 机器停用后归档 |
 | `grokbot-box-services` | Grok Bot 那台机器上的第三方服务台账 | 治理：Grok 机器停用后归档 |
+| `lcu-dsh` | DSH 桌面版里的 LCU Computer Use 插件（2026-10-19 从 agent-collab 拆出） | 无关：不是通信基础设施，但线上在用 |
 | `dsh-zlib`、`zcode-plugins` | Z-Library 图书技能和插件 | 无关 |
 | `esp32-iphone-agent`、`zotero-bridge` | 硬件 iPhone 操控实验；Zotero 文献桥 | 无关 |
