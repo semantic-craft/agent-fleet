@@ -154,6 +154,14 @@ const DSH_PROFILE = (home) => join(home, ".dsh/profiles/desktop");
 const DSH_REPLACES = ["dsh-grokbot-dispatch", "hermes-dsh-dispatch"];
 export const dshSocket = (home = homedir()) => join(home, ".local/state/agent-fleet-dsh/native.sock");
 
+/**
+ * `pnpm install` in the desktop profile with the Host's own pnpm. No TTY: pnpm aborts when it wants to
+ * recreate node_modules (CI=true accepts), and CI implies a frozen lockfile, which a changed link breaks.
+ */
+function pnpmInstall() {
+  run(dshBin(), ["plugin", "--profile", "desktop", "install", "--prefer-offline", "--no-frozen-lockfile"], { cwd: "/tmp", stdio: ["ignore", "pipe", "inherit"], env: { ...process.env, CI: "true" } });
+}
+
 function dshBin() {
   for (const b of ["dsh", "/usr/local/bin/dsh", "/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh"]) if (ok("/bin/sh", ["-c", 'command -v "$1"', "sh", b])) return b;
   throw new Error("dsh CLI not found (needed to install the profile's plugin links)");
@@ -209,14 +217,14 @@ async function releaseDsh({ c, src, sha, root, currentFile, home, log }) {
   writeJson0600(currentFile, { sha, backup, previousLive, switchedAt: new Date().toISOString() });
   if (next) {
     writeFileSync(pkgFile, JSON.stringify(next, null, 2) + "\n");
-    run(dshBin(), ["plugin", "--profile", "desktop", "install", "--prefer-offline"], { cwd: "/tmp", stdio: ["ignore", "pipe", "inherit"] });
+    pnpmInstall();
     log(`desktop profile now links ${c.plugin} -> ${livePath}`);
   }
   log(`live -> ${dest}`);
-  // The desktop app reloads its profile on change; a code-only update (same link) needs a restart.
-  const h = await waitBridge(home, before, next ? 60_000 : 15_000);
+  // A running desktop app does not load a newly linked plugin; it needs to be reopened.
+  const h = await waitBridge(home, before, 15_000);
   if (h) return log(`native bridge up on ${dshSocket(home)}: pid ${h.pid} dsh ${h.dsh} peer ${JSON.stringify(h.peer)}`);
-  throw new Error(`native bridge did not come up from the new release on ${dshSocket(home)}; quit and reopen DeepSeek Harness to load it, then check again\nroll back with: node scripts/fleet.mjs release dsh --rollback`);
+  throw new Error(`release installed; the native bridge on ${dshSocket(home)} is not serving it yet: quit and reopen DeepSeek Harness, then run fleet.mjs check\nroll back with: node scripts/fleet.mjs release dsh --rollback`);
 }
 
 function rollbackDsh({ root, currentFile, home, log }) {
@@ -224,7 +232,7 @@ function rollbackDsh({ root, currentFile, home, log }) {
   if (!cur?.backup || !existsSync(cur.backup)) throw new Error(`no recorded switch to roll back in ${currentFile}`);
   const profile = DSH_PROFILE(home);
   for (const f of readdirSync(cur.backup)) cpSync(join(cur.backup, f), join(profile, f));
-  run(dshBin(), ["plugin", "--profile", "desktop", "install", "--prefer-offline"], { cwd: "/tmp", stdio: ["ignore", "pipe", "inherit"] });
+  pnpmInstall();
   if (cur.previousLive) pointLive(root, cur.previousLive);
   else rmSync(join(root, "live"), { force: true });
   writeJson0600(currentFile, { sha: null, rolledBackFrom: cur.sha, at: new Date().toISOString() });
@@ -300,7 +308,7 @@ export async function release(name, { cfg, sha, rollback = false, home = homedir
     if (name === "zcode") {
       const h = await zcodeHealth(home);
       if (!h.ok || h.strict_runner !== "app") throw new Error("ZCode receiver unhealthy after switch: " + JSON.stringify(h.checks ?? h));
-      log(`zcode receiver ok: runner=${h.runner} strict_runner=${h.strict_runner} dot_route=${h.dot_route}`);
+      log(`zcode receiver ok: runner=${h.runner} strict_runner=${h.strict_runner} default_model=${h.default_model}`);
     } else {
       for (const line of await connectorsOnline(home, plists, before)) log(line);
     }

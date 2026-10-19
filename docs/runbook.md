@@ -43,7 +43,7 @@ mkdir -p ~/Library/Logs/codex-app-server ~/Library/Logs/herdr-server
 for f in codex-app-server herdr-server desktop-agents-autostart; do launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.yourname.$f.plist; done
 ```
 
-DSH：每台 Mac 跑 `node scripts/fleet.mjs release dsh`，把本仓库的 [adapters/dsh](../adapters/dsh/README.md) 插件（`agent-fleet-dsh`）链进桌面版的 `desktop` profile；它在 `~/.local/state/agent-fleet-dsh/native.sock`（0600）上转发桌面 Host 的原生会话接口。profile 变化时桌面版自己重载；只改代码的更新要重开 DeepSeek Harness。
+DSH：每台 Mac 跑 `node scripts/fleet.mjs release dsh`，把本仓库的 [adapters/dsh](../adapters/dsh/README.md) 插件（`agent-fleet-dsh`）链进桌面版的 `desktop` profile；它在 `~/.local/state/agent-fleet-dsh/native.sock`（0600）上转发桌面 Host 的原生会话接口。每次 `release dsh` 之后都要退出并重开 DeepSeek Harness，正在运行的桌面版不会自己加载新插件。
 
 ZCode 接收端（本仓库 [adapters/zcode](../adapters/zcode/README.md)）：生成 `~/.config/zcode-dispatch/key`（0600），`fleet.mjs launchd zcode-receiver` 生成 plist 并 bootstrap 一次，之后一律用 `fleet.mjs release zcode` 部署（见下文“发布与回滚”）。它只接受 `source: "agenvo"` + `runner: "app"`，ZCode.app 不在就明确失败（[ADR-0004](decisions/0004-desktop-strict-and-full-access.md)）。
 
