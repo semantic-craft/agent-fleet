@@ -10,6 +10,7 @@
 | 接入新的 agent 运行时或新机器 | [docs/decisions/](docs/decisions/) 全部、[docs/runbook.md](docs/runbook.md) |
 | 判断某个 `~/Projects` 目录能否动 | [docs/landscape.md](docs/landscape.md) |
 | 改脚本 | [scripts/fleet.mjs](scripts/fleet.mjs)、[test/](test/)；`npm test` |
+| 例行维护、跟进上游、新增组件前 | [docs/maintenance.md](docs/maintenance.md) |
 
 ## 决策规则（按优先级）
 

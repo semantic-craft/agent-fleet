@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Weekly guard + doctor + end-to-end check; a failure posts a macOS notification and leaves the log. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>{{LABEL_PREFIX}}.fleet-weekly-check</string>
+  <key>ProgramArguments</key><array><string>/bin/sh</string><string>-c</string>
+    <string>cd "{{PROJECTS}}/agent-fleet" &amp;&amp; { node scripts/guard.mjs &amp;&amp; node scripts/fleet.mjs doctor &amp;&amp; node scripts/fleet.mjs check --dispatch; } || /usr/bin/osascript -e 'display notification "agent-fleet weekly check failed; see ~/Library/Logs/fleet-weekly-check.log" with title "agent-fleet"'</string></array>
+  <key>EnvironmentVariables</key><dict><key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string><key>HOME</key><string>{{HOME}}</string></dict>
+  <key>StartCalendarInterval</key><dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>30</integer></dict>
+  <key>StandardOutPath</key><string>{{HOME}}/Library/Logs/fleet-weekly-check.log</string>
+  <key>StandardErrorPath</key><string>{{HOME}}/Library/Logs/fleet-weekly-check.log</string>
+</dict>
+</plist>

@@ -16,5 +16,5 @@
 1. 在 [landscape](../landscape.md) 把状态改成"退役中"。
 2. 用 `launchctl bootout` 停掉服务，plist 移进 `~/Library/LaunchAgents/_retired/`。
 3. 跑一次 `fleet.mjs check`。
-4. 把目录移到 `~/Projects/_archive/<日期>-<主题>/`，并把这些仓库从每日维护任务里摘掉。
+4. 把目录移到 `~/Projects/_archive/<主题>-<YYYYMMDD>/`，并把这些仓库从每日维护任务里摘掉。
 5. 归档对应的 GitHub 仓库。

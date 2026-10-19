@@ -35,3 +35,4 @@
 | `zcode-acp` | 第三方上游的克隆（william0wang/zcode-acp），没有引用 | 已归档 |
 | `pplx-zcode-handshake` | 一次性握手试验仓库，没有引用 | 已归档 |
 | `dsh-zlib`、`zcode-plugins` | Z-Library 图书技能和插件 | 无关 |
+| `esp32-iphone-agent`、`zotero-bridge` | 硬件 iPhone 操控实验；Zotero 文献桥 | 无关 |

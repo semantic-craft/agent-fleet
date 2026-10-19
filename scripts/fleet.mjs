@@ -85,7 +85,7 @@ function contexts() {
 
 function launchd(name) {
   const file = join(root, "templates/launchd", `${name}.plist`);
-  if (!name || !existsSync(file)) throw new Error("usage: fleet.mjs launchd codex-app-server|herdr-server|desktop-agents-autostart");
+  if (!name || !existsSync(file)) throw new Error("usage: fleet.mjs launchd codex-app-server|herdr-server|desktop-agents-autostart|fleet-weekly-check");
   const home = homedir();
   process.stdout.write(
     render(readFileSync(file, "utf8"), {
@@ -205,9 +205,27 @@ async function check() {
   }
 }
 
-const commands = { doctor, contexts, launchd: () => launchd(arg), check };
+// How far the fork is from upstream, and whether upstream changed the parts our patch touches.
+function upstream() {
+  const cfg = config();
+  const dir = cfg.agenvo?.checkout ? cfg.agenvo.checkout.replace(/^~(?=\/)/, homedir()) : join(homedir(), "Projects/agenvo");
+  const git = (...a) => execFileSync("git", ["-C", dir, ...a], { encoding: "utf8" }).trim();
+  git("fetch", "-q", "origin", "--tags");
+  const head = git("rev-parse", "--abbrev-ref", "HEAD");
+  const latestTag = git("tag", "--list", "v*", "--sort=-v:refname").split("\n").find((t) => !t.includes("-rc")) ?? "";
+  const behind = git("rev-list", "--count", "HEAD..origin/main");
+  const ours = git("rev-list", "--count", "origin/main..HEAD");
+  const base = git("merge-base", "HEAD", "origin/main");
+  const touched = git("log", "--oneline", `${base}..origin/main`, "--", "packages/protocol/src/index.ts", "packages/relay/src/releases.ts");
+  const upstreamKinds = /"dsh"|"zcode"|external|plugin/i.test(git("show", "origin/main:packages/protocol/src/index.ts").match(/kind: z\.enum\(\[[^\]]*\]/s)?.[0] ?? "");
+  console.log(`fork ${head}: ${ours} own commits, ${behind} upstream commits not merged; latest upstream release ${latestTag || "-"}`);
+  console.log(touched ? `upstream changed files our patch touches (expect conflicts):\n${touched}` : "upstream has not touched the patched files since the merge base");
+  console.log(upstreamKinds ? "upstream kind enum now looks extensible or includes dsh/zcode: review ADR-0002 exit condition" : "upstream still has a closed kind enum: keep the fork");
+}
+
+const commands = { doctor, contexts, launchd: () => launchd(arg), check, upstream };
 if (!commands[command]) {
-  console.error("usage: fleet.mjs doctor | contexts [--apply] | launchd NAME | check [--dispatch] [--project P]  [--machine NAME] [--config PATH]");
+  console.error("usage: fleet.mjs doctor | contexts [--apply] | launchd NAME | check [--dispatch] [--project P] | upstream  [--machine NAME] [--config PATH]");
   process.exit(2);
 }
 await commands[command]();

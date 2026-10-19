@@ -1,0 +1,24 @@
+# 维护节奏
+
+目标是让这套系统长期可用，同时不长出新的桥和副本。
+
+| 频率 | 做什么 | 命令 | 不通过时 |
+| --- | --- | --- | --- |
+| 每次改配置、升级、重启电脑后 | 本机自检 | `node scripts/fleet.mjs doctor` | 按缺的服务或 connector 去 [runbook](runbook.md) 对应小节处理 |
+| 每周（launchd `fleet-weekly-check` 自动跑，周一 9:30，失败弹通知） | guard + doctor + 全链路检查 | `npm run guard && node scripts/fleet.mjs check --dispatch` | 先读输出里失败实例的原生状态，再修；修好后在 [lessons.md](../lessons.md) 记一条 |
+| 每周 | 跟进上游 | `node scripts/fleet.mjs upstream` | 有新的正式 release 就合并进 fork（见 agenvo 的 FORK.md），重新部署 relay，重启全部 connector，再跑 `check` |
+| 上游支持外部 kind 时 | 去掉 fork | 按 [ADR-0002](decisions/0002-minimal-agenvo-fork.md) 的退出条件 | — |
+| 每个入口不再依赖旧组件时 | 退役旧组件 | 按 [ADR-0006](decisions/0006-coexistence-and-retirement.md) 的步骤 | — |
+
+## 加东西之前先问
+
+1. 上游已经有这个能力吗？（看 agenvo 的 `docs/` 和 `apps/`）有就用上游的。
+2. 是 CLI 型 agent 吗？是就放进 Herdr，不写 connector。
+3. 只有写了个人值才有意义吗？那就放进 overlay，不放进本仓库；如果连 overlay 都需要大量定制，重新考虑要不要做。
+4. 会产生新的常驻进程、新的目录或新的仓库吗？先在 [landscape](landscape.md) 里写清它的角色和退役条件，再动手。
+
+## 什么算"维护好了"
+
+- `~/Projects` 里每个 agent 相关目录在 [landscape](landscape.md) 都有一行，状态与实际一致。
+- overlay 是 connector 实例 context 的唯一来源，执行 `contexts` 显示全部 in sync。
+- `check --dispatch` 通过，relay 上除了用户自己的正式授权，没有残留的测试授权。

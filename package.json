@@ -5,7 +5,8 @@
   "license": "Apache-2.0",
   "engines": { "node": ">=24.13.0" },
   "scripts": {
-    "test": "node --test test/*.test.mjs",
+    "test": "node --test test/*.test.mjs && node scripts/guard.mjs private",
+    "guard": "node scripts/guard.mjs",
     "doctor": "node scripts/fleet.mjs doctor",
     "check": "node scripts/fleet.mjs check"
   },
