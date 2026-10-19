@@ -13,7 +13,7 @@
 ```sh
 git clone -b <agenvo.branch> <agenvo.remote> ~/Projects/agenvo
 cd ~/Projects/agenvo && npm ci && npm run build
-npm link --workspace @agenvo/codex-app-server --workspace @agenvo/herdr --workspace @agenvo/dispatch
+npm link --workspace @agenvo/codex-app-server --workspace @agenvo/herdr --workspace @agenvo/dsh --workspace @agenvo/dispatch
 ```
 
 ## 2. 部署 relay（只做一次）
@@ -43,7 +43,9 @@ mkdir -p ~/Library/Logs/codex-app-server ~/Library/Logs/herdr-server
 for f in codex-app-server herdr-server desktop-agents-autostart; do launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.yourname.$f.plist; done
 ```
 
-DSH/ZCode 接收端按各自仓库的 README 安装，要满足 [ADR-0004](decisions/0004-desktop-strict-and-full-access.md)：接受 `source: "agenvo"`，并且 `runner: "app"` 时不退回 headless。接收端的 `allowedIps` 要包含 connector 的源地址。
+DSH：在桌面版 profile 里装 dsh-grokbot-dispatch（第二台 Mac 用 hermes-dsh-dispatch）插件，它在 `~/.local/state/<插件名>/native.sock`（0600）上转发桌面 Host 的原生会话接口；插件改动在桌面版重载 profile 或重启后生效。
+
+ZCode 接收端按其仓库的 README 安装，要满足 [ADR-0004](decisions/0004-desktop-strict-and-full-access.md)：接受 `source: "agenvo"`，并且 `runner: "app"` 时不退回 headless。接收端的 `allowedIps` 要包含 connector 的源地址。
 
 ## 4. 添加实例并配对（每台机器、每种 connector）
 
@@ -51,10 +53,11 @@ DSH/ZCode 接收端按各自仓库的 README 安装，要满足 [ADR-0004](decis
 agenvo-codex-app-server instance add --id <id> --home ~/.codex --cwd ~/Projects \
   --endpoint unix://$HOME/.codex/app-server-control/app-server-control.sock
 agenvo-herdr instance add --id <id> --config-root ~/.config/herdr --cwd ~/Projects
-agenvo-dispatch instance add --id <id> --runtime dsh|zcode --endpoint http://HOST:PORT --key-file <接收端 key>
+agenvo-dsh instance add --id <id> --endpoint unix://$HOME/.local/state/dsh-grokbot-dispatch/native.sock
+agenvo-dispatch instance add --id <id> --endpoint http://HOST:PORT --key-file <ZCode 接收端 key>
 ```
 
-`instance add` 不会设置 `source`：在 `~/.config/agenvo/dispatch/config.json` 里给 dispatch 实例补上 `"source": "agenvo"`。然后：
+`agenvo-dispatch instance add` 不会设置 `source`：在 `~/.config/agenvo/dispatch/config.json` 里给 ZCode 实例补上 `"source": "agenvo"`。然后：
 
 ```sh
 node scripts/fleet.mjs contexts --apply      # 把 overlay 里的 context 写进各 connector 配置
@@ -70,6 +73,7 @@ agenvo-<connector> service install
 node scripts/fleet.mjs doctor              # 本机 launchd 服务与 connector 状态
 node scripts/fleet.mjs check               # OAuth + search + 每个实例一个只读原生调用
 node scripts/fleet.mjs check --dispatch    # 另给每个 DSH/ZCode 实例派只读任务，读回 completed 结果
+node scripts/fleet.mjs check --instance <dsh 实例> --session <sessionId>   # 向一个已有 DSH 会话追加一轮只读输入
 ```
 
 `check` 只撤销自己创建的测试授权。最后在 ChatGPT 里添加连接器（Plugins → Add custom MCP server，URL 填 `<RELAY>/mcp`，认证选 OAuth），再用 [prompts/acceptance-codex.md](../prompts/acceptance-codex.md) 做界面级验收。

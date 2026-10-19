@@ -15,10 +15,10 @@
 | 目录 | 是什么 | 状态 |
 | --- | --- | --- |
 | `agent-fleet` | 本仓库：设计、清单、脚本、提示词 | 核心 |
-| `agenvo` | 上游 Agenvo 的最小 fork（新增 `dsh`/`zcode` kind 和 `apps/dispatch`）；relay 与所有 connector 都从这里构建 | 核心 |
-| `dsh-grokbot-dispatch` | DSH 桌面插件：`/v1/jobs` 接收端；支持 `source: agenvo`、严格 runner | 接收端 |
+| `agenvo` | 上游 Agenvo 的最小 fork（新增 `dsh`/`zcode` kind、原生 DSH connector `apps/dsh` 和 ZCode 用的 `apps/dispatch`）；relay 与所有 connector 都从这里构建 | 核心 |
+| `dsh-grokbot-dispatch` | DSH 桌面插件：native bridge（Unix socket 上转发桌面 Host 原生会话接口，供 `agenvo-dsh` 附着）；另有 Grok 用的 `/v1/jobs` 接收端 | 接收端 |
 | `zcode-dispatch` | ZCode 接收端与插件；线上通过 agent-interop 的部署脚本固定在指定提交 | 接收端 |
-| `hermes-dsh-dispatch` | 第二台 Mac 上的 DSH 插件（Hermes ↔ DSH），vendored dsh-grokbot-dispatch | 接收端 |
+| `hermes-dsh-dispatch` | 第二台 Mac 上的 DSH 插件（Hermes ↔ DSH），vendored dsh-grokbot-dispatch，同样挂 native bridge | 接收端 |
 | `agent-interop-private` / `-hub` / `-hub-lease` / `-prod` | 同一个私有仓库的四个 checkout：`hub_run`（远程入口随 dot 网关退役，代码冻结）、dot 网关、门铃和 reason-net（退役中）。合并方案见其 `docs/operations/AGENT_INFRA_MIGRATION.md` | 治理 + 退役中 |
 | `agent-collab` | Issue/CLAIM/非作者评审合并的协作协议 | 治理 |
 | `bot-handbook` | Grok Bot 共用的经验与决策正本 | 治理：Grok 机器停用后归档 |

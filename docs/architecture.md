@@ -14,7 +14,7 @@
 | 助手（ChatGPT / dots / Grok Bot） | 云端 | 理解目标、选实例、派活、读结果、订阅事件 | 执行代码 |
 | Agenvo relay | Cloudflare Worker + Durable Object | MCP 端点、OAuth、设备配对与实例审批、把调用路由到 connector、转发 `runtime.changed` 事件 | 存储任务、调度、端到端加密 |
 | connector（每种运行时一个进程） | 每台 Mac，launchd | 主动外连 relay；把 `search`/`execute` 翻成原生调用；附带实例 `context` | 启动或停止原生服务 |
-| 原生服务 | 每台 Mac | 真正跑 agent：`codex app-server`、`herdr server`、DSH 桌面插件、ZCode 接收端 | 远程访问控制 |
+| 原生服务 | 每台 Mac | 真正跑 agent：`codex app-server`、`herdr server`、DSH 桌面版（插件在 Unix socket 上转发其原生端点）、ZCode 接收端 | 远程访问控制 |
 | 桌面 app | 每台 Mac | 让用户看到并接手会话 | — |
 
 ## 一次派活的路径
@@ -26,7 +26,7 @@
 5. ZCode 桌面在左栏建出可见会话并开始执行；connector 立即返回 job id。
 6. connector 每 5 秒轮询自己派出的 job；完成时发出 `runtime.changed`（`nativeType: "job.finished"`），dot 被唤醒后调 `jobs.get` 读结果，再决定下一步。
 
-Codex 和 Herdr 的路径相同，只是原生方法不同（`thread/start` + `turn/start`；`agent.start` + `agent.prompt`），而且可以在同一个 thread 或 pane 里继续追加输入。DSH 和 ZCode 的接收端只能新建会话，后续输入要在桌面 app 里手动接着聊。
+Codex 和 Herdr 的路径相同，只是原生方法不同（`thread/start` + `turn/start`；`agent.start` + `agent.prompt`），而且可以在同一个 thread 或 pane 里继续追加输入。DSH 也一样：`agenvo-dsh` 调 DSH 桌面版自己的 `session/list`、`session/create`、`session/prompt`、`session/follow` 等，能列出并续写用户手动开的会话，事件是原生的 `turn/start`、`turn/end`。只有 ZCode 的接收端只能新建会话，后续输入要在桌面 app 里手动接着聊。
 
 ## 信任边界
 

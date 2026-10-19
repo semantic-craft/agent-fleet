@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync, renameSync, openSync, closeSync } from "no
 import { homedir, hostname } from "node:os";
 import { join } from "node:path";
 
-export const CONNECTOR_DIRS = { codex: "codex-app-server", herdr: "herdr", dispatch: "dispatch" };
+export const CONNECTOR_DIRS = { codex: "codex-app-server", herdr: "herdr", dsh: "dsh", dispatch: "dispatch" };
 
 export const expandHome = (p, home = homedir()) =>
   typeof p === "string" && (p === "~" || p.startsWith("~/")) ? join(home, p.slice(2)) : p;

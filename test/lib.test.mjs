@@ -16,7 +16,8 @@ test("example config loads and expands ~ against the given home", () => {
   const c = loadConfig(new URL("../fleet.example.json", import.meta.url), "/home/u");
   assert.equal(c.relay.adminSecretFile, "/home/u/.config/agenvo/admin-secret");
   assert.equal(c.machines[0].projectsRoot, "/home/u/Projects");
-  assert.equal(c.machines[0].instances.find((i) => i.id === "dsh-laptop").keyFile, "/home/u/.config/dsh-grokbot-dispatch/key");
+  assert.equal(c.machines[0].instances.find((i) => i.id === "dsh-laptop").connector, "dsh");
+  assert.equal(c.machines[0].instances.find((i) => i.id === "zcode-laptop").keyFile, "/home/u/.config/zcode-dispatch/key");
 });
 
 test("config rejects unknown connectors and duplicate ids", () => {

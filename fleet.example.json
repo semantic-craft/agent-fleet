@@ -33,12 +33,9 @@
         },
         {
           "id": "dsh-laptop",
-          "connector": "dispatch",
-          "kind": "dsh",
-          "endpoint": "http://127.0.0.1:7790",
-          "keyFile": "~/.config/dsh-grokbot-dispatch/key",
-          "source": "agenvo",
-          "context": "# DSH desktop @ laptop\n- jobs.create 在 DSH 桌面新建可见会话，目录 ~/Projects/<project>，默认 danger-full-access。\n- 不能远程追加输入；完成后用 jobs.get 读结果或订阅 job.finished。"
+          "connector": "dsh",
+          "endpoint": "unix://~/.local/state/dsh-grokbot-dispatch/native.sock",
+          "context": "# DSH desktop @ laptop\n- DSH 原生会话接口：session/list 列出（含手动开的会话），session/follow、session/page 读输出，workspace/create + session/create 新建，session/prompt 追加输入，session/cancel 中断。\n- create/prompt 前 connector 切到 danger-full-access；等 runtime.changed 的 turn/end 再读结果。"
         },
         {
           "id": "zcode-laptop",

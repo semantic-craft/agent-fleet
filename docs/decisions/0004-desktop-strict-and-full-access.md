@@ -3,9 +3,9 @@
 状态：已采纳（2026-10-19）
 
 ## 决定
-- 派给 DSH/ZCode 的任务固定 `runner: "app"`，并标记 `source: "agenvo"`。桌面 app 不在时，接收端返回 503 或让 job 明确失败，不静默退回 headless 或 CLI。
-- 会话标题带来源标记（DSH 显示 `[Agenvo]`，ZCode 显示 `[来源: agenvo]`），完成回报只落本地，不回流到 Grok/Yobiru。
-- 执行权限默认 full access：DSH `danger-full-access`、ZCode `yolo`、Codex `danger-full-access` + `approvalPolicy: never`。
+- DSH 经 `agenvo-dsh` 直接在桌面版 Host 里建会话、提交输入，天然在桌面可见；桌面版不在时 socket 不存在，实例离线。派给 ZCode 的任务固定 `runner: "app"`，并标记 `source: "agenvo"`。桌面 app 不在时，接收端返回 503 或让 job 明确失败，不静默退回 headless 或 CLI。
+- ZCode 会话标题带来源标记 `[来源: agenvo]`，完成回报只落本地，不回流到 Grok/Yobiru。DSH 原生会话不加标记；需要时调用者自己 `session/rename`。
+- 执行权限默认 full access：DSH `danger-full-access`（connector 在 create/prompt 前用原生 `/permission` 切换）、ZCode `yolo`、Codex `danger-full-access` + `approvalPolicy: never`。
 - 桌面 app 在登录后自启动（launchd 模板 `desktop-autostart`），这样严格模式下的失败只剩"电脑睡着了"一种。
 
 ## 理由

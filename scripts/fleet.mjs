@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// agent-fleet CLI: doctor | contexts [--apply] | launchd NAME | check [--dispatch] [--project P]
+// agent-fleet CLI: doctor | contexts [--apply] | launchd NAME | check [--dispatch] [--project P] [--instance ID --session SID]
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -26,6 +26,8 @@ const { values: opt, positionals } = parseArgs({
     apply: { type: "boolean" },
     dispatch: { type: "boolean" },
     project: { type: "string", default: "agenvo" },
+    instance: { type: "string" },
+    session: { type: "string" },
     config: { type: "string" },
   },
 });
@@ -161,7 +163,7 @@ async function check() {
       if (!i?.online) failures++;
       console.log(`${id}: ${i ? (i.online ? "online" : "OFFLINE") : "NOT IN RELAY"} ${i?.kind ?? ""}`);
     }
-    const probes = { codex: ["thread/list", { limit: 1 }], herdr: ["session.list", {}], dsh: ["health", {}], zcode: ["health", {}] };
+    const probes = { codex: ["thread/list", { limit: 1 }], herdr: ["session.list", {}], dsh: ["session/list", { _request: {}, limit: 1 }], zcode: ["health", {}] };
     for (const i of items.filter((x) => x.online && probes[x.kind])) {
       const [m, p] = probes[i.kind];
       const r = await call(i, m, p);
@@ -171,7 +173,7 @@ async function check() {
     }
     if (opt.dispatch) {
       const jobs = [];
-      for (const i of items.filter((x) => x.online && (x.kind === "dsh" || x.kind === "zcode"))) {
+      for (const i of items.filter((x) => x.online && x.kind === "zcode")) {
         const r = await call(i, "jobs.create", { project: opt.project, text: "只读验收：用一句话说明这个目录是什么项目，不要修改任何文件。", timeout_seconds: 600 });
         if (r.result?.id) jobs.push([i, r.result.id]);
         else (failures++, console.log(`  ${i.instanceId} jobs.create FAILED ${JSON.stringify(r.error ?? r).slice(0, 200)}`));
@@ -190,6 +192,16 @@ async function check() {
       }
       for (const [i, id] of jobs) (failures++, console.log(`  ${i.instanceId} job ${id}: still running after 10 min`));
     }
+    // DSH: native session/prompt into a new session (or --session SID on --instance ID), then wait for its turn/end.
+    if (opt.dispatch || opt.session) {
+      const targets = items.filter((x) => x.online && x.kind === "dsh" && (!opt.instance || x.instanceId === opt.instance));
+      await Promise.all(targets.map(async (i) => {
+        const root = cfg.machines.find((m) => (m.instances ?? []).some((x) => x.id === i.instanceId))?.projectsRoot;
+        const r = await dshTurn((m, p) => call(i, m, p), { root, project: opt.project, sessionId: opt.session });
+        if (!r.ok) failures++;
+        console.log(`  ${i.instanceId} session ${r.sessionId ?? "-"}: ${r.ok ? "turn/end completed" : "FAILED"} :: ${r.text}`);
+      }));
+    }
     console.log(failures ? `FAILED (${failures})` : "OK");
     process.exitCode = failures ? 1 : 0;
   } finally {
@@ -203,6 +215,42 @@ async function check() {
       console.error("WARNING: could not revoke the test grant:", e.message);
     }
   }
+}
+
+const READ_ONLY = "只读验收：用一句话说明这个目录是什么项目，不要修改任何文件。";
+
+/** One read-only DSH turn through native endpoints; `ok` only when the turn after our input ends completed. */
+async function dshTurn(call, { root, project, sessionId }) {
+  const fail = (text) => ({ ok: false, sessionId, text: String(text).slice(0, 200) });
+  if (!sessionId) {
+    if (!root) return fail("no projectsRoot for this machine in fleet.json");
+    const ws = await call("workspace/create", { request: { path: `${root}/${project}` } });
+    if (ws.error) return fail(JSON.stringify(ws.error));
+    const created = await call("session/create", { request: { workspaceId: ws.result.workspace.workspaceId } });
+    sessionId = created.nativeIds?.sessionId;
+    if (!sessionId) return fail(JSON.stringify(created.error ?? created));
+  }
+  const requestId = `fleet-check-${Date.now()}`;
+  const prompt = await call("session/prompt", { request: { requestId, sessionId, mode: "queue", content: [{ type: "text", text: READ_ONLY }] } });
+  if (prompt.error) return fail(JSON.stringify(prompt.error));
+  const deadline = Date.now() + 10 * 60_000;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 10_000));
+    const snap = await call("session/follow", { request: { address: { kind: "session", sessionId }, maxMessages: 6 } });
+    const events = (snap.result?.records ?? []).map((r) => r.event);
+    const input = events.find((e) => e.type === "user/message" && e.data?.source?.rpcId === requestId);
+    const end = input && events.find((e) => e.type === "turn/end" && e.seq > input.seq);
+    if (!end) continue;
+    const text = events
+      .filter((e) => e.type === "assistant/message" && e.seq > input.seq)
+      .flatMap((e) => e.data?.message?.content ?? [])
+      .filter((c) => c.type === "text")
+      .map((c) => c.text)
+      .join(" ")
+      .replace(/\s+/g, " ");
+    return { ok: end.data?.reason?.kind === "completed", sessionId, text: `${end.data?.reason?.kind}: ${text.slice(0, 160)}` };
+  }
+  return fail("no turn/end within 10 min");
 }
 
 // How far the fork is from upstream, and whether upstream changed the parts our patch touches.
@@ -225,7 +273,7 @@ function upstream() {
 
 const commands = { doctor, contexts, launchd: () => launchd(arg), check, upstream };
 if (!commands[command]) {
-  console.error("usage: fleet.mjs doctor | contexts [--apply] | launchd NAME | check [--dispatch] [--project P] | upstream  [--machine NAME] [--config PATH]");
+  console.error("usage: fleet.mjs doctor | contexts [--apply] | launchd NAME | check [--dispatch] [--project P] [--instance ID --session SID] | upstream  [--machine NAME] [--config PATH]");
   process.exit(2);
 }
 await commands[command]();
