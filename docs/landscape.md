@@ -18,7 +18,6 @@
 | `agenvo` | 上游 Agenvo 的最小 fork（新增 `dsh`/`zcode` kind、原生 DSH connector `apps/dsh` 和 ZCode 用的 `apps/dispatch`）；relay 与所有 connector 都从这里构建 | 核心 |
 | `dsh-grokbot-dispatch` | DSH 桌面插件：native bridge（Unix socket 上转发桌面 Host 原生会话接口，供 `agenvo-dsh` 附着）；另有 Grok 用的 `/v1/jobs` 接收端。只走 HTTP 直连，Yobiru 传输已删（[#9](https://github.com/semantic-craft/dsh-grokbot-dispatch/pull/9)） | 接收端 |
 | `zcode-dispatch` | ZCode 接收端与插件；线上通过 agent-interop 的部署脚本固定在指定提交。只走 HTTP 直连，Yobiru 传输已删（[#9](https://github.com/semantic-craft/zcode-dispatch/pull/9)） | 接收端 |
-| `hermes-dsh-dispatch` | 第二台 Mac 上的 DSH 插件（Hermes ↔ DSH），vendored dsh-grokbot-dispatch，同样挂 native bridge；vendor 副本仍含 Yobiru 代码，待同步 | 接收端 |
 | `agent-interop-private` | 私有仓库的唯一 checkout（原 `-hub`、`-hub-lease`、`-prod` 三个副本于 2026-10-19 删除，本地分支已并入）：`hub_run`（远程入口已随 dot 网关退役，代码冻结）、dot 网关、门铃和 reason-net（服务已停，部署副本在 `_archive/dot-path-20261019/_deploy/`）；zcode 接收端的部署脚本 `integrations/zcode/deploy.py` 仍在用 | 冻结 |
 | `agent-collab` | Issue/CLAIM/非作者评审合并的协作协议 | 治理 |
 | `bot-handbook` | Grok Bot 共用的经验与决策正本 | 治理：Grok 机器停用后归档 |
@@ -28,6 +27,7 @@
 | `codex-task-bridge` | Grok Bot → Codex Desktop 的桥（公开仓库 grokbot-to-codex） | 已归档（`_archive/yobiru-grok-20261019/`） |
 | `deepseek-grok-bridge` | Grok Bot → DSH 的插件 | 已归档（`_archive/yobiru-grok-20261019/`） |
 | `hermes-grokbot-api-bridge` | Grok Bot → Hermes 的桥 | 已归档（`_archive/yobiru-grok-20261019/`） |
+| `hermes-dsh-dispatch` | 第二台 Mac 上的 DSH 插件（Hermes ↔ DSH，兼挂 native bridge）；Hermes 已不用，2026-10-19 那台改装 dsh-grokbot-dispatch | 已归档（GitHub 已归档；checkout 与状态目录在那台的 `_archive/hermes-dsh-dispatch-20261019/`） |
 | `tailmsg-adapters` | Yobiru/tailmsg 适配器 | 已归档（`_archive/yobiru-grok-20261019/`） |
 | `dispatch-deploy-semantic-craft` | tailmsg 配置引用的接收端部署副本 | 已归档（`_archive/yobiru-grok-20261019/`） |
 | `agent-dispatch-mesh` | Yobiru 时代派发网的说明与恢复文档 | 已归档 |

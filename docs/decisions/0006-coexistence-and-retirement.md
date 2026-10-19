@@ -36,6 +36,8 @@
 
 2026-10-19：ChatGPT 连接器验收通过，Grok 经动态注册接入 relay 成功（报告在 overlay 外的验收目录）。当天执行 A、B 两批：两台 Mac 的服务已停、plist 在 `_retired/`；目录与部署副本在 `~/Projects/_archive/dot-path-20261019/`、`yobiru-grok-20261019/`（第二台 Mac 的部署副本在它自己的 `_archive/legacy-transport-20261019/`）；GitHub 上 dot-relay、deepseek-grok-bridge、hermes-grokbot-api-bridge、tailmsg-adapters 已归档（grokbot-to-codex 此前已归档）。剩下 `bot-handbook`、`grokbot-box-services` 按表在 Grok 机器停用后归档。
 
+2026-10-19（续）：Hermes 已不用，`hermes-dsh-dispatch` 退役。第二台 Mac 的 DSH 桌面版改装 dsh-grokbot-dispatch（`/v1/jobs` 只绑本机回环），该机 DSH 实例改附着 `~/.local/state/dsh-grokbot-dispatch/native.sock` 并在 relay 重新批准，`fleet.mjs check --dispatch --instance <该实例>` 通过；那台的 checkout 与状态目录移到它自己的 `_archive/hermes-dsh-dispatch-20261019/`，Hermes 侧 key 已删；GitHub 仓库已归档。
+
 ## 退役步骤
 
 1. 在 [landscape](../landscape.md) 把状态改成"退役中"。

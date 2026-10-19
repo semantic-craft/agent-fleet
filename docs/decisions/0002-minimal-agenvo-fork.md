@@ -11,7 +11,7 @@
 ## 决定
 fork 上游，只做三件事：
 1. `packages/protocol` 的实例 kind 枚举新增 `dsh`、`zcode`（relay 会校验这个枚举，所以 relay 也要用 fork 的源码部署）。
-2. 新增 `apps/dsh`（命令 `agenvo-dsh`）：插件（dsh-grokbot-dispatch；第二台 Mac 上是 hermes-dsh-dispatch）在同用户 Unix socket 上用一个独立 Peer 转发桌面 Host 的原生端点，connector 附着它，方法名和参数都是 DSH 原生的。覆盖列出会话（含用户手动开的）、读输出、新建、向已有会话追加输入、中断和 `runtime.changed` 事件，与上游 Codex/OpenCode connector 同一水平。设计与依据见 agenvo 的 `design/dsh-connector.zh-CN.md`。
+2. 新增 `apps/dsh`（命令 `agenvo-dsh`）：插件（dsh-grokbot-dispatch，两台 Mac 都装）在同用户 Unix socket 上用一个独立 Peer 转发桌面 Host 的原生端点，connector 附着它，方法名和参数都是 DSH 原生的。覆盖列出会话（含用户手动开的）、读输出、新建、向已有会话追加输入、中断和 `runtime.changed` 事件，与上游 Codex/OpenCode connector 同一水平。设计与依据见 agenvo 的 `design/dsh-connector.zh-CN.md`。
 3. 新增 `apps/dispatch`（命令 `agenvo-dispatch`），只服务 ZCode：`health`、`jobs.create`、`jobs.get` 薄封装上面三个 HTTP 调用；对自己派出的 job 轮询并发出 `job.finished` 事件。
 
 fork 里不放部署记录、个人值或本仓库的文档。

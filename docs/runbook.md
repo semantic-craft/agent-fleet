@@ -43,7 +43,7 @@ mkdir -p ~/Library/Logs/codex-app-server ~/Library/Logs/herdr-server
 for f in codex-app-server herdr-server desktop-agents-autostart; do launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.yourname.$f.plist; done
 ```
 
-DSH：在桌面版 profile 里装 dsh-grokbot-dispatch（第二台 Mac 用 hermes-dsh-dispatch）插件，它在 `~/.local/state/<插件名>/native.sock`（0600）上转发桌面 Host 的原生会话接口；插件改动在桌面版重载 profile 或重启后生效。
+DSH：在每台 Mac 的桌面版 profile 里装 dsh-grokbot-dispatch 插件，它在 `~/.local/state/dsh-grokbot-dispatch/native.sock`（0600）上转发桌面 Host 的原生会话接口；插件改动在桌面版重载 profile 或重启后生效。插件同时开 Grok 用的 `/v1/jobs` 接收端；不接 Grok 的机器在 `~/.config/dsh-grokbot-dispatch/config.json` 里把 `host` 和 `allowedIps` 都设成 `127.0.0.1`，只留本机回环。
 
 ZCode 接收端按其仓库的 README 安装，要满足 [ADR-0004](decisions/0004-desktop-strict-and-full-access.md)：接受 `source: "agenvo"`，并且 `runner: "app"` 时不退回 headless。接收端的 `allowedIps` 要包含 connector 的源地址。
 
@@ -56,6 +56,8 @@ agenvo-herdr instance add --id <id> --config-root ~/.config/herdr --cwd ~/Projec
 agenvo-dsh instance add --id <id> --endpoint unix://$HOME/.local/state/dsh-grokbot-dispatch/native.sock
 agenvo-dispatch instance add --id <id> --endpoint http://HOST:PORT --key-file <ZCode 接收端 key>
 ```
+
+改了已配对实例的 `endpoint`（换插件、换 socket 路径）后，relay 会把该实例标为未批准，`check` 显示 `NOT IN RELAY`；用管理员 API `POST /api/admin/instances/approve`（`deviceId`、`instanceId` 和 `/api/admin/state` 里该实例的 `fingerprint`）重新批准。
 
 `agenvo-dispatch instance add` 不会设置 `source`：在 `~/.config/agenvo/dispatch/config.json` 里给 ZCode 实例补上 `"source": "agenvo"`。然后：
 
