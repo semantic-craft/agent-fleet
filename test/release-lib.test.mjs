@@ -26,7 +26,7 @@ test("zcode owns only its receiver plist and maps it into the release tree", () 
     { label: "dev.other", programArg: "/x/receiver/server.mjs" },
   ];
   assert.deepEqual(ownedPlists("zcode", plists).map((p) => p.label), ["dev.semantic-craft.zcode-dispatch"]);
-  assert.equal(COMPONENTS.zcode.entry(plists[0].programArg), "tree/receiver/server.mjs");
+  assert.equal(COMPONENTS.zcode.entry(plists[0].programArg), "tree/adapters/zcode/receiver.mjs");
   assert.throws(() => ownedPlists("telnet", plists), /unknown component/);
 });
 
@@ -48,4 +48,22 @@ test("treeHashes detects hand edits and refuses symlinks; skip excludes top-leve
   assert.deepEqual(manifestDiff(before, treeHashes(dir, ["release.json"])), ["apps/dsh/cli.js"]);
   symlinkSync("cli.js", join(dir, "apps/dsh/link"));
   assert.throws(() => treeHashes(dir), /symlink/);
+});
+
+test("profileWithPlugin swaps the old plugin for agent-fleet-dsh in place and is idempotent", async () => {
+  const { profileWithPlugin } = await import("../scripts/release-lib.mjs");
+  const pkg = { dsh: { profile: { bundles: ["a", "dsh-grokbot-dispatch", "b"] } }, dependencies: { a: "1", "dsh-grokbot-dispatch": "link:/old" } };
+  const opts = { plugin: "agent-fleet-dsh", linkPath: "/r/live/plugin", replaces: ["dsh-grokbot-dispatch", "hermes-dsh-dispatch"] };
+  const next = profileWithPlugin(pkg, opts);
+  assert.deepEqual(next.dsh.profile.bundles, ["a", "agent-fleet-dsh", "b"]);
+  assert.deepEqual(next.dependencies, { a: "1", "agent-fleet-dsh": "link:/r/live/plugin" });
+  assert.equal(pkg.dependencies["dsh-grokbot-dispatch"], "link:/old");
+  assert.equal(profileWithPlugin(next, opts), null);
+});
+
+test("zcode adopts the old zcode-dispatch entry and the new adapter entry; dsh owns no plist", () => {
+  assert.equal(COMPONENTS.zcode.entry("/x/releases/zcode/abc/tree/receiver/server.mjs"), "tree/adapters/zcode/receiver.mjs");
+  assert.equal(COMPONENTS.zcode.entry("/x/other/receiver/server.mjs"), null);
+  assert.equal(COMPONENTS.zcode.entry(`/x/releases/zcode/${SHA}/tree/adapters/zcode/receiver.mjs`), "tree/adapters/zcode/receiver.mjs");
+  assert.deepEqual(ownedPlists("dsh", [{ label: "x", programArg: "/a/cli.js" }]), []);
 });

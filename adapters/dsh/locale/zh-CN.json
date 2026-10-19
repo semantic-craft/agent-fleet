@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Agent Fleet 原生桥接",
+    "description": "把 DSH 桌面版的原生会话接口开在本机私有 Unix socket 上，供 Agenvo 的 DSH connector 附着。"
+  }
+}

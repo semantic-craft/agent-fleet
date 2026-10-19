@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Agent Fleet native bridge",
+    "description": "Exposes this DSH desktop app's native session endpoints on a private Unix socket for the Agenvo DSH connector."
+  }
+}
