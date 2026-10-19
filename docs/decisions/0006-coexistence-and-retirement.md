@@ -20,6 +20,17 @@
 - grok.com 的 Cloudflare 防护会拦截 Worker 发出的请求，返回 403 challenge 页。所以即使在 relay 上打开 CIMD，relay 也取不到这份元数据。因此不打开 CIMD，让 Grok 走动态注册（relay 默认支持）。
 - 如果 Grok 不接受动态注册，按上表直接放弃 Grok 派活，不写绕过方案。
 
+## 各批次清单（主力 Mac，2026-10-19 核对）
+
+触发条件满足的当天，按下表逐批执行退役步骤。部署副本与状态目录不在 `~/Projects`，一并移进同一个 `_archive` 子目录，不删除。
+
+| 批次 | 触发 | launchd label | 部署副本与状态目录 | `~/Projects` 目录 |
+| --- | --- | --- | --- | --- |
+| A：dot 旧通路 | ChatGPT 连接器验收通过 | `dev.yobiru.dot.longpoll`、`dev.yobiru.dot.bridge`、`dev.yobiru.dot.tunnel`、`dev.yobiru.hub.runner`、`local.agent-infra.health-observation`（只监控这批服务，不同批停掉会持续报警）、`com.reasonmachines.network.*`（含 `.probe`） | `~/.local/share/agent-infra-lessons/` 的 `releases/` 与 `rollback-*`（同目录的 `handbook-*` 随 `bot-handbook` 归档）、`~/.local/share/dot-relay/`、`~/.local/share/agent-infra-health/`、`~/.dot-longpoll/`、`~/.config/dot-hub/`、`~/.reason-net/` | `dot-relay`；agent-interop 的四个 checkout 不移动（`hub_run` 代码冻结、保留） |
+| B：Yobiru 与 Grok 桥 | grok.com 添加 relay 连接器的尝试结束（成败都算） | `dev.tailmsg`、`dev.tailmsg.codex-bridge`、`dev.tailmsg.agy-e2e`、`dev.codex.bridge`、`dev.dsh.bridge`、`dev.zcode.bridge` | `~/.tailmsg/` | `agent-bridges`、`codex-task-bridge`、`deepseek-grok-bridge`、`hermes-grokbot-api-bridge`、`tailmsg-adapters`、`dispatch-deploy-semantic-craft` |
+
+不在清单里、必须保留的：`dev.semantic-craft.dsh-grokbot-dispatch` 和 `dev.semantic-craft.zcode-dispatch` 是接收端（名字带 grokbot 也不退役）；`io.agenvo.connector.*` 与 `dev.xw.*` 属于本架构。第二台 Mac 上的 Grok 桥未核对，执行 B 批时在那台机器上按同样方法查 launchd。
+
 ## 退役步骤
 
 1. 在 [landscape](../landscape.md) 把状态改成"退役中"。
