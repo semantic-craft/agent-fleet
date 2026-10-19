@@ -11,8 +11,8 @@
 ## 1. 准备 agenvo fork（每台机器）
 
 ```sh
-git clone -b <agenvo.branch> <agenvo.remote> ~/Projects/agenvo
-cd ~/Projects/agenvo && npm ci && npm run build
+git clone -b <agenvo.branch> <agenvo.remote> ~/Projects/_forks/agenvo
+cd ~/Projects/_forks/agenvo && npm ci && npm run build
 npm link --workspace @agenvo/codex-app-server --workspace @agenvo/herdr --workspace @agenvo/dsh --workspace @agenvo/dispatch
 ```
 
