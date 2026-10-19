@@ -1,0 +1,85 @@
+# Runbook
+
+所有命令都在本仓库根目录执行。个人值从 overlay（`~/.config/agent-fleet/fleet.json`，或用 `AGENT_FLEET_CONFIG` 指定）读取，下面用 `<RELAY>` 表示 `relay.baseUrl`。
+
+## 0. 前提
+
+- macOS，Node 24.13 以上。
+- 原生运行时自行安装并登录：Codex（`codex` CLI，与 Codex Desktop 共用 `~/.codex`）、Herdr、DSH 桌面版、ZCode 桌面版。
+- 一个 Cloudflare 账号，以及一个 DNS 托管在该账号里的域名（见 [ADR-0005](decisions/0005-relay-on-cloudflare.md)）。
+
+## 1. 准备 agenvo fork（每台机器）
+
+```sh
+git clone -b <agenvo.branch> <agenvo.remote> ~/Projects/agenvo
+cd ~/Projects/agenvo && npm ci && npm run build
+npm link --workspace @agenvo/codex-app-server --workspace @agenvo/herdr --workspace @agenvo/dispatch
+```
+
+## 2. 部署 relay（只做一次）
+
+在 agenvo checkout 里执行：
+
+```sh
+cp wrangler.jsonc wrangler.local.json             # 已被 git 忽略
+npx wrangler kv namespace create OAUTH_KV --config wrangler.local.json
+# 编辑 wrangler.local.json：name、kv id、vars.BASE_URL=<RELAY>、workers_dev=false、
+#   routes=[{"pattern":"<relay 主机名>","custom_domain":true}]
+umask 077; openssl rand -hex 32 > ~/.config/agenvo/admin-secret
+tr -d '\n' < ~/.config/agenvo/admin-secret | npx wrangler secret put ADMIN_SECRET --config wrangler.local.json
+npx wrangler deploy --config wrangler.local.json
+curl -s <RELAY>/health
+```
+
+把管理员密钥另存进密码管理器。
+
+## 3. 原生服务常驻
+
+```sh
+LABEL_PREFIX=dev.yourname node scripts/fleet.mjs launchd codex-app-server > ~/Library/LaunchAgents/dev.yourname.codex-app-server.plist
+LABEL_PREFIX=dev.yourname node scripts/fleet.mjs launchd herdr-server     > ~/Library/LaunchAgents/dev.yourname.herdr-server.plist
+LABEL_PREFIX=dev.yourname node scripts/fleet.mjs launchd desktop-agents-autostart > ~/Library/LaunchAgents/dev.yourname.desktop-agents-autostart.plist
+mkdir -p ~/Library/Logs/codex-app-server ~/Library/Logs/herdr-server
+for f in codex-app-server herdr-server desktop-agents-autostart; do launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.yourname.$f.plist; done
+```
+
+DSH/ZCode 接收端按各自仓库的 README 安装，要满足 [ADR-0004](decisions/0004-desktop-strict-and-full-access.md)：接受 `source: "agenvo"`，并且 `runner: "app"` 时不退回 headless。接收端的 `allowedIps` 要包含 connector 的源地址。
+
+## 4. 添加实例并配对（每台机器、每种 connector）
+
+```sh
+agenvo-codex-app-server instance add --id <id> --home ~/.codex --cwd ~/Projects \
+  --endpoint unix://$HOME/.codex/app-server-control/app-server-control.sock
+agenvo-herdr instance add --id <id> --config-root ~/.config/herdr --cwd ~/Projects
+agenvo-dispatch instance add --id <id> --runtime dsh|zcode --endpoint http://HOST:PORT --key-file <接收端 key>
+```
+
+`instance add` 不会设置 `source`：在 `~/.config/agenvo/dispatch/config.json` 里给 dispatch 实例补上 `"source": "agenvo"`。然后：
+
+```sh
+node scripts/fleet.mjs contexts --apply      # 把 overlay 里的 context 写进各 connector 配置
+AGENVO_ADMIN_SECRET="$(cat ~/.config/agenvo/admin-secret)" agenvo-<connector> connect <RELAY> --name "<机器> / <connector>" --approve
+agenvo-<connector> service install
+```
+
+在没有管理员密钥的机器上（例如第二台 Mac）：先用 `connect <RELAY> --no-browser` 拿到配对码和指纹，再在有密钥的机器上执行 `agenvo-dispatch pairing approve CODE --fingerprint SHA256 --base-url <RELAY>`。密钥不要复制到其他机器。
+
+## 5. 验收
+
+```sh
+node scripts/fleet.mjs doctor              # 本机 launchd 服务与 connector 状态
+node scripts/fleet.mjs check               # OAuth + search + 每个实例一个只读原生调用
+node scripts/fleet.mjs check --dispatch    # 另给每个 DSH/ZCode 实例派只读任务，读回 completed 结果
+```
+
+`check` 只撤销自己创建的测试授权。最后在 ChatGPT 里添加连接器（Plugins → Add custom MCP server，URL 填 `<RELAY>/mcp`，认证选 OAuth），再用 [prompts/acceptance-codex.md](../prompts/acceptance-codex.md) 做界面级验收。
+
+## 日常操作
+
+| 要做什么 | 怎么做 |
+| --- | --- |
+| 改某个实例的 context | 改 overlay，执行 `contexts --apply`，重启对应 connector（`launchctl kickstart -k gui/$(id -u)/<label>`）；不需要重新批准 |
+| 改 `source` 或 endpoint | 改 connector 配置并重启，然后在 relay 重新批准：`admin state` 找到指纹，再 `admin approve-instance` |
+| 换 relay 域名 | 部署新的 `BASE_URL`，把各 connector 配置里的 `relay` 字段改掉并重启（配对凭据仍有效）；ChatGPT 的连接器要重新添加 |
+| 升级 agenvo | 把上游 tag 合并进 fork 分支，`npm ci && npm run build`，重新部署 relay，重启全部 connector，再跑 `check` |
+| 撤销访问 | 在 `<RELAY>/admin` 页面撤销，或用 `agenvo-* admin revoke grant|instance|device` |

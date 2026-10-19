@@ -1,0 +1,55 @@
+{
+  "$comment": "Copy to ~/.config/agent-fleet/fleet.json (mode 0600) and fill in. Never commit the filled copy.",
+  "relay": {
+    "baseUrl": "https://agenvo.example.dev",
+    "adminSecretFile": "~/.config/agenvo/admin-secret"
+  },
+  "agenvo": {
+    "checkout": "~/Projects/agenvo",
+    "remote": "git@github.com:OWNER/agenvo.git",
+    "branch": "xw/dispatch-connectors"
+  },
+  "machines": [
+    {
+      "name": "laptop",
+      "hostnames": ["laptop.local"],
+      "ssh": null,
+      "projectsRoot": "~/Projects",
+      "services": [
+        "dev.example.codex-app-server",
+        "dev.example.herdr-server",
+        "dev.example.desktop-agents-autostart"
+      ],
+      "instances": [
+        {
+          "id": "codex-laptop",
+          "connector": "codex",
+          "context": "# Codex @ laptop\n- thread/start + turn/start；可在同一 thread 追加输入。\n- 项目在 ~/Projects/<project>；默认 danger-full-access。"
+        },
+        {
+          "id": "herdr-laptop",
+          "connector": "herdr",
+          "context": "# Herdr @ laptop\n- agent.start 起 claude/codex/agy，agent.prompt 追加输入。\n- full access：claude --dangerously-skip-permissions；codex --dangerously-bypass-approvals-and-sandbox。"
+        },
+        {
+          "id": "dsh-laptop",
+          "connector": "dispatch",
+          "kind": "dsh",
+          "endpoint": "http://127.0.0.1:7790",
+          "keyFile": "~/.config/dsh-grokbot-dispatch/key",
+          "source": "agenvo",
+          "context": "# DSH desktop @ laptop\n- jobs.create 在 DSH 桌面新建可见会话，目录 ~/Projects/<project>，默认 danger-full-access。\n- 不能远程追加输入；完成后用 jobs.get 读结果或订阅 job.finished。"
+        },
+        {
+          "id": "zcode-laptop",
+          "connector": "dispatch",
+          "kind": "zcode",
+          "endpoint": "http://127.0.0.1:7791",
+          "keyFile": "~/.config/zcode-dispatch/key",
+          "source": "agenvo",
+          "context": "# ZCode desktop @ laptop\n- jobs.create 在 ZCode 桌面新建可见会话，默认 yolo；难任务传 model。\n- 适合本机验证与 iOS 真机测试。"
+        }
+      ]
+    }
+  ]
+}

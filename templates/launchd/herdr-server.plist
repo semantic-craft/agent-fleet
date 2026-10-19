@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Headless Herdr server; attach a UI any time with `herdr`. PATH must reach claude/codex/agy for agent.start. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>{{LABEL_PREFIX}}.herdr-server</string>
+  <key>ProgramArguments</key><array><string>{{BIN}}/herdr</string><string>server</string></array>
+  <key>WorkingDirectory</key><string>{{PROJECTS}}</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>{{BIN}}:{{HOME}}/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>HOME</key><string>{{HOME}}</string>
+    <key>LANG</key><string>en_US.UTF-8</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+  <key>StandardOutPath</key><string>{{HOME}}/Library/Logs/herdr-server/stdout.log</string>
+  <key>StandardErrorPath</key><string>{{HOME}}/Library/Logs/herdr-server/stderr.log</string>
+</dict>
+</plist>

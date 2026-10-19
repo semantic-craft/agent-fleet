@@ -1,0 +1,15 @@
+{
+  "name": "agent-fleet",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "engines": { "node": ">=24.13.0" },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "doctor": "node scripts/fleet.mjs doctor",
+    "check": "node scripts/fleet.mjs check"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1"
+  }
+}
