@@ -332,7 +332,7 @@ function upstream() {
   process.exitCode = 1; // a pending upgrade needs attention, so the weekly job notifies
 }
 
-const commands = { doctor, contexts, launchd: () => launchd(arg), check, upstream, release: async () => (await import("./release.mjs")).release(arg, { cfg: config(), sha: opt.sha, rollback: opt.rollback }) };
+const commands = { doctor, contexts, launchd: () => launchd(arg), check, upstream, release: async () => (await import("./release.mjs")).release(arg, { cfg: arg === "agenvo" ? config() : {}, sha: opt.sha, rollback: opt.rollback }) };
 if (!commands[command]) {
   console.error("usage: fleet.mjs doctor | contexts [--apply] | launchd NAME | check [--dispatch] [--project P] [--instance ID --session SID] | upstream [--try-merge] | release agenvo|zcode [--sha SHA] [--rollback]  [--machine NAME] [--config PATH]");
   process.exit(2);
