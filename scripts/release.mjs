@@ -3,11 +3,14 @@
 // restart them and verify. Live services never run from a git checkout, so switching branches or
 // rebuilding there cannot break them. See docs/runbook.md "发布与回滚".
 import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
 import { CONNECTOR_DIRS, expandHome, writeJson0600 } from "./lib.mjs";
-import { MANIFEST, component, fullSha, manifestDiff, ownedPlists, releaseOf, treeHashes } from "./release-lib.mjs";
+import { MANIFEST, component, fullSha, manifestDiff, ownedPlists, profileWithPlugin, releaseOf, treeHashes } from "./release-lib.mjs";
+
+const repoRoot = join(fileURLToPath(new URL(".", import.meta.url)), "..");
 
 const run = (cmd, args, opts = {}) => execFileSync(cmd, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], ...opts }).trim();
 const ok = (cmd, args) => {
@@ -29,6 +32,7 @@ const readJson = (p) => {
 
 /** Where the source lives and which remote-tracking ref a deployable commit must be on. */
 function source(name, cfg, home) {
+  if (component(name).self) return { dir: repoRoot, remote: "origin", ref: "refs/remotes/origin/main" };
   if (name === "agenvo") {
     const dir = expandHome(cfg.agenvo?.checkout ?? "~/Projects/agenvo", home);
     const remotes = run("git", ["-C", dir, "remote", "-v"]).split("\n").map((l) => l.split(/\s+/));
@@ -36,8 +40,7 @@ function source(name, cfg, home) {
     if (!remote) throw new Error(`no remote in ${dir} with url ${cfg.agenvo?.remote} (fleet.json agenvo.remote)`);
     return { dir, remote, ref: `refs/remotes/${remote}/${cfg.agenvo.branch}` };
   }
-  const dir = expandHome(cfg.zcode?.checkout ?? "~/Projects/zcode-dispatch", home);
-  return { dir, remote: "origin", ref: "refs/remotes/origin/main" };
+  throw new Error(`no source for ${name}`);
 }
 
 function livePlists(agents) {
@@ -98,10 +101,17 @@ async function connectorsOnline(home, plists, before, timeoutMs = 90_000) {
 }
 
 function build(name, src, sha, dest) {
+  const c = component(name);
   const tree = name === "zcode" ? join(dest, "tree") : join(dest, ".src");
   mkdirSync(tree, { recursive: true, mode: 0o700 });
-  execFileSync("/bin/sh", ["-c", 'git -C "$1" archive "$2" | tar -x -C "$3"', "sh", src.dir, sha, tree]);
+  execFileSync("/bin/sh", ["-c", 'r=$1 s=$2 d=$3; shift 3; git -C "$r" archive "$s" -- "$@" | tar -x -C "$d"', "sh", src.dir, sha, tree, ...(c.paths ?? ["."])]);
   if (name === "zcode") return;
+  if (name === "dsh") {
+    renameSync(join(tree, "adapters/dsh"), join(dest, "plugin"));
+    rmSync(join(dest, "plugin/test"), { recursive: true, force: true });
+    rmSync(tree, { recursive: true, force: true });
+    return;
+  }
   const inTree = (args) => run("npm", args, { cwd: tree, stdio: ["ignore", "pipe", "inherit"] });
   inTree(["ci", "--no-audit", "--no-fund"]);
   for (const app of Object.values(CONNECTOR_DIRS)) inTree(["run", "build", "--workspace", `@agenvo/${app}`]);
@@ -117,6 +127,110 @@ function build(name, src, sha, dest) {
   rmSync(tree, { recursive: true, force: true });
 }
 
+/** Build into root/<sha> unless an identical release is already there. */
+function ensureRelease(name, src, sha, root, log) {
+  const dest = join(root, sha);
+  if (existsSync(dest)) {
+    const m = readJson(join(dest, MANIFEST));
+    if (!m || manifestDiff(m.files, treeHashes(dest, [MANIFEST])).length) throw new Error(`${dest} is incomplete or edited; remove it and run again`);
+    log(`reusing ${dest}`);
+    return dest;
+  }
+  const staging = join(root, `.staging-${sha}-${process.pid}`);
+  rmSync(staging, { recursive: true, force: true });
+  try {
+    build(name, src, sha, staging);
+    writeJson0600(join(staging, MANIFEST), { component: name, sha, ref: src.ref, builtAt: new Date().toISOString(), files: treeHashes(staging, [MANIFEST]) });
+    renameSync(staging, dest);
+  } catch (e) {
+    rmSync(staging, { recursive: true, force: true });
+    throw e;
+  }
+  log(`built ${dest}`);
+  return dest;
+}
+
+const DSH_PROFILE = (home) => join(home, ".dsh/profiles/desktop");
+const DSH_REPLACES = ["dsh-grokbot-dispatch", "hermes-dsh-dispatch"];
+export const dshSocket = (home = homedir()) => join(home, ".local/state/agent-fleet-dsh/native.sock");
+
+function dshBin() {
+  for (const b of ["dsh", "/usr/local/bin/dsh", "/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh"]) if (ok("/bin/sh", ["-c", 'command -v "$1"', "sh", b])) return b;
+  throw new Error("dsh CLI not found (needed to install the profile's plugin links)");
+}
+
+/** GET /health on the bridge socket; resolves the parsed body or null. */
+function socketHealth(file) {
+  return new Promise((resolve) => {
+    import("node:http").then(({ request }) => {
+      const req = request({ socketPath: file, path: "/health", timeout: 3000 }, async (res) => {
+        let raw = "";
+        for await (const c of res) raw += c;
+        try { resolve(JSON.parse(raw)); } catch { resolve(null); }
+      });
+      req.on("error", () => resolve(null));
+      req.on("timeout", () => (req.destroy(), resolve(null)));
+      req.end();
+    });
+  });
+}
+
+async function waitBridge(home, beforePid, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const h = await socketHealth(dshSocket(home));
+    if (h?.ok && h.pid !== beforePid) return h;
+    await sleep(2000);
+  }
+  return null;
+}
+
+/** Point releases/dsh/live at `dest` (atomic rename of a fresh symlink). */
+function pointLive(root, dest) {
+  const tmp = join(root, `.live-${process.pid}`);
+  rmSync(tmp, { force: true });
+  symlinkSync(dest, tmp);
+  renameSync(tmp, join(root, "live"));
+}
+
+async function releaseDsh({ c, src, sha, root, currentFile, home, log }) {
+  const dest = ensureRelease("dsh", src, sha, root, log);
+  const profile = DSH_PROFILE(home);
+  const pkgFile = join(profile, "package.json");
+  const pkg = JSON.parse(readFileSync(pkgFile, "utf8"));
+  const livePath = join(root, "live", "plugin");
+  const next = profileWithPlugin(pkg, { plugin: c.plugin, linkPath: livePath, replaces: DSH_REPLACES });
+  const previousLive = (() => { try { return lstatSync(join(root, "live")).isSymbolicLink() ? readlinkSync(join(root, "live")) : null; } catch { return null; } })();
+  const before = (await socketHealth(dshSocket(home)))?.pid ?? null;
+  const backup = join(root, "backups", `${sha}-${Date.now()}`);
+  mkdirSync(backup, { recursive: true, mode: 0o700 });
+  for (const f of ["package.json", "pnpm-lock.yaml"]) if (existsSync(join(profile, f))) cpSync(join(profile, f), join(backup, f));
+  pointLive(root, dest);
+  writeJson0600(currentFile, { sha, backup, previousLive, switchedAt: new Date().toISOString() });
+  if (next) {
+    writeFileSync(pkgFile, JSON.stringify(next, null, 2) + "\n");
+    run(dshBin(), ["plugin", "--profile", "desktop", "install", "--prefer-offline"], { cwd: "/tmp", stdio: ["ignore", "pipe", "inherit"] });
+    log(`desktop profile now links ${c.plugin} -> ${livePath}`);
+  }
+  log(`live -> ${dest}`);
+  // The desktop app reloads its profile on change; a code-only update (same link) needs a restart.
+  const h = await waitBridge(home, before, next ? 60_000 : 15_000);
+  if (h) return log(`native bridge up on ${dshSocket(home)}: pid ${h.pid} dsh ${h.dsh} peer ${JSON.stringify(h.peer)}`);
+  throw new Error(`native bridge did not come up from the new release on ${dshSocket(home)}; quit and reopen DeepSeek Harness to load it, then check again\nroll back with: node scripts/fleet.mjs release dsh --rollback`);
+}
+
+function rollbackDsh({ root, currentFile, home, log }) {
+  const cur = readJson(currentFile);
+  if (!cur?.backup || !existsSync(cur.backup)) throw new Error(`no recorded switch to roll back in ${currentFile}`);
+  const profile = DSH_PROFILE(home);
+  for (const f of readdirSync(cur.backup)) cpSync(join(cur.backup, f), join(profile, f));
+  run(dshBin(), ["plugin", "--profile", "desktop", "install", "--prefer-offline"], { cwd: "/tmp", stdio: ["ignore", "pipe", "inherit"] });
+  if (cur.previousLive) pointLive(root, cur.previousLive);
+  else rmSync(join(root, "live"), { force: true });
+  writeJson0600(currentFile, { sha: null, rolledBackFrom: cur.sha, at: new Date().toISOString() });
+  log("restored the desktop profile; quit and reopen DeepSeek Harness if the bridge does not reload");
+}
+
 export async function release(name, { cfg, sha, rollback = false, home = homedir(), log = console.log }) {
   const c = component(name);
   const uid = userInfo().uid;
@@ -125,6 +239,7 @@ export async function release(name, { cfg, sha, rollback = false, home = homedir
   const currentFile = join(root, "current.json");
   mkdirSync(root, { recursive: true, mode: 0o700 });
 
+  if (rollback && name === "dsh") return rollbackDsh({ root, currentFile, home, log });
   if (rollback) {
     const cur = readJson(currentFile);
     if (!cur?.backup || !existsSync(cur.backup)) throw new Error(`no recorded switch to roll back in ${currentFile}`);
@@ -152,6 +267,8 @@ export async function release(name, { cfg, sha, rollback = false, home = homedir
     if (!text.includes(needle)) throw new Error(`${sha.slice(0, 12)} lacks ${needle} in ${path}; refusing a release that drops it`);
   }
 
+  if (name === "dsh") return releaseDsh({ c, src, sha, root, currentFile, home, log });
+
   const plists = ownedPlists(name, livePlists(agents)).map((p) => ({ ...p, target: join(root, sha, c.entry(p.programArg)) }));
   if (!plists.length) throw new Error(`no launchd plist in ${agents} belongs to ${name}`);
   for (const p of plists) {
@@ -163,24 +280,7 @@ export async function release(name, { cfg, sha, rollback = false, home = homedir
   }
   if (name === "zcode" && (await zcodeHealth(home)).running) throw new Error("ZCode receiver has running jobs; wait for them to finish");
 
-  const dest = join(root, sha);
-  if (existsSync(dest)) {
-    const m = readJson(join(dest, MANIFEST));
-    if (!m || manifestDiff(m.files, treeHashes(dest, [MANIFEST])).length) throw new Error(`${dest} is incomplete or edited; remove it and run again`);
-    log(`reusing ${dest}`);
-  } else {
-    const staging = join(root, `.staging-${sha}-${process.pid}`);
-    rmSync(staging, { recursive: true, force: true });
-    try {
-      build(name, src, sha, staging);
-      writeJson0600(join(staging, MANIFEST), { component: name, sha, ref: src.ref, builtAt: new Date().toISOString(), files: treeHashes(staging, [MANIFEST]) });
-      renameSync(staging, dest);
-    } catch (e) {
-      rmSync(staging, { recursive: true, force: true });
-      throw e;
-    }
-    log(`built ${dest}`);
-  }
+  const dest = ensureRelease(name, src, sha, root, log);
 
   // Outside the release itself, so its manifest stays exact.
   const backup = join(root, "backups", `${sha}-${Date.now()}`);

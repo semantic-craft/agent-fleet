@@ -43,9 +43,9 @@ mkdir -p ~/Library/Logs/codex-app-server ~/Library/Logs/herdr-server
 for f in codex-app-server herdr-server desktop-agents-autostart; do launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.yourname.$f.plist; done
 ```
 
-DSH：在每台 Mac 的桌面版 profile 里装 dsh-grokbot-dispatch 插件，它在 `~/.local/state/dsh-grokbot-dispatch/native.sock`（0600）上转发桌面 Host 的原生会话接口；插件改动在桌面版重载 profile 或重启后生效。插件同时开 Grok 用的 `/v1/jobs` 接收端；不接 Grok 的机器在 `~/.config/dsh-grokbot-dispatch/config.json` 里把 `host` 和 `allowedIps` 都设成 `127.0.0.1`，只留本机回环。
+DSH：每台 Mac 跑 `node scripts/fleet.mjs release dsh`，把本仓库的 [adapters/dsh](../adapters/dsh/README.md) 插件（`agent-fleet-dsh`）链进桌面版的 `desktop` profile；它在 `~/.local/state/agent-fleet-dsh/native.sock`（0600）上转发桌面 Host 的原生会话接口。profile 变化时桌面版自己重载；只改代码的更新要重开 DeepSeek Harness。
 
-ZCode 接收端：克隆 zcode-dispatch，按其 README 写好 `~/.config/zcode-dispatch/config.json` 和 launchd plist（`bin/install-launchd.sh`），之后一律用 `fleet.mjs release zcode` 部署（见下文“发布与回滚”）。它要满足 [ADR-0004](decisions/0004-desktop-strict-and-full-access.md)：接受 `source: "agenvo"`，并且 `runner: "app"` 时不退回 headless；`release` 会拒绝缺少这两项的提交。接收端的 `allowedIps` 要包含 connector 的源地址。
+ZCode 接收端（本仓库 [adapters/zcode](../adapters/zcode/README.md)）：生成 `~/.config/zcode-dispatch/key`（0600），`fleet.mjs launchd zcode-receiver` 生成 plist 并 bootstrap 一次，之后一律用 `fleet.mjs release zcode` 部署（见下文“发布与回滚”）。它只接受 `source: "agenvo"` + `runner: "app"`，ZCode.app 不在就明确失败（[ADR-0004](decisions/0004-desktop-strict-and-full-access.md)）。
 
 ## 4. 添加实例并配对（每台机器、每种 connector）
 
@@ -53,7 +53,7 @@ ZCode 接收端：克隆 zcode-dispatch，按其 README 写好 `~/.config/zcode-
 agenvo-codex-app-server instance add --id <id> --home ~/.codex --cwd ~/Projects \
   --endpoint unix://$HOME/.codex/app-server-control/app-server-control.sock
 agenvo-herdr instance add --id <id> --config-root ~/.config/herdr --cwd ~/Projects
-agenvo-dsh instance add --id <id> --endpoint unix://$HOME/.local/state/dsh-grokbot-dispatch/native.sock
+agenvo-dsh instance add --id <id> --endpoint unix://$HOME/.local/state/agent-fleet-dsh/native.sock
 agenvo-dispatch instance add --id <id> --endpoint http://HOST:PORT --key-file <ZCode 接收端 key>
 ```
 
@@ -89,12 +89,13 @@ node scripts/fleet.mjs check --instance <dsh 实例> --session <sessionId>   # �
 
 ```sh
 node scripts/fleet.mjs release agenvo [--sha SHA]   # 4 个 connector；默认取 overlay 里 agenvo.remote/branch 的最新提交
-node scripts/fleet.mjs release zcode  [--sha SHA]   # ZCode 接收端；默认取 origin/main
+node scripts/fleet.mjs release zcode  [--sha SHA]   # ZCode 接收端（adapters/zcode）；默认取本仓库 origin/main
+node scripts/fleet.mjs release dsh    [--sha SHA]   # DSH 插件（adapters/dsh）；改 releases/dsh/live 并更新桌面 profile
 node scripts/fleet.mjs release <组件> --rollback     # 恢复上一次切换前的 plist
 node scripts/fleet.mjs check                         # 切换后经 relay 端到端验收
 ```
 
-拒绝的情况：提交不在上述远端分支上；zcode 提交缺少 strict runner 或 `agenvo` 来源；ZCode 接收端还有任务在跑；现役发布目录被手改过（与 `release.json` 不符）；同一提交的目录不完整。旧 plist 备份在 `releases/<组件>/backups/`，`current.json` 记录当前版本。zcode 发布会去掉已随 Dot 网关退役的 `ZCODE_DOT_ACCESS_CONFIG`。
+拒绝的情况：提交不在上述远端分支上；zcode 提交缺少 strict runner 或 `agenvo` 限定；ZCode 接收端还有任务在跑；现役发布目录被手改过（与 `release.json` 不符）；同一提交的目录不完整。旧 plist 备份在 `releases/<组件>/backups/`，`current.json` 记录当前版本。zcode 发布会去掉已随 Dot 网关退役的 `ZCODE_DOT_ACCESS_CONFIG`。
 
 ## 日常操作
 

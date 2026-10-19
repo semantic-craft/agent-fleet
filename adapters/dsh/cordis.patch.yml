@@ -1,0 +1,5 @@
+# Mounted when installed as a dsh bundle in the desktop profile.
+- insert:
+    - id: agent-fleet-dsh
+      name: agent-fleet-dsh
+      config: {}
