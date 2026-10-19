@@ -52,14 +52,11 @@ function landscapeGuard() {
     if (!m) continue;
     const status = m[2].trim();
     for (const name of m[1].matchAll(/`([^`]+)`/g)) {
-      const base = name[1].replace(/^agent-interop-private$/, "agent-interop-private");
-      if (base.includes("/")) continue;
+      const base = name[1];
+      if (base.includes("/") || base.startsWith("-")) continue;
       listed.set(base, status);
     }
   }
-  // `agent-interop-private` / `-hub` ... shorthand
-  if (listed.has("agent-interop-private")) for (const s of ["-hub", "-hub-lease", "-prod"]) listed.set("agent-interop" + s, listed.get("agent-interop-private"));
-  for (const k of [...listed.keys()]) if (k.startsWith("-")) listed.delete(k);
   const pattern = /agent|bridge|dispatch|relay|tailmsg|grok|hermes|^dot-|zcode|^dsh-|agenvo|fleet/i;
   const present = readdirSync(projects).filter((d) => !d.startsWith(".") && !d.startsWith("_") && pattern.test(d) && statSync(join(projects, d)).isDirectory());
   for (const d of present) if (!listed.has(d)) fail(`landscape: ~/Projects/${d} has no row in docs/landscape.md`);

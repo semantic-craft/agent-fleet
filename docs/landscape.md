@@ -1,6 +1,6 @@
 # `~/Projects` 里与 agent 协作相关的目录
 
-快照：2026-10-19（A、B 两批退役已执行）。各项何时退役按依赖判断，见 [ADR-0006](decisions/0006-coexistence-and-retirement.md)。用来回答"这个目录能不能动、该去哪改"。状态的含义：
+快照：2026-10-19（A、B 两批退役已执行；agent-interop 收成一个 checkout；接收端的 Yobiru 传输代码删除中）。各项何时退役按依赖判断，见 [ADR-0006](decisions/0006-coexistence-and-retirement.md)。用来回答"这个目录能不能动、该去哪改"。状态的含义：
 
 - **核心**：本架构的组成部分。
 - **接收端**：桌面 app 的原生适配层。
@@ -16,10 +16,10 @@
 | --- | --- | --- |
 | `agent-fleet` | 本仓库：设计、清单、脚本、提示词 | 核心 |
 | `agenvo` | 上游 Agenvo 的最小 fork（新增 `dsh`/`zcode` kind、原生 DSH connector `apps/dsh` 和 ZCode 用的 `apps/dispatch`）；relay 与所有 connector 都从这里构建 | 核心 |
-| `dsh-grokbot-dispatch` | DSH 桌面插件：native bridge（Unix socket 上转发桌面 Host 原生会话接口，供 `agenvo-dsh` 附着）；另有 Grok 用的 `/v1/jobs` 接收端 | 接收端 |
-| `zcode-dispatch` | ZCode 接收端与插件；线上通过 agent-interop 的部署脚本固定在指定提交 | 接收端 |
-| `hermes-dsh-dispatch` | 第二台 Mac 上的 DSH 插件（Hermes ↔ DSH），vendored dsh-grokbot-dispatch，同样挂 native bridge | 接收端 |
-| `agent-interop-private` / `-hub` / `-hub-lease` / `-prod` | 同一个私有仓库的四个 checkout：`hub_run`（远程入口已随 dot 网关退役，代码冻结）、dot 网关、门铃和 reason-net（服务已停，部署副本在 `_archive/dot-path-20261019/_deploy/`）。合并方案见其 `docs/operations/AGENT_INFRA_MIGRATION.md` | 冻结 |
+| `dsh-grokbot-dispatch` | DSH 桌面插件：native bridge（Unix socket 上转发桌面 Host 原生会话接口，供 `agenvo-dsh` 附着）；另有 Grok 用的 `/v1/jobs` 接收端。只走 HTTP 直连，Yobiru 传输已删（[#9](https://github.com/semantic-craft/dsh-grokbot-dispatch/pull/9)） | 接收端 |
+| `zcode-dispatch` | ZCode 接收端与插件；线上通过 agent-interop 的部署脚本固定在指定提交。只走 HTTP 直连，Yobiru 传输已删（[#9](https://github.com/semantic-craft/zcode-dispatch/pull/9)） | 接收端 |
+| `hermes-dsh-dispatch` | 第二台 Mac 上的 DSH 插件（Hermes ↔ DSH），vendored dsh-grokbot-dispatch，同样挂 native bridge；vendor 副本仍含 Yobiru 代码，待同步 | 接收端 |
+| `agent-interop-private` | 私有仓库的唯一 checkout（原 `-hub`、`-hub-lease`、`-prod` 三个副本于 2026-10-19 删除，本地分支已并入）：`hub_run`（远程入口已随 dot 网关退役，代码冻结）、dot 网关、门铃和 reason-net（服务已停，部署副本在 `_archive/dot-path-20261019/_deploy/`）；zcode 接收端的部署脚本 `integrations/zcode/deploy.py` 仍在用 | 冻结 |
 | `agent-collab` | Issue/CLAIM/非作者评审合并的协作协议 | 治理 |
 | `bot-handbook` | Grok Bot 共用的经验与决策正本 | 治理：Grok 机器停用后归档 |
 | `grokbot-box-services` | Grok Bot 那台机器上的第三方服务台账 | 治理：Grok 机器停用后归档 |
