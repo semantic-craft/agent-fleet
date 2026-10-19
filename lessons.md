@@ -116,3 +116,21 @@
 
 - 起因与后果：DSH 执行验收时 `open -a ZCode` 让 ZCode 以 Node 模式启动后立刻退出，看起来像 app 坏了。登录 shell 和 launchd 里没有这个变量。
 - 复发记录：Seen 1x (2026-10-19)。
+
+### `plutil -replace ProgramArguments.1` 插入而不是覆盖
+
+**改 plist 数组里的一项时，整体替换数组：`plutil -replace ProgramArguments -json '[...]'`。**
+
+- 起因与后果：第一次 `release zcode` 用 `-replace ProgramArguments.1 -string <新路径>`，结果数组变成 `[node, 新, 旧]`，接收端多带了一个旧路径参数启动（碰巧无害）。
+- 修复与证据：`scripts/release.mjs` 改为整体替换数组；重跑后 `plutil -extract ProgramArguments` 只有两项。
+- 正确做法：不要用带下标的 `-replace` 改数组元素。
+- 复发记录：Seen 1x (2026-10-19)。
+
+### 常驻服务不要从 git checkout 运行
+
+**launchd 指向 `~/.local/share/agent-fleet/releases/<组件>/<sha>/`，由 `fleet.mjs release` 切换。**
+
+- 起因与后果：4 个 connector 原来直接跑 `~/Projects/agenvo/apps/*/dist/cli.js`，在 checkout 里切分支、合并上游或重新构建都会在下次重启时改变线上行为。
+- 修复与证据：`scripts/release.mjs`；2026-10-19 切换后 `fleet.mjs check --dispatch` 全部 OK。
+- 正确做法：`agenvo-* service install` 之后再跑一次 `release agenvo`。
+- 复发记录：Seen 1x (2026-10-19)。

@@ -53,6 +53,7 @@ node scripts/fleet.mjs doctor             # 本机 connector 与原生服务状�
 node scripts/fleet.mjs check              # 经 relay 走一遍 OAuth + MCP，列出所有实例，结束时撤销测试授权
 node scripts/fleet.mjs check --dispatch   # 另给每个 dsh/zcode 实例派一个只读任务并读回结果（dsh 等到原生 turn/end）
 node scripts/fleet.mjs upstream           # fork 与上游的差距，以及是否到了去掉 fork 的时候
+node scripts/fleet.mjs release agenvo|zcode   # 把已推送的提交装进固定版本的发布目录并切换 launchd（--rollback 回退）
 ```
 
 License: Apache-2.0。

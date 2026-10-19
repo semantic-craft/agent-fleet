@@ -45,7 +45,7 @@ for f in codex-app-server herdr-server desktop-agents-autostart; do launchctl bo
 
 DSH：在每台 Mac 的桌面版 profile 里装 dsh-grokbot-dispatch 插件，它在 `~/.local/state/dsh-grokbot-dispatch/native.sock`（0600）上转发桌面 Host 的原生会话接口；插件改动在桌面版重载 profile 或重启后生效。插件同时开 Grok 用的 `/v1/jobs` 接收端；不接 Grok 的机器在 `~/.config/dsh-grokbot-dispatch/config.json` 里把 `host` 和 `allowedIps` 都设成 `127.0.0.1`，只留本机回环。
 
-ZCode 接收端按其仓库的 README 安装，要满足 [ADR-0004](decisions/0004-desktop-strict-and-full-access.md)：接受 `source: "agenvo"`，并且 `runner: "app"` 时不退回 headless。接收端的 `allowedIps` 要包含 connector 的源地址。
+ZCode 接收端：克隆 zcode-dispatch，按其 README 写好 `~/.config/zcode-dispatch/config.json` 和 launchd plist（`bin/install-launchd.sh`），之后一律用 `fleet.mjs release zcode` 部署（见下文“发布与回滚”）。它要满足 [ADR-0004](decisions/0004-desktop-strict-and-full-access.md)：接受 `source: "agenvo"`，并且 `runner: "app"` 时不退回 headless；`release` 会拒绝缺少这两项的提交。接收端的 `allowedIps` 要包含 connector 的源地址。
 
 ## 4. 添加实例并配对（每台机器、每种 connector）
 
@@ -65,7 +65,10 @@ agenvo-dispatch instance add --id <id> --endpoint http://HOST:PORT --key-file <Z
 node scripts/fleet.mjs contexts --apply      # 把 overlay 里的 context 写进各 connector 配置
 AGENVO_ADMIN_SECRET="$(cat ~/.config/agenvo/admin-secret)" agenvo-<connector> connect <RELAY> --name "<机器> / <connector>" --approve
 agenvo-<connector> service install
+node scripts/fleet.mjs release agenvo        # 把刚装好的 connector 改为从固定版本的发布目录运行
 ```
+
+`service install` 生成的 plist 指向 checkout 里的 `dist/cli.js`；每次 `service install` 之后都要再跑一次 `release agenvo`。
 
 在没有管理员密钥的机器上（例如第二台 Mac）：先用 `connect <RELAY> --no-browser` 拿到配对码和指纹，再在有密钥的机器上执行 `agenvo-dispatch pairing approve CODE --fingerprint SHA256 --base-url <RELAY>`。密钥不要复制到其他机器。
 
@@ -80,6 +83,19 @@ node scripts/fleet.mjs check --instance <dsh 实例> --session <sessionId>   # �
 
 `check` 只撤销自己创建的测试授权。最后在 ChatGPT 里添加连接器（Plugins → Add custom MCP server，URL 填 `<RELAY>/mcp`，认证选 OAuth），再用 [prompts/acceptance-codex.md](../prompts/acceptance-codex.md) 做界面级验收。
 
+## 发布与回滚
+
+常驻服务从不直接跑 git checkout，否则在 checkout 里切分支或重新构建会立即影响线上。`release` 把一个已推送的提交构建进 `~/.local/share/agent-fleet/releases/<组件>/<sha>/`（带逐文件 sha256 的 `release.json`），把该组件的 launchd plist 指过去，重启并验证：
+
+```sh
+node scripts/fleet.mjs release agenvo [--sha SHA]   # 4 个 connector；默认取 overlay 里 agenvo.remote/branch 的最新提交
+node scripts/fleet.mjs release zcode  [--sha SHA]   # ZCode 接收端；默认取 origin/main
+node scripts/fleet.mjs release <组件> --rollback     # 恢复上一次切换前的 plist
+node scripts/fleet.mjs check                         # 切换后经 relay 端到端验收
+```
+
+拒绝的情况：提交不在上述远端分支上；zcode 提交缺少 strict runner 或 `agenvo` 来源；ZCode 接收端还有任务在跑；现役发布目录被手改过（与 `release.json` 不符）；同一提交的目录不完整。旧 plist 备份在 `releases/<组件>/backups/`，`current.json` 记录当前版本。zcode 发布会去掉已随 Dot 网关退役的 `ZCODE_DOT_ACCESS_CONFIG`。
+
 ## 日常操作
 
 | 要做什么 | 怎么做 |
@@ -87,5 +103,5 @@ node scripts/fleet.mjs check --instance <dsh 实例> --session <sessionId>   # �
 | 改某个实例的 context | 改 overlay，执行 `contexts --apply`，重启对应 connector（`launchctl kickstart -k gui/$(id -u)/<label>`）；不需要重新批准 |
 | 改 `source` 或 endpoint | 改 connector 配置并重启，然后在 relay 重新批准：`admin state` 找到指纹，再 `admin approve-instance` |
 | 换 relay 域名 | 部署新的 `BASE_URL`，把各 connector 配置里的 `relay` 字段改掉并重启（配对凭据仍有效）；ChatGPT 的连接器要重新添加 |
-| 升级 agenvo | 把上游 tag 合并进 fork 分支，`npm ci && npm run build`，重新部署 relay，重启全部 connector，再跑 `check` |
+| 升级 agenvo | 把上游 tag 合并进 fork 分支并推送，重新部署 relay，`release agenvo`，再跑 `check` |
 | 撤销访问 | 在 `<RELAY>/admin` 页面撤销，或用 `agenvo-* admin revoke grant|instance|device` |
