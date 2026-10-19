@@ -1,0 +1,3 @@
+#!/bin/sh
+# Block commits that leak overlay values or break the landscape map.
+exec node scripts/guard.mjs

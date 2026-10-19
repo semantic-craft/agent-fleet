@@ -46,7 +46,8 @@ ChatGPT / dots / Grok Bot ──MCP(OAuth, HTTPS)──► Agenvo relay（Cloudf
 
 ```sh
 npm install
-npm test                                  # 配置解析与 context 渲染
+git config core.hooksPath .githooks       # 一次性：提交前自动跑 guard
+npm test                                  # 配置解析、context 渲染与私有值检查
 node scripts/fleet.mjs doctor             # 本机 connector 与原生服务状态
 node scripts/fleet.mjs check              # 经 relay 走一遍 OAuth + MCP，列出所有实例，结束时撤销测试授权
 node scripts/fleet.mjs check --dispatch   # 另给每个 dsh/zcode 实例派一个只读任务并读回结果
