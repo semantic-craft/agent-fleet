@@ -13,7 +13,7 @@ Agenvo connector 主动通过 WSS `/connect` 连接 relay；客户端的 HTTPS `
 - DSH endpoint 是 Unix socket；Herdr 是本机原生服务；ZCode 当前 endpoint 是 tailnet 地址上的 HTTP 接收端。故“relay 无需 tailnet”不等于“当前 ZCode 部署无需 tailnet”。
 - 四个 connector 的 launchd 路径均固定于发布提交 `e0d1daf43ffa6f02ba9ee14a068fb30e8ce7d399`，不是开发 checkout。
 - 四份 connector 配置指向同一 HTTPS relay；`connection.ts` 将其改为 WSS 并追加 `/connect`，实际目标域名仅保留在 overlay，不写入仓库。`lsof` 观察到四个对应 PID 均有到同一 `198.18.*:443` 的 ESTABLISHED TCP，dispatch 另有到自身 tailnet 接收端的 TCP。配置与 socket 证据支持该 WSS 路径，但未用 TLS 抓包证明 socket 的目标名称。
-- 本机 Surge 没有上述连接的命中规则。`198.18.*` 是与 fake-IP 相符的现象，不能据此断言由哪台上游网关解析或代理。路由查询被沙箱以 `socket: Operation not permitted` 阻止，DNS 查询未提供有效数据；没有扩大访问。Surge 页面的外部 IP 是该页面的探测结果，不能当作 connector 的已证实出口。
+- 本次未在本机 Surge 观察到上述连接及命中规则。`198.18.*` 是与 fake-IP 相符的现象，不能据此断言由哪台上游网关解析或代理。路由查询被沙箱以 `socket: Operation not permitted` 阻止，DNS 查询未提供有效数据；没有扩大访问。Surge 页面的外部 IP 是该页面的探测结果，不能当作 connector 的已证实出口。
 
 ### 重连可观察性
 
