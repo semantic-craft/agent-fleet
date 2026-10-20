@@ -74,6 +74,8 @@ node scripts/fleet.mjs release agenvo        # 把刚装好的 connector 改为�
 
 ## 5. 验收
 
+网络迁移、桌面连续性和主动事件唤醒分别验收，见[网络与桌面验收](network-and-desktop-acceptance.md)；轮询读到 completed 不证明主会话已被唤醒。
+
 ```sh
 node scripts/fleet.mjs doctor              # 本机 launchd 服务与 connector 状态
 node scripts/fleet.mjs check               # OAuth + search + 每个实例一个只读原生调用
