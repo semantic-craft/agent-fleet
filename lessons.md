@@ -79,10 +79,10 @@
 
 ### 链接进 DSH 桌面 profile 的插件，改工作树就可能直接进生产
 
-**改 dsh-grokbot-dispatch 等 `link:` 插件时，在单独的 worktree 里开发；被链接的 checkout 只在验证后切到 main。**
+**改 DSH 插件（`adapters/dsh`）等 `link:` 插件时，在单独的 worktree 里开发；被链接的 checkout 只在验证后切到 main。**
 
 - 起因与后果：开发 native bridge 时直接编辑了被主力 Mac 桌面版链接的 checkout。另一个 agent 恰好给桌面版装插件，触发 profile 重载，桌面 Host 当场加载了半成品，其中一版在 listen 期间改了进程 umask（随后修掉）。没有发现损坏的文件或目录，但这是生产进程。
-- 修复与证据：dsh-grokbot-dispatch #6 去掉 umask 写法并加回归测试；插件日志显示 04:09:54Z、04:12:06Z 两次重载。
+- 修复与证据：插件去掉 umask 写法并加回归测试；插件日志显示 04:09:54Z、04:12:06Z 两次重载。
 - 正确做法：桌面插件的开发与隔离验证用 `DSH_HOME`/`HOME` 临时目录下的 `dsh web`；要上生产时再让链接的 checkout 前进到 main，并在桌面空闲时重载或重启。
 - 复发记录：Seen 1x (2026-10-19)。
 
