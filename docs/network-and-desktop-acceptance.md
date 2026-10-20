@@ -4,17 +4,24 @@
 
 Agenvo connector 主动通过 WSS `/connect` 连接 relay；客户端的 HTTPS `/mcp` 和 OAuth 在 relay。Mac 无需为 Agenvo 新增公网入站、DERP、P2P 打洞、自定义 DNS 或 TUN。以 fork 的 `packages/connector/src/connection.ts` 和上游 [安装说明](https://github.com/Xuanwo/agenvo/blob/main/docs/installation.md)、[架构](https://github.com/Xuanwo/agenvo/blob/main/design/architecture.zh-CN.md) 为依据；部署版本以 overlay 与 launchd 实际发布路径为准。
 
-不要把 Tailscale/Headscale 的 DERP 规则认作 reason-network 专用规则。reason-network 的 iroh/QUIC、n0 DNS、pkarr/mDNS 与 HTTPS relay 属于另一条路径。旧规则是否保留取决于当前消费者，不能仅凭迁移完成就删除。
+不要把 Tailscale/Headscale 的 DERP 规则认作 reason-network 专用规则。[reason-network DESIGN.md](https://github.com/reason-machines/reason-network/blob/main/DESIGN.md) 中的 iroh/QUIC、n0 DNS、pkarr/mDNS 与 HTTPS relay 属于另一条路径。旧规则是否保留取决于当前消费者，不能仅凭迁移完成就删除。
 
 2026-10-20 只读检查：
 
-- Surge GUI 显示当前配置 Atlas、出站模式为规则判定。AX 中增强模式和系统代理是按钮，没有返回可靠开关值；受限 shell 的 `scutil --proxy` 返回空字典，不能据此断言真实宿主已关闭代理。
+- Surge GUI 显示当前配置 Atlas、出站模式为规则判定。后续概览明确显示系统代理“由于子网设置，Surge 已暂停”、增强模式“禁用”（转换值 0）；进程页面显示“无进程”。因此不能把已加载 Atlas 等同于 Agenvo 流量由本机 Surge 接管。受限 shell 的 `scutil --proxy` 空字典不作为这一结论的独立依据。
 - Atlas 含 Tailscale/Headscale 直连、UDP 端口/进程例外、Home Tailnet 地址段路由、真实 IP 例外、DNS 劫持和 TUN 排除；它们也服务其他设备与 tailnet，不能删除。静态文件未找到 reason-network/iroh 专属规则，但远端 RULE-SET 未展开。
 - DSH endpoint 是 Unix socket；Herdr 是本机原生服务；ZCode 当前 endpoint 是 tailnet 地址上的 HTTP 接收端。故“relay 无需 tailnet”不等于“当前 ZCode 部署无需 tailnet”。
 - 四个 connector 的 launchd 路径均固定于发布提交 `e0d1daf43ffa6f02ba9ee14a068fb30e8ce7d399`，不是开发 checkout。
-- 未取得 connector 到 relay 的 Surge 活动连接、命中规则与出口证据；不能仅由 FINAL 规则推断实际 WSS 出口。
+- 四份 connector 配置指向同一 HTTPS relay；`connection.ts` 将其改为 WSS 并追加 `/connect`，实际目标域名仅保留在 overlay，不写入仓库。`lsof` 观察到四个对应 PID 均有到同一 `198.18.*:443` 的 ESTABLISHED TCP，dispatch 另有到自身 tailnet 接收端的 TCP。配置与 socket 证据支持该 WSS 路径，但未用 TLS 抓包证明 socket 的目标名称。
+- 本机 Surge 没有上述连接的命中规则。`198.18.*` 是与 fake-IP 相符的现象，不能据此断言由哪台上游网关解析或代理。路由查询被沙箱以 `socket: Operation not permitted` 阻止，DNS 查询未提供有效数据；没有扩大访问。Surge 页面的外部 IP 是该页面的探测结果，不能当作 connector 的已证实出口。
 
-最小建议是暂不调整网络。先用 Surge 活动连接核实 WSS 的规则/出口，只有出现连接或重连问题才讨论针对 relay 主机的规则。若希望移除 ZCode 的 tailnet 依赖，先独立验证本机回环监听，再提出 endpoint 变更及实例重新批准方案；本次未执行。不要为主动事件唤醒开 Mac 入站端口。
+### 重连可观察性
+
+检查时四份 `status.json` 均为 `online`、`lastError=""`、版本 `0.2.0`；它们是最近状态，不是连接历史。四个运行进程的 stdout/stderr 均指向 `/dev/null`，launchd 未配置日志文件。现有三个 Surge 日志没有 relay 名称记录。因此没有可复核的实际断连次数、重连耗时或事件投递历史，不能声称从未断线。
+
+源码有 30 秒心跳、超过 90 秒未收到 pong 时断开，以及带抖动的指数重连等待；401/403/426 和指定关闭码进入需处理状态。这是实现行为，不是本次恢复实测。未来若要长期监测，最小改进是另行批准并配置有轮转、脱敏策略的 connector stderr 留存；本次不改 launchd、不主动断网或重启。
+
+最小建议是暂不调整网络。当前本机 Surge 暂停，修改它的 relay 规则未必影响现有路径；先在实际接管流量的网关或获准的路由诊断中核实 WSS 出口，只有出现连接或重连问题才讨论针对 relay 主机的规则。若希望移除 ZCode 的 tailnet 依赖，先独立验证本机回环监听，再提出 endpoint 变更及实例重新批准方案；本次未执行。不要为主动事件唤醒开 Mac 入站端口。
 
 只读结构检查（不输出主机、规则值、URL 或认证信息）：
 
@@ -39,6 +46,25 @@ Herdr 的拒绝发生在 `agent.start`，理由是尚未提交只读任务前即
 ## 主动唤醒是另一项验收
 
 本次 DSH 两轮证明“输入 → 原生执行 → 回读 → 同会话追加”成立。**没有证明 `runtime.changed` 主动唤醒 dot 主会话。** 子任务主动调用 `session/follow` 得到 completed 不能替代事件送达证据；当前未建立并核对主会话订阅。
+
+只读平台检查已确认 Agenvo 出现在 event sources，且 `discover_webhook_schema` 返回 `runtime.changed`，所以缺口不在事件 schema 不可发现。`peek` 返回的两项自动化分别用于定期维护和旧入口回执，没有展示 Agenvo 测试订阅；返回值未包含完整 trigger 元数据，不能据此证明 relay 全局没有订阅。当前仍缺少主会话 Agenvo 订阅 ID、实际投递记录及主会话恢复执行证据。
+
+主会话最小测试：用 Automations 的 event-source discovery 取得当前 `connector_id`，使用下列 trigger，经平台正常订阅流程创建一次事件监听（不带轮询 schedule、不手工生成 callback/签名密钥），然后在上表已有 DSH 会话追加唯一标记的一轮，避免新建会话。不要把监听创建成功算作事件送达成功。
+
+```json
+{
+  "connector_id": "<event-source discovery 返回的 Agenvo connector_id>",
+  "event": "runtime.changed",
+  "params": {
+    "deviceId": "<search 返回的 deviceId>",
+    "instanceId": "<search 返回的 DSH instanceId>",
+    "threadId": "<已有 DSH sessionId>",
+    "nativeTypes": ["turn/end"]
+  }
+}
+```
+
+schema 要求 `deviceId`、`instanceId`；`serviceId`、`threadId`、`nativeTypes` 可选。DSH fork 的 `serviceId` 是实例 ID，不能照抄 Codex/Herdr 的 `default`；此测试省略它。`agenvo.resync_required` 可越过 thread/nativeTypes 过滤，处理程序仍须检查事件类型。完成验收后停止本次监听，不更改其他订阅。
 
 按上游 [events.md](https://github.com/Xuanwo/agenvo/blob/main/docs/events.md)，平台提供 callback 与签名密钥，不手工新建凭据。后续由主会话：
 
