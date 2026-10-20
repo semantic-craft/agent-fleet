@@ -50,7 +50,7 @@
 **私有仓库的 PR 上 checks 永远为空；在本机运行 `scripts/check`，把结果写进 PR 后再合并。**
 
 - 起因与后果：一个 session 一直"等待 CI"，任务停在合并前。
-- 修复与证据：改为本机检查后合并（agent-interop-private#76）。
+- 修复与证据：改为本机检查后合并。
 - 正确做法：见 AGENTS.md 的"验收与交付"。
 - 复发记录：Seen 1x (2026-10-19)。
 
@@ -71,10 +71,10 @@
 
 ### grok.com 拦截 Worker 获取它的 CIMD 文档
 
-**Cloudflare Worker 上的 relay 不要为 Grok 打开 CIMD；让它走动态注册，不行就放弃 Grok，不写绕过方案。**
+**Cloudflare Worker 上的 relay 不要为 Grok 打开 CIMD；让它走动态注册。**
 
 - 起因与后果：打开 `clientIdMetadataDocumentEnabled` 后，Grok 的授权请求返回 400。临时 Worker 探测 `https://grok.com/oauth/mcp-client.json` 得到的是 403 challenge 页。
-- 修复与证据：撤回改动，fork 保持上游原样；记入 [ADR-0006](docs/decisions/0006-coexistence-and-retirement.md)。
+- 修复与证据：撤回改动，fork 保持上游原样；记入 [ADR-0006](docs/decisions/0006-single-remote-path.md)。
 - 复发记录：Seen 1x (2026-10-19)。
 
 ### 链接进 DSH 桌面 profile 的插件，改工作树就可能直接进生产

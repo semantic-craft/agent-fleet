@@ -1,6 +1,6 @@
 # ADR-0002：只为 DSH/ZCode 维护一个最小 agenvo fork
 
-状态：已采纳（2026-10-19）；同日修订：DSH 改用原生 connector，不再需要 jobs 封装
+状态：已采纳（2026-10-19）
 
 ## 背景
 上游 Agenvo 没有 DSH 桌面版和 ZCode 桌面版的 connector；用户又要求任务出现在这两个桌面 app 里。
@@ -11,7 +11,7 @@
 ## 决定
 fork 上游，只做三件事：
 1. `packages/protocol` 的实例 kind 枚举新增 `dsh`、`zcode`（relay 会校验这个枚举，所以 relay 也要用 fork 的源码部署）。
-2. 新增 `apps/dsh`（命令 `agenvo-dsh`）：插件（dsh-grokbot-dispatch，两台 Mac 都装）在同用户 Unix socket 上用一个独立 Peer 转发桌面 Host 的原生端点，connector 附着它，方法名和参数都是 DSH 原生的。覆盖列出会话（含用户手动开的）、读输出、新建、向已有会话追加输入、中断和 `runtime.changed` 事件，与上游 Codex/OpenCode connector 同一水平。设计与依据见 agenvo 的 `design/dsh-connector.zh-CN.md`。
+2. 新增 `apps/dsh`（命令 `agenvo-dsh`）：插件（本仓库 `adapters/dsh`，即 `agent-fleet-dsh`，两台 Mac 都装）在同用户 Unix socket 上用一个独立 Peer 转发桌面 Host 的原生端点，connector 附着它，方法名和参数都是 DSH 原生的。覆盖列出会话（含用户手动开的）、读输出、新建、向已有会话追加输入、中断和 `runtime.changed` 事件，与上游 Codex/OpenCode connector 同一水平。设计与依据见 agenvo 的 `design/dsh-connector.zh-CN.md`。
 3. 新增 `apps/dispatch`（命令 `agenvo-dispatch`），只服务 ZCode：`health`、`jobs.create`、`jobs.get` 薄封装上面三个 HTTP 调用；对自己派出的 job 轮询并发出 `job.finished` 事件。
 
 fork 里不放部署记录、个人值或本仓库的文档。
@@ -23,12 +23,11 @@ fork 里不放部署记录、个人值或本仓库的文档。
 
 ## 不做的事
 - 不在 connector 里加队列、重试或调度；原生服务或接收端负责执行，助手负责判断。
-- DSH 不再走 jobs 封装：原生接口能做到的，不另造任务模型。
+- 原生接口能做到的，不另造任务模型：DSH 直接用原生会话方法。
 - 不为 CLI 型 agent 写 connector（见 ADR-0003）。
 
 ## 补丁怎么放（2026-10-19 起）
 
 - `semantic-craft/agenvo` 是上游的**公开 GitHub fork**。`main` 只用来镜像上游，通过 GitHub 的 "Sync fork" 同步；我们的改动全部在 `xw/dispatch-connectors` 分支上，结构始终是"某个上游提交加上我们的补丁"，不在 `main` 上提交。
 - 跟进上游靠 `fleet.mjs upstream --try-merge`，每周自动跑（见 [maintenance](../maintenance.md)）。
-- 早期带个人信息的提交历史保存在私有仓库 `agenvo-history`，不再使用。
 - 2026-10-19 已把 `apps/dsh`（连同 `dsh` kind、bridge 契约与安装说明、用户指南和隔离测试）提给上游：[Xuanwo/agenvo#53](https://github.com/Xuanwo/agenvo/pull/53)，分支 `semantic-craft/agenvo:dsh-connector`。评审意见在该 PR 里跟进；合并后从 `xw/dispatch-connectors` 删掉 DSH 部分，fork 只剩 ZCode。

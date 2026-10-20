@@ -97,7 +97,7 @@ node scripts/fleet.mjs release <组件> --rollback     # 恢复上一次切换�
 node scripts/fleet.mjs check                         # 切换后经 relay 端到端验收
 ```
 
-拒绝的情况：提交不在上述远端分支上；zcode 提交缺少 strict runner 或 `agenvo` 限定；ZCode 接收端还有任务在跑；现役发布目录被手改过（与 `release.json` 不符）；同一提交的目录不完整。旧 plist 备份在 `releases/<组件>/backups/`，`current.json` 记录当前版本。zcode 发布会去掉已随 Dot 网关退役的 `ZCODE_DOT_ACCESS_CONFIG`。
+拒绝的情况：提交不在上述远端分支上；zcode 提交缺少 strict runner 或 `agenvo` 限定；ZCode 接收端还有任务在跑；现役发布目录被手改过（与 `release.json` 不符）；同一提交的目录不完整。旧 plist 备份在 `releases/<组件>/backups/`，`current.json` 记录当前版本。zcode 发布不带 `ZCODE_DOT_ACCESS_CONFIG` 环境变量。
 
 ## 日常操作
 

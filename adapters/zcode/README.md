@@ -1,6 +1,6 @@
 # ZCode receiver
 
-What `agenvo-dispatch` calls to run a task as a **visible ZCode.app session** ([ADR-0002](../../docs/decisions/0002-minimal-agenvo-fork.md), [ADR-0004](../../docs/decisions/0004-desktop-strict-and-full-access.md)). Replaces the former `semantic-craft/zcode-dispatch` repository (2026-10-19), cut down to the one path Agenvo uses.
+What `agenvo-dispatch` calls to run a task as a **visible ZCode.app session** ([ADR-0002](../../docs/decisions/0002-minimal-agenvo-fork.md), [ADR-0004](../../docs/decisions/0004-desktop-strict-and-full-access.md)).
 
 | Route | |
 | --- | --- |
