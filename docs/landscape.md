@@ -16,6 +16,5 @@
 | --- | --- | --- |
 | `agent-fleet` | 本仓库：设计、清单、脚本、提示词，以及两个桌面端适配层 `adapters/dsh`（DSH 原生桥接插件）和 `adapters/zcode`（ZCode 接收端），由 `fleet.mjs release` 部署 | 核心 |
 | `_forks/agenvo` | 上游 Agenvo 的最小 fork（新增 `dsh`/`zcode` kind、原生 DSH connector `apps/dsh` 和 ZCode 用的 `apps/dispatch`）；relay 与所有 connector 都从这里构建，connector 由 `fleet.mjs release agenvo` 装进发布目录运行，checkout 可以随意切分支 | 核心 |
-| `_forks/lcu-dsh` | DSH 桌面版里的 LCU Computer Use 插件（2026-10-19 从 agent-collab 拆出） | 无关：不是通信基础设施，但线上在用 |
-| `_forks/dsh-zlib`、`zcode-plugins` | Z-Library 图书技能和插件 | 无关 |
+| `agent-plugins` | 各 coding agent 自有插件的安装根（2026-10-20）：`claude/`（Claude mod，marketplace xw-claude）、`codex/`（writing-core 构建件，xw-codex）、`zcode/`（zlib 技能包）、`dsh/`（dsh-zlib、lcu-dsh 子模块，dsh-english-coach、dsh-pomodoro） | 无关：不是通信基础设施；其中 `dsh/lcu-dsh`（LCU Computer Use 插件）线上在用 |
 | `_ref/esp32-iphone-agent`、`zotero-bridge` | 硬件 iPhone 操控实验；Zotero 文献桥 | 无关 |
