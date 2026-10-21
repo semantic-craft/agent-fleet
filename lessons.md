@@ -45,9 +45,9 @@
 - 修复与证据：通过 Cloudflare Registrar 新注册一个域名，以 custom domain 绑定，并关闭 workers_dev。
 - 复发记录：Seen 1x (2026-10-19)。
 
-### 私有仓库的 checks 来自常开 Mac mini 的 runner
+### 私有仓库的轻量必过检查来自常开 Mac mini 的 runner
 
-**私有仓库的 PR checks 由常开 Mac mini 上的自托管 runner 跑；仓库还没接 runner 时 checks 为空，在本机运行 `scripts/check`，把结果写进 PR 后再合并。**
+**私有仓库 PR 上的轻量必过检查由常开 Mac mini 上的自托管 runner 跑，Swift/iOS 和签名在开发笔记本上跑；仓库还没接 runner 时 checks 为空，在本机运行 `scripts/check`，把结果写进 PR 后再合并。**
 
 - 起因与后果：一个 session 一直"等待 CI"，任务停在合并前。
 - 修复与证据：改为本机检查后合并。
