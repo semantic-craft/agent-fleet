@@ -29,5 +29,5 @@
 - 生产验收走真实入口：OAuth → relay `/mcp` → connector → 原生服务；只看 `/health` 不算。`fleet.mjs check` 是最小基线。
 - 区分"输入已接受""原生轮次完成""业务目标完成"。
 - 改实例 `source`、endpoint 等 scope 字段后要在 relay 重新批准；只改 `context` 不需要。
-- 私有依赖仓库不跑 GitHub 托管 runner，检查在本机执行；不要等一个永远不会来的 CI。
+- CI：私有仓库的必过检查是常开 Mac mini 上自托管 runner 的轻任务（只调用项目自己的 `scripts/check` 等检查命令；runner 标签与机器名见 overlay）；Swift/iOS 构建和签名在开发笔记本的 runner 上跑；公开仓库用 GitHub 托管 runner。每个 runner 一次只跑一个 job、以低权限独立用户运行，workflow 设 `timeout-minutes`。仓库还没接 runner 时，在本机跑同一条检查命令，把结果写进 PR。
 - 提交与 PR 写清：回退测试、真实使用情况、没跑到的项目。
