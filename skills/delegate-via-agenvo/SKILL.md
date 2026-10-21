@@ -69,7 +69,7 @@ Claude Code 已登录。与 Codex 一样先创建 Herdr workspace、取得 root 
 claude -p --dangerously-skip-permissions "<任务>" --model deepseek/deepseek-flash --output-format json > /tmp/<任务名>.json; echo __EXIT=$?
 ```
 
-新建与 `--resume` 每轮都保留 `--dangerously-skip-permissions`，默认 full access，并显式传 `--model`；设置中的默认 antigravity 模型会拒答 Claude Code 系统提示，等待不会解决。使用无头 `claude -p --dangerously-skip-permissions`，不使用交互式 `agent.start kind claude`。
+新建与 `--resume` 每轮都保留 `--dangerously-skip-permissions`，默认 full access，并显式传 `--model deepseek/deepseek-flash`；设置中的默认 antigravity 模型会拒答 Claude Code 系统提示，等待不会解决。新建与续接分别使用本节上方和下方的完整无头命令，不使用交互式 `agent.start kind claude`。
 
 按同样的 60 秒、之后每 2–3 分钟节奏用 `pane.read` 跟进，看到 `__EXIT=` 后读取 JSON：结果在 `result`，会话 id 在 `session_id`，同时核对 `is_error` 和退出码。拿到会话 id 后记下并告诉用户，追问续接同一会话：
 

@@ -26,7 +26,7 @@
 5. ZCode 桌面在左栏建出可见会话并开始执行；connector 立即返回 job id。
 6. connector 每 5 秒轮询自己派出的 job；完成时发出 `runtime.changed`（`nativeType: "job.finished"`），dot 被唤醒后调 `jobs.get` 读结果，再决定下一步。
 
-Codex 派活经 Herdr 的 `workspace.create` + `pane.run` 运行官方 `codex exec`，追问用 `codex exec resume` 续接同一线程；进程退出后 writer 交还，用户通过 `codex://threads/<thread_id>` 在桌面版继续。Codex connector 只用 `thread/list`（`sourceKinds` 含 `exec`、`modelProviders: []`）和 `thread/read` 读取历史。Claude Code 同样在 Herdr pane 里运行 `claude -p`，每轮显式指定 `--model`；agy 用 `agent.start` + `agent.prompt`。完整命令见[派活技能](../skills/delegate-via-agenvo/SKILL.md)。DSH 也一样：`agenvo-dsh` 调 DSH 桌面版自己的 `session/list`、`session/create`、`session/prompt`、`session/follow` 等，能列出并续写用户手动开的会话，事件是原生的 `turn/start`、`turn/end`。只有 ZCode 的接收端只能新建会话，后续输入要在桌面 app 里手动接着聊。
+Codex 派活经 Herdr 的 `workspace.create` + `pane.run` 运行官方 `codex exec`，追问用 `codex exec resume` 续接同一线程；进程退出后 writer 交还，用户通过 `codex://threads/<thread_id>` 在桌面版继续。Codex connector 只用 `thread/list`（`sourceKinds` 含 `exec`、`modelProviders: []`）和 `thread/read` 读取历史。Claude Code 同样在 Herdr pane 里运行，按派活技能中的完整示例新建与续接，每轮显式使用 `deepseek/deepseek-flash`；agy 用 `agent.start` + `agent.prompt`。完整命令见[派活技能](../skills/delegate-via-agenvo/SKILL.md)。DSH 也一样：`agenvo-dsh` 调 DSH 桌面版自己的 `session/list`、`session/create`、`session/prompt`、`session/follow` 等，能列出并续写用户手动开的会话，事件是原生的 `turn/start`、`turn/end`。只有 ZCode 的接收端只能新建会话，后续输入要在桌面 app 里手动接着聊。
 
 ## 信任边界
 
