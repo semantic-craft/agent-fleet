@@ -91,6 +91,8 @@ node scripts/fleet.mjs check --instance <dsh 实例> --session <sessionId>   # �
 
 ```sh
 node scripts/fleet.mjs release agenvo [--sha SHA]   # 4 个 connector；默认取 overlay 里 agenvo.remote/branch 的最新提交
+node scripts/fleet.mjs release agenvo --connector codex [--sha SHA] # 只切换 Codex connector
+node scripts/fleet.mjs release agenvo --connector codex --rollback  # 只恢复该范围的上次切换
 node scripts/fleet.mjs release zcode  [--sha SHA]   # ZCode 接收端（adapters/zcode）；默认取本仓库 origin/main
 node scripts/fleet.mjs release dsh    [--sha SHA]   # DSH 插件（adapters/dsh）；改 releases/dsh/live 并更新桌面 profile
 node scripts/fleet.mjs release <组件> --rollback     # 恢复上一次切换前的 plist
@@ -98,6 +100,12 @@ node scripts/fleet.mjs check                         # 切换后经 relay 端到
 ```
 
 拒绝的情况：提交不在上述远端分支上；zcode 提交缺少 strict runner 或 `agenvo` 限定；ZCode 接收端还有任务在跑；现役发布目录被手改过（与 `release.json` 不符）；同一提交的目录不完整。旧 plist 备份在 `releases/<组件>/backups/`，`current.json` 记录当前版本。zcode 发布不带 `ZCODE_DOT_ACCESS_CONFIG` 环境变量。
+
+`--connector` 目前仅接受 `release agenvo --connector codex`；其他组件、connector 或非 release 命令会拒绝，`--rollback` 不能与 `--sha` 同用。构建仍复用含四个 connector 的不可变 bundle，但只修改、重启和检查 Codex 的 plist；其他三个 connector 的 plist、进程及全量 `current.json` 不变。Codex 记录在 `current-codex.json`，备份在 `backups/codex/`。
+
+回滚会先校验范围、目标集合、当前入口版本、已记录的 plist 哈希以及旧发布目录完整性，再恢复；后续全量发布使旧 Codex 回滚过期，后续 Codex 发布同样使包含它的旧全量回滚过期。遇到拒绝必须先核对当前版本，不要复制旧记录绕过检查。没有 connector 字段的旧全量记录仍可用，但无法补验当时未记录的 plist 哈希。
+
+范围限定不等于原生任务空闲检查：此命令仍会重启所选 connector，执行前须独立确认它没有活跃任务或待答交互。它不停止共享 app-server、不释放 writer、不改变 endpoint/relay scope，也不代表会话交接已经根治。发布与回滚需串行操作；现有工具不提供跨进程发布锁或中途失败的自动事务恢复。Agenvo 回滚会验证所选 connector 的新 PID 与 online 状态；失败保留带入口及哈希校验的 pending 记录供重试。恢复后仍须经真实 relay 业务入口验收。
 
 ## 日常操作
 
