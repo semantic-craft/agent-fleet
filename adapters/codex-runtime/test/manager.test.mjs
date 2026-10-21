@@ -246,3 +246,64 @@ test('metadata ENOSPC during native completion retains worker and blocks fresh i
   assert.equal(worker.calls.filter(c => c.method === 'turn/start').length, 1);
   assert.equal(worker.eofCount, 0);
 });
+
+test('configWarning is informational during initialize and does not poison an observer', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'owned-warning-'));
+  const factory = fakeFactory();
+  const manager = new OwnedRuntimeManager({stateDir:root,createWorker: options => {
+    const w=factory.createWorker(options);
+    w.initialize=async()=>{w.emitPacket('configWarning',{summary:'Fixture deprecated setting'});return {codexHome:'/fixture'};};
+    return w;
+  }});
+  t.after(async()=>{clearInterval(manager.timer);await rm(root,{recursive:true,force:true});});
+  assert.deepEqual(await manager.initialize(),{codexHome:'/fixture'});
+  assert.equal(manager.status()[0].state,'released');
+  assert.equal(factory.workers[0].eofCount,1);
+});
+
+for (const method of ['thread/queue/changed','item/mcpToolCall/progress']) test(`${method} invalidates an in-flight safety snapshot without marking unknown`, async t => {
+  const {manager,worker,thread}=await setup(t);
+  let emitted=false;
+  worker.intercept=async name=>{
+    if(name==='thread/queue/list'&&!emitted){emitted=true;worker.emitPacket(method,{threadId:thread.id,turnId:'turn',itemId:'item',message:'Working'});}
+  };
+  await assert.rejects(manager.release(thread.id),/state changed/);
+  assert.equal(manager.status()[0].state,'open');assert.equal(worker.eofCount,0);
+  await manager.release(thread.id);assert.equal(worker.eofCount,1);
+});
+
+test('MCP progress does not finish an accepted turn; queue change rechecks actual queued input', async t => {
+  const {manager,worker,thread}=await setup(t);
+  const {turn}=await manager.call('turn/start',{threadId:thread.id,input:[]});
+  worker.emitPacket('item/mcpToolCall/progress',{threadId:thread.id,turnId:turn.id,itemId:'mcp',message:'Working'});
+  await assert.rejects(manager.release(thread.id),/busy/);assert.equal(worker.eofCount,0);
+  worker.queue=[{id:'queued'}];worker.complete(turn.id);
+  await new Promise(resolve=>setTimeout(resolve,30));assert.equal(worker.eofCount,0);
+  worker.queue=[];worker.emitPacket('thread/queue/changed',{threadId:thread.id});
+  await until(()=>manager.status()[0].state,state=>state==='released');assert.equal(worker.eofCount,1);
+});
+
+for(const variant of ['empty','unknown','started','loaded','pending']) test(`rejected thread/start cleanup: ${variant}`,async t=>{
+  const root=await mkdtemp(join(tmpdir(),'owned-rejected-start-')),factory=fakeFactory();
+  const rejection=Object.assign(new Error('native start refused'),variant==='unknown'?{}:{native:{code:-32602,message:'native start refused'}});
+  const manager=new OwnedRuntimeManager({stateDir:root,createWorker:options=>{
+    const w=factory.createWorker(options);
+    w.intercept=async method=>{if(method==='thread/start'){
+      if(variant==='started')w.emitPacket('thread/started',{thread:{id:w.id}});
+      if(variant==='loaded')w.loaded.add(w.id);
+      if(variant==='pending')w.emitPacket('item/tool/requestUserInput',{threadId:w.id},'question');
+      throw rejection;
+    }};return w;
+  }});
+  t.after(async()=>{clearInterval(manager.timer);await rm(root,{recursive:true,force:true});});
+  await assert.rejects(manager.call('thread/start',{}),error=>error===rejection);
+  assert.equal(factory.workers[0].eofCount,variant==='empty'?1:0);
+  assert.equal(manager.status()[0].state,variant==='empty'?'released':variant==='unknown'?'unknown':'open');
+  assert.equal(factory.workers[0].calls.filter(c=>c.method==='thread/start').length,1);
+});
+
+for(const [method,params] of [['configWarning',{}],['thread/queue/changed',{}],['item/mcpToolCall/progress',{threadId:'root'}]]) test(`malformed known notification remains fail-closed: ${method}`,async t=>{
+  const {manager,worker}=await setup(t);
+  worker.emitPacket(method,params);
+  assert.equal(manager.status()[0].state,'unknown');assert.equal(worker.eofCount,0);
+});

@@ -7,7 +7,7 @@ const terminal = new Set(['completed','failed','interrupted']);
 const edits = new Set(['thread/archive','thread/unarchive']);
 const reads = new Set(['thread/read','thread/list','thread/turns/list','thread/items/list','model/list']);
 const writes = new Set(['turn/start','turn/steer','turn/interrupt','thread/queue/list','thread/backgroundTerminals/list']);
-const benign = /^(deprecationNotice$|thread\/goal\/cleared$|remoteControl\/status\/changed$|thread\/(archived|unarchived|closed)$|item\/(agentMessage|reasoning|plan|commandExecution|fileChange)\/|turn\/(diff|plan)\/updated$|thread\/(name\/updated|readState\/changed|tokenUsage\/updated|status\/changed)$|account\/|model\/|mcpServer\/|warning$)/;
+const benign = /^(configWarning$|deprecationNotice$|thread\/goal\/cleared$|remoteControl\/status\/changed$|thread\/(archived|unarchived|closed)$|item\/(agentMessage|reasoning|plan|commandExecution|fileChange)\/|turn\/(diff|plan)\/updated$|thread\/(name\/updated|readState\/changed|tokenUsage\/updated|status\/changed)$|account\/|model\/|mcpServer\/|warning$)/;
 const blocked = message => Object.assign(new Error(message),{code:-32001});
 
 /** Metadata contains identifiers/state only, never prompts, results or credentials. */
@@ -73,6 +73,14 @@ export class OwnedRuntimeManager extends EventEmitter {
       for(const [id,entry] of this.pending)if(entry.u===u&&entry.nativeId===v.requestId){this.pending.delete(id);u.requests.delete(id);}
       if(v.requestId===undefined)this.unknown(u,'resolved request missing identity');
       else p={...p,params:{...v,requestId:`${u.record.id}:${String(v.requestId)}`}};
+    } else if(p.method==='configWarning') {
+      if(typeof v.summary!=='string')this.unknown(u,'config warning missing summary');
+    } else if(p.method==='thread/queue/changed') {
+      // Invalidate a concurrent safety snapshot; inspect the queue before EOF.
+      if(typeof v.threadId!=='string')this.unknown(u,'queue change missing thread identity');
+    } else if(p.method==='item/mcpToolCall/progress') {
+      // Progress is activity, not completion. The accepted turn fence stays intact.
+      if(['threadId','turnId','itemId','message'].some(key=>typeof v[key]!=='string'))this.unknown(u,'MCP progress missing identity or message');
     } else if(p.method==='turn/started'||p.method==='turn/completed') {
       if(!v.turn?.id||!threadId) this.unknown(u,'turn event missing identity');
       else u.turns.set(`${threadId}:${v.turn.id}`,p.method==='turn/completed'&&terminal.has(v.turn.status)?v.turn.status:'active');
@@ -94,7 +102,7 @@ export class OwnedRuntimeManager extends EventEmitter {
       }
     } else if(!benign.test(p.method??'')) this.unknown(u,`unclassified notification: ${p.method}`);
     this.save();this.emit('packet',p);
-    if(['turn/completed','item/completed','serverRequest/resolved'].includes(p.method))setImmediate(()=>{if(u.turns.size)this.releaseUnit(u).catch(()=>{});});
+    if(['turn/completed','item/completed','serverRequest/resolved','thread/queue/changed'].includes(p.method))setImmediate(()=>{if(u.turns.size)this.releaseUnit(u).catch(()=>{});});
   }
   async invoke(u,method,params) {
     if(u.record.state!=='open')throw blocked(`runtime ${u.record.state}; input not sent`);
@@ -121,7 +129,14 @@ export class OwnedRuntimeManager extends EventEmitter {
     if(method==='runtime/release')return this.release(params.threadId);
     if(method==='thread/loaded/list')return {data:[...this.routes].filter(([,u])=>u.record.state!=='released').map(([id])=>id),nextCursor:null};
     if(method==='thread/unsubscribe') {await this.release(params.threadId);return {status:'unsubscribed'};}
-    if(method==='thread/start')return this.invoke(await this.newUnit(),'thread/start',params);
+    if(method==='thread/start') {
+      const u=await this.newUnit();
+      try{return await this.invoke(u,method,params);}catch(e){
+        if(e.native&&u.record.state==='open'&&!u.threads.size&&!u.turns.size&&!u.references.size&&!u.requests.size)
+          await this.releaseUnit(u,{requireEmpty:true}).catch(()=>{});
+        throw e;
+      }
+    }
     if(method==='thread/resume') {
       if(!params.threadId)throw blocked('threadId required; history/path resume unsupported');
       let u=this.routes.get(params.threadId);
@@ -169,12 +184,13 @@ export class OwnedRuntimeManager extends EventEmitter {
     }while(cursor);return data;
   }
   async release(threadId) {const u=this.routes.get(threadId);if(!u)throw blocked('unmanaged thread');return this.releaseUnit(u);}
-  async releaseUnit(u) {
+  async releaseUnit(u,{requireEmpty=false}={}) {
     if(u.record.state==='released')return {released:true};
     if(u.record.state!=='open'||u.active||u.requests.size||[...u.turns.values()].some(s=>!terminal.has(s)))throw blocked('runtime busy or unknown; retained');
     u.record.state='checking';this.save();const epoch=u.epoch;
     try {
       const loaded=await this.pages(u,'thread/loaded/list');
+      if(requireEmpty&&loaded.length)throw blocked('rejected start worker is not empty; retained');
       if(u.record.readOnly&&loaded.length)throw blocked('read-only worker unexpectedly loaded threads');
       for(const id of new Set([...loaded,...u.threads,...u.references])) {
         if(typeof id!=='string')throw blocked('invalid loaded thread identity');

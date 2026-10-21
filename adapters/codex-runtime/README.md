@@ -21,3 +21,5 @@
 3. 使用官方只读 `thread/read`（不 resume）和正确分页的 `thread/turns/list` 核对每个记录的 thread 与精确 turn；活跃、缺失、异常或未确认输入一律仍 unknown。若原worker仍可通过现存服务接口访问，检查其整个loaded list、background terminals、queue和pending，优先等待正常release，不强制关闭它。
 4. writer是否释放不能仅由磁盘历史或PID推断。只有确认原托管进程和相关工作都结束，并由明确授权的原生客户端显式resume成功后，才有writer接管证据；此动作有所有权副作用，不属于离线inspect，也不得自动执行。冲突则停止，不删除原生锁。
 5. 以上仍无法确认时，本版不提供安全自动恢复路径，保留服务锁/socket并报告阻碍。能够确认时另行审定仅处理本服务残留的维护动作和未知记录修复；不得恢复/重放旧输入。本版不把人工删除服务锁当成一条通用修复命令。
+
+通知分类依据 Codex 0.163.0 导出的官方 `ConfigWarningNotification`、`ThreadQueueChangedNotification`、`McpToolCallProgressNotification` schema：`configWarning` 只提供配置诊断，不表示任务活动；`thread/queue/changed` 与 `item/mcpToolCall/progress` 会使进行中的安全快照失效，前者触发重新查询队列，后者不视为 turn 完成。字段缺失和其他未识别通知仍保守处理。原生明确拒绝 `thread/start` 时，仅在未记录 thread/turn/子任务引用/待答请求且原生 loaded list 确认为空后正常关闭新 worker；执行结果未知或已有活动时保留，并把原生拒绝原样返回，不重放创建。
