@@ -12,6 +12,7 @@ import {
   configPath,
   connectorConfigPath,
   contextPlan,
+  dispatchJobOk,
   loadConfig,
   localMachine,
   render,
@@ -189,8 +190,10 @@ async function check() {
           const j = (await call(i, "jobs.get", { id })).result ?? {};
           if (["running", "queued"].includes(j.state)) continue;
           jobs.splice(k, 1);
-          if (j.state !== "completed") failures++;
-          console.log(`  ${i.instanceId} job ${id}: ${j.state} runner=${j.runner} source=${j.source} :: ${String(j.result ?? j.error ?? "").replace(/\s+/g, " ").slice(0, 120)}`);
+          const pass = dispatchJobOk(j);
+          if (!pass) failures++;
+          const verdict = !pass && j.state === "completed" ? "completed without result" : j.state;
+          console.log(`  ${i.instanceId} job ${id}: ${verdict} runner=${j.runner} source=${j.source} :: ${String(j.result ?? j.error ?? "").replace(/\s+/g, " ").slice(0, 120)}`);
         }
       }
       for (const [i, id] of jobs) (failures++, console.log(`  ${i.instanceId} job ${id}: still running after 10 min`));

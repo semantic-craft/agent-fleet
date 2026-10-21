@@ -98,3 +98,11 @@ export function approvalRedirect(location, html, callback) {
   if (!m) throw new Error("OAuth approval returned neither a redirect nor a client link");
   return m[1].replace(/&amp;/g, "&");
 }
+
+/**
+ * `fleet.mjs check --dispatch` verdict for a finished job: only a completed job whose result is a
+ * non-blank string passes. A completed job with a null/blank result fails as "completed without result".
+ */
+export function dispatchJobOk(job) {
+  return job?.state === "completed" && typeof job?.result === "string" && job.result.trim() !== "";
+}

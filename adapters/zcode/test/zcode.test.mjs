@@ -1,4 +1,4 @@
-// Offline: temp config, fake tasks-index.sqlite, provider catalog fixtures; never touches ZCode.app or tailscale.
+// Offline: temp config, fake tasks-index.sqlite and session db.sqlite, provider catalog fixtures; never touches ZCode.app or tailscale.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -29,6 +29,35 @@ function fakeDb() {
   return p;
 }
 
+function fakeSessionDb() {
+  const p = path.join(fs.mkdtempSync(path.join(tmp, 'sdb-')), 'db.sqlite');
+  const db = new DatabaseSync(p);
+  db.exec('PRAGMA journal_mode = WAL');
+  db.exec(`CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT, sequence INTEGER);
+    CREATE TABLE part (id TEXT, message_id TEXT, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT, sequence INTEGER);`);
+  db.close();
+  return p;
+}
+
+// Mark the automation finished with `outcome` (the runner's stop condition) and write the session log
+// messages (each `{ id, sequence, data, parts: [{ id, sequence, data }] }`) into the session db.
+function finishAutomation(dbPath, { outcome = 'succeeded', sessionId = 'sess_1' } = {}) {
+  const db = new DatabaseSync(dbPath);
+  const a = db.prepare('SELECT automation_id FROM automations ORDER BY created_at DESC LIMIT 1').get();
+  db.prepare("INSERT INTO automation_runs (automation_id, outcome, session_id, created_at) VALUES (?, ?, ?, '1')").run(a.automation_id, outcome, sessionId);
+  db.close();
+}
+function writeSession(dbPath, sessionId, messages) {
+  const db = new DatabaseSync(dbPath);
+  const ins = db.prepare('INSERT INTO message (id, session_id, time_created, time_updated, data, sequence) VALUES (?, ?, 0, 0, ?, ?)');
+  const inp = db.prepare('INSERT INTO part (id, message_id, session_id, time_created, time_updated, data, sequence) VALUES (?, ?, ?, 0, 0, ?, ?)');
+  for (const m of messages) {
+    ins.run(m.id, sessionId, JSON.stringify(m.data), m.sequence);
+    for (const p of m.parts ?? []) inp.run(p.id, m.id, sessionId, JSON.stringify(p.data), p.sequence);
+  }
+  db.close();
+}
+
 test('models: default GLM-5.3 Flash; unknown or disabled models are hard errors; $level suffix ignored when comparing', () => {
   assert.equal(resolveModel(undefined).id, BUILTIN_DEFAULT_MODEL);
   assert.equal(resolveModel('account:bigmodel-individual-coding-plan/GLM-5.3').id, 'account:bigmodel-individual-coding-plan/GLM-5.3');
@@ -47,7 +76,6 @@ test('prompt head and title carry source and job id once', () => {
   assert.equal(A.withSource('[Project: a] do x', 'agenvo', '0123456789abcdef'), '[Project: a] [来源: agenvo] [job: 0123456789abcdef] do x');
   assert.equal(A.withSource('[Project: a] [来源: agenvo] [job: 0123456789abcdef] do x', 'agenvo', '0123456789abcdef'), '[Project: a] [来源: agenvo] [job: 0123456789abcdef] do x');
   assert.equal(A.summaryTitle('[Project: a] do x', 'agenvo', '0123456789abcdef'), '[agenvo #0123456789abcdef] do x');
-  assert.equal(A.resultText({ searchable_text: 'P\nANS' }, 'P'), 'ANS');
 });
 
 test('enqueue writes a one-shot automation with ZCode\'s model_selection shape', () => {
@@ -59,36 +87,84 @@ test('enqueue writes a one-shot automation with ZCode\'s model_selection shape',
   assert.equal(row.mode, 'yolo');
 });
 
-test('runInApp: picked-up session completes with the text after the prompt; model mismatch fails loudly', async () => {
+test('runInApp result: the last assistant reply becomes the result', async () => {
   const dbPath = fakeDb();
-  const finishWith = (model, text) => setTimeout(() => {
-    const db = new DatabaseSync(dbPath);
-    const a = db.prepare('SELECT automation_id, prompt FROM automations ORDER BY created_at DESC LIMIT 1').get();
-    db.prepare("INSERT INTO automation_runs (automation_id, outcome, session_id, created_at) VALUES (?, 'succeeded', 'sess_1', '1')").run(a.automation_id);
-    db.prepare('INSERT INTO tasks (task_id, searchable_text, model) VALUES (?, ?, ?)').run('sess_1', `${a.prompt}\n${text}`, model);
-    db.close();
-  }, 20);
-  finishWith(`${BUILTIN_DEFAULT_MODEL}$max`, 'all good');
-  const seen = [];
-  const ok = await A.runInApp({ cwd: '/w', text: '[Project: x] hi', model: BUILTIN_DEFAULT_MODEL, source: 'agenvo', jobId: '0123456789abcdef', pollMs: 5, dbPath, registerProject: () => {}, onSession: (s) => seen.push(s) });
-  assert.equal(ok.outcome, 'succeeded'); assert.equal(ok.result, 'all good'); assert.deepEqual(seen, ['sess_1']);
-  const dbPath2 = fakeDb();
+  const sdb = fakeSessionDb();
   setTimeout(() => {
-    const db = new DatabaseSync(dbPath2);
+    finishAutomation(dbPath, { sessionId: 'sess_1' });
+    writeSession(sdb, 'sess_1', [
+      { id: 'm0', sequence: 0, data: { role: 'user' }, parts: [{ id: 'p0', sequence: 0, data: { type: 'text', text: 'hi' } }] },
+      { id: 'm1', sequence: 1, data: { role: 'assistant', time: { completed: 1 } },
+        parts: [{ id: 'p1', sequence: 0, data: { type: 'reasoning', text: 'think' } }, { id: 'p2', sequence: 1, data: { type: 'text', text: 'all good' } }] },
+    ]);
+  }, 20);
+  const seen = [];
+  const ok = await A.runInApp({ cwd: '/w', text: '[Project: x] hi', source: 'agenvo', pollMs: 5, dbPath, sessionDbPath: sdb, registerProject: () => {}, onSession: (s) => seen.push(s) });
+  assert.equal(ok.outcome, 'succeeded'); assert.equal(ok.result, 'all good'); assert.equal(ok.error, null); assert.deepEqual(seen, ['sess_1']);
+});
+
+test('runInApp result: a session with only a user message or a tool-only assistant reply yields a null result', async () => {
+  for (const messages of [
+    [{ id: 'm0', sequence: 0, data: { role: 'user' }, parts: [{ id: 'p0', sequence: 0, data: { type: 'text', text: 'hi' } }] }],
+    [{ id: 'm1', sequence: 1, data: { role: 'assistant' }, parts: [{ id: 'p1', sequence: 0, data: { type: 'tool', tool: 'bash' } }] }],
+  ]) {
+    const dbPath = fakeDb();
+    const sdb = fakeSessionDb();
+    setTimeout(() => { finishAutomation(dbPath, { sessionId: 'sess_1' }); writeSession(sdb, 'sess_1', messages); }, 20);
+    const r = await A.runInApp({ cwd: '/w', text: '[Project: x] hi', source: 'agenvo', pollMs: 5, replyBudgetMs: 120, dbPath, sessionDbPath: sdb, registerProject: () => {} });
+    assert.equal(r.outcome, 'succeeded'); assert.equal(r.result, null); assert.match(r.error, /finished without an assistant reply/);
+  }
+});
+
+test('runInApp result: a reply written after the outcome is picked up by the retry', async () => {
+  const dbPath = fakeDb();
+  const sdb = fakeSessionDb();
+  setTimeout(() => finishAutomation(dbPath, { sessionId: 'sess_1' }), 20);
+  setTimeout(() => writeSession(sdb, 'sess_1', [
+    { id: 'm1', sequence: 1, data: { role: 'assistant' }, parts: [{ id: 'p1', sequence: 0, data: { type: 'text', text: 'late reply' } }] },
+  ]), 80);
+  const r = await A.runInApp({ cwd: '/w', text: '[Project: x] hi', source: 'agenvo', pollMs: 5, dbPath, sessionDbPath: sdb, registerProject: () => {} });
+  assert.equal(r.outcome, 'succeeded'); assert.equal(r.result, 'late reply'); assert.equal(r.error, null);
+});
+
+test('runInApp: a model mismatch fails loudly', async () => {
+  const dbPath = fakeDb();
+  setTimeout(() => {
+    const db = new DatabaseSync(dbPath);
     const a = db.prepare('SELECT automation_id FROM automations').get();
     db.prepare("INSERT INTO automation_runs (automation_id, outcome, session_id, created_at) VALUES (?, 'running', 'sess_2', '1')").run(a.automation_id);
     db.prepare("INSERT INTO tasks (task_id, model) VALUES ('sess_2', 'account:bigmodel-individual-coding-plan/GLM-5.3')").run();
     db.close();
   }, 20);
-  const bad = await A.runInApp({ cwd: '/w', text: '[Project: x] hi', model: BUILTIN_DEFAULT_MODEL, source: 'agenvo', pollMs: 5, dbPath: dbPath2, registerProject: () => {} });
+  const bad = await A.runInApp({ cwd: '/w', text: '[Project: x] hi', model: BUILTIN_DEFAULT_MODEL, source: 'agenvo', pollMs: 5, dbPath, registerProject: () => {} });
   assert.equal(bad.outcome, 'failed'); assert.match(bad.error, /model mismatch/);
 });
 
-test('checkSchema flags a changed scheduler schema', () => {
+test('lastAssistantText: last assistant message, its last text part, skipping synthetic/ignored', () => {
+  const sdb = fakeSessionDb();
+  writeSession(sdb, 'sess_9', [
+    { id: 'u', sequence: 0, data: { role: 'user' }, parts: [{ id: 'up', sequence: 0, data: { type: 'text', text: 'ask' } }] },
+    { id: 'a1', sequence: 1, data: { role: 'assistant' }, parts: [{ id: 'a1p', sequence: 0, data: { type: 'text', text: 'first' } }] },
+    { id: 's', sequence: 2, data: { role: 'assistant', synthetic: true }, parts: [{ id: 'sp', sequence: 0, data: { type: 'text', text: 'skip-me' } }] },
+    { id: 'a2', sequence: 3, data: { role: 'assistant' }, parts: [
+      { id: 'a2t1', sequence: 0, data: { type: 'text', text: 'penultimate' } },
+      { id: 'a2t2', sequence: 1, data: { type: 'text', text: 'final' } },
+    ] },
+  ]);
+  assert.equal(A.lastAssistantText('sess_9', sdb), 'final');
+  assert.equal(A.lastAssistantText('nope', sdb), null);
+  assert.equal(A.lastAssistantText(undefined, sdb), null);
+});
+
+test('checkSchema flags changed scheduler and session schemas, and a missing session db', () => {
   const p = path.join(fs.mkdtempSync(path.join(tmp, 's-')), 'x.sqlite');
   const db = new DatabaseSync(p); db.exec('CREATE TABLE automations (automation_id TEXT); CREATE TABLE automation_runs (automation_id TEXT); CREATE TABLE tasks (task_id TEXT)'); db.close();
-  assert.throws(() => A.checkSchema(p), /schema changed \(missing: automations\.title/);
-  assert.equal(A.checkSchema(fakeDb()), true);
+  assert.throws(() => A.checkSchema(p, fakeSessionDb()), /scheduler schema changed \(missing: automations\.title/);
+  const sdb2 = path.join(fs.mkdtempSync(path.join(tmp, 'ss-')), 'db.sqlite');
+  const db2 = new DatabaseSync(sdb2); db2.exec('CREATE TABLE message (id TEXT); CREATE TABLE part (id TEXT)'); db2.close();
+  assert.throws(() => A.checkSchema(fakeDb(), sdb2), /session db schema changed \(missing: message\.session_id/);
+  assert.equal(A.checkSchema(fakeDb(), fakeSessionDb()), true);
+  assert.throws(() => A.checkSchema(fakeDb(), path.join(fs.mkdtempSync(path.join(tmp, 'no-')), 'db.sqlite')), /session db not found/);
 });
 
 test('Projects placement: registered left alone, unregistered opens the deep link, unknown shape skipped', () => {

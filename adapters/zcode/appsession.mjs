@@ -18,6 +18,7 @@ import path from 'node:path';
 import { parseModel, sameModel } from './models.mjs';
 
 export const DB_PATH = () => process.env.ZCODE_TASKS_DB || path.join(os.homedir(), '.zcode', 'v2', 'tasks-index.sqlite');
+export const SESSION_DB_PATH = () => process.env.ZCODE_SESSION_DB || path.join(os.homedir(), '.zcode', 'cli', 'db', 'db.sqlite');
 export const SETTINGS_PATH = () => process.env.ZCODE_SETTINGS || path.join(os.homedir(), '.zcode', 'v2', 'setting.json');
 const MODES = new Set(['default', 'yolo', 'guarded', 'plan', 'edit', 'build']);
 const JOB_ID_RE = /^[0-9a-f]{16}$/;
@@ -28,6 +29,13 @@ export function appRunning() {
 
 function open(dbPath = DB_PATH()) {
   const db = new DatabaseSync(dbPath);
+  db.exec('PRAGMA busy_timeout = 5000');
+  return db;
+}
+
+/** The session log is owned by ZCode.app; open it strictly read-only. */
+function openSessionDb(dbPath = SESSION_DB_PATH()) {
+  const db = new DatabaseSync(dbPath, { readOnly: true });
   db.exec('PRAGMA busy_timeout = 5000');
   return db;
 }
@@ -77,7 +85,7 @@ export function poll(id, dbPath) {
   try {
     const a = db.prepare('SELECT lifecycle_status,dispatch_status,last_error,dispatch_attempts FROM automations WHERE automation_id=?').get(id);
     const r = db.prepare('SELECT dispatch_status,outcome,session_id,error,model_selection FROM automation_runs WHERE automation_id=? ORDER BY created_at DESC LIMIT 1').get(id);
-    const task = r?.session_id ? db.prepare('SELECT title,task_status,searchable_text,model FROM tasks WHERE task_id=?').get(r.session_id) ?? null : null;
+    const task = r?.session_id ? db.prepare('SELECT model FROM tasks WHERE task_id=?').get(r.session_id) ?? null : null;
     return { automation: a ?? null, run: r ?? null, task };
   } finally { db.close(); }
 }
@@ -89,12 +97,39 @@ export function cleanup(id, dbPath) {
   try { db.prepare("DELETE FROM automations WHERE automation_id=? AND running=0 AND lifecycle_status!='active'").run(id); } finally { db.close(); }
 }
 
-export function resultText(task, prompt) {
-  if (!task?.searchable_text) return null;
-  let s = task.searchable_text;
-  const i = s.indexOf(prompt.trim());
-  if (i >= 0) s = s.slice(i + prompt.trim().length);
-  return s.trim() || null;
+/**
+ * The final reply of a ZCode session: the last (highest sequence) assistant message that carries a
+ * non-empty text part, returning that message's last text part. Mirrors ZCode's own searchable-text
+ * builder, which keeps the last text block of each assistant message. Synthetic/ignored messages are
+ * skipped. Returns null when the session has no assistant reply.
+ */
+export function lastAssistantText(sessionId, dbPath = SESSION_DB_PATH()) {
+  if (!sessionId) return null;
+  const db = openSessionDb(dbPath);
+  try {
+    const messages = db.prepare('SELECT id, data FROM message WHERE session_id=? ORDER BY sequence DESC').all(sessionId);
+    for (const m of messages) {
+      let d;
+      try { d = JSON.parse(m.data); } catch { continue; }
+      if (d.role !== 'assistant' || d.synthetic || d.ignored) continue;
+      const texts = db.prepare('SELECT data FROM part WHERE message_id=? ORDER BY sequence').all(m.id)
+        .map((p) => { try { return JSON.parse(p.data); } catch { return null; } })
+        .filter((p) => p && p.type === 'text' && !p.synthetic && typeof p.text === 'string' && p.text.trim() !== '');
+      if (texts.length) return texts.at(-1).text;
+    }
+    return null;
+  } finally { db.close(); }
+}
+
+/** Read the reply, retrying briefly: the message row can land a beat after automation_runs.outcome. */
+async function readAssistantReply(sessionId, { pollMs, sessionDbPath, budgetMs = 10000 }) {
+  const deadline = Date.now() + budgetMs;
+  for (;;) {
+    const text = lastAssistantText(sessionId, sessionDbPath);
+    if (text != null) return text;
+    if (Date.now() >= deadline) return null;
+    await new Promise((r) => setTimeout(r, pollMs));
+  }
 }
 
 /**
@@ -120,10 +155,9 @@ export function ensureProjectRegistered(cwd, { settingsPath, opener = (url) => e
 }
 
 /** Run to completion: {automationId, sessionId, model, outcome, result, error}. */
-export async function runInApp({ cwd, text, mode, model, source, jobId, timeoutSeconds = 1800, pickupSeconds = 90, pollMs = 1000, dbPath, onSession = () => {}, registerProject = ensureProjectRegistered }) {
+export async function runInApp({ cwd, text, mode, model, source, jobId, timeoutSeconds = 1800, pickupSeconds = 90, pollMs = 1000, replyBudgetMs = 10000, dbPath, sessionDbPath, onSession = () => {}, registerProject = ensureProjectRegistered }) {
   registerProject(cwd);
   const id = enqueue({ cwd, text, mode, model, source, jobId, dbPath });
-  const prompt = withSource(text, source, jobId);
   const t0 = Date.now();
   let sid = null;
   for (;;) {
@@ -136,8 +170,13 @@ export async function runInApp({ cwd, text, mode, model, source, jobId, timeoutS
     if (s.run?.outcome && s.run.outcome !== 'running') {
       cleanup(id, dbPath);
       const ok = s.run.outcome === 'succeeded';
-      return { automationId: id, sessionId: sid, model: s.task?.model ?? null, outcome: s.run.outcome, result: resultText(s.task, prompt),
-        error: ok ? null : s.run.error || s.automation?.last_error || s.run.outcome };
+      let result = null;
+      let error = ok ? null : s.run.error || s.automation?.last_error || s.run.outcome;
+      if (ok) {
+        result = await readAssistantReply(sid, { pollMs, sessionDbPath, budgetMs: replyBudgetMs });
+        if (result == null) error = `ZCode session ${sid} finished without an assistant reply`;
+      }
+      return { automationId: id, sessionId: sid, model: s.task?.model ?? null, outcome: s.run.outcome, result, error };
     }
     const age = (Date.now() - t0) / 1000;
     if (!s.run && age > pickupSeconds) {
@@ -155,19 +194,36 @@ export const REQUIRED_SCHEMA = {
     'location_kind', 'recurring', 'max_runs', 'enabled', 'lifecycle_status', 'next_run_at', 'running', 'dispatch_status', 'dispatch_attempts',
     'mode', 'created_at', 'updated_at', 'last_error'],
   automation_runs: ['automation_id', 'dispatch_status', 'outcome', 'session_id', 'error', 'created_at', 'model_selection'],
-  tasks: ['task_id', 'title', 'task_status', 'searchable_text', 'model'],
+  tasks: ['task_id', 'model'],
 };
-export function checkSchema(dbPath = DB_PATH()) {
+/** The session log this runner reads for the reply (~/.zcode/cli/db/db.sqlite), opened read-only. */
+export const SESSION_SCHEMA = {
+  message: ['id', 'session_id', 'data', 'sequence'],
+  part: ['message_id', 'data', 'sequence'],
+};
+
+function schemaProblems(db, schema) {
+  const missing = [];
+  for (const [t, cols] of Object.entries(schema)) {
+    const have = new Set(db.prepare(`PRAGMA table_info(${t})`).all().map((r) => r.name));
+    if (!have.size) { missing.push(`table ${t}`); continue; }
+    for (const c of cols) if (!have.has(c)) missing.push(`${t}.${c}`);
+  }
+  return missing;
+}
+
+export function checkSchema(dbPath = DB_PATH(), sessionDbPath = SESSION_DB_PATH()) {
   if (!fs.existsSync(dbPath)) throw new Error(`ZCode tasks index not found at ${dbPath}`);
   const db = open(dbPath);
   try {
-    const missing = [];
-    for (const [t, cols] of Object.entries(REQUIRED_SCHEMA)) {
-      const have = new Set(db.prepare(`PRAGMA table_info(${t})`).all().map((r) => r.name));
-      if (!have.size) { missing.push(`table ${t}`); continue; }
-      for (const c of cols) if (!have.has(c)) missing.push(`${t}.${c}`);
-    }
+    const missing = schemaProblems(db, REQUIRED_SCHEMA);
     if (missing.length) throw new Error(`ZCode.app scheduler schema changed (missing: ${missing.join(', ')}); update adapters/zcode/appsession.mjs`);
-    return true;
   } finally { db.close(); }
+  if (!fs.existsSync(sessionDbPath)) throw new Error(`ZCode session db not found at ${sessionDbPath}`);
+  const sdb = openSessionDb(sessionDbPath);
+  try {
+    const missing = schemaProblems(sdb, SESSION_SCHEMA);
+    if (missing.length) throw new Error(`ZCode.app session db schema changed (missing: ${missing.join(', ')}); update adapters/zcode/appsession.mjs`);
+  } finally { sdb.close(); }
+  return true;
 }

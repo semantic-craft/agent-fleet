@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { approvalRedirect, contextPlan, loadConfig, localMachine, render, writeJson0600 } from "../scripts/lib.mjs";
+import { approvalRedirect, contextPlan, dispatchJobOk, loadConfig, localMachine, render, writeJson0600 } from "../scripts/lib.mjs";
 
 const dir = mkdtempSync(join(tmpdir(), "fleet-"));
 const write = (obj) => {
@@ -60,4 +60,14 @@ test("approval redirect handles both 303 and the production HTML page", () => {
   const html = `<a href="${cb}?code=abc&amp;state=fleet">Return</a>`;
   assert.equal(approvalRedirect(null, html, cb), `${cb}?code=abc&state=fleet`);
   assert.throws(() => approvalRedirect(null, "<p>no</p>", cb), /neither/);
+});
+
+test("dispatch job verdict: only a completed job with a non-blank result passes", () => {
+  assert.equal(dispatchJobOk({ state: "completed", result: "done" }), true);
+  assert.equal(dispatchJobOk({ state: "completed", result: "  done  " }), true);
+  assert.equal(dispatchJobOk({ state: "completed", result: null }), false);
+  assert.equal(dispatchJobOk({ state: "completed", result: "" }), false);
+  assert.equal(dispatchJobOk({ state: "completed", result: "   " }), false);
+  assert.equal(dispatchJobOk({ state: "failed", result: "done" }), false);
+  assert.equal(dispatchJobOk({ state: "running", result: null }), false);
 });

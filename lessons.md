@@ -139,7 +139,7 @@
 
 **`fleet.mjs release` 这类会被 agent 或 launchd 调用的脚本，合并前用 `</dev/null` 在无 TTY 的环境实跑一次。**
 
-- 起因与后果：#6（cccaff6）合并后在 Helios 首次 `release dsh`，pnpm 想重建 `node_modules` 时没有 TTY 直接中止，DSH 桥接随之断开，只能手工用同样参数重装。
-- 修复与证据：#7（46335b3）给 Host 的 pnpm 加 `CI=true --no-frozen-lockfile`，运行中的 DSH 不会加载新插件时直接说明、不再空等 60 秒；`npm test` 28/28。修正后的命令尚未在 Janus 跑过（#7 自述）。
+- 起因与后果：#6（cccaff6）合并后在主力 Mac 首次 `release dsh`，pnpm 想重建 `node_modules` 时没有 TTY 直接中止，DSH 桥接随之断开，只能手工用同样参数重装。
+- 修复与证据：#7（46335b3）给 Host 的 pnpm 加 `CI=true --no-frozen-lockfile`，运行中的 DSH 不会加载新插件时直接说明、不再空等 60 秒；`npm test` 28/28。修正后的命令尚未在第二台 Mac 跑过（#7 自述）。
 - 正确做法：发布、安装类脚本的验收至少有一次无 TTY 实跑（`node scripts/fleet.mjs release <组件> </dev/null`），并在 PR 里写明在哪台机器跑过。
 - 复发记录：Seen 1x (2026-10-19)。
