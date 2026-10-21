@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { approvalRedirect, contextPlan, dispatchJobOk, loadConfig, localMachine, render, writeJson0600 } from "../scripts/lib.mjs";
+import { approvalRedirect, checkProject, contextPlan, dispatchJobOk, loadConfig, localMachine, render, writeJson0600 } from "../scripts/lib.mjs";
 
 const dir = mkdtempSync(join(tmpdir(), "fleet-"));
 const write = (obj) => {
@@ -70,4 +70,11 @@ test("dispatch job verdict: only a completed job with a non-blank result passes"
   assert.equal(dispatchJobOk({ state: "completed", result: "   " }), false);
   assert.equal(dispatchJobOk({ state: "failed", result: "done" }), false);
   assert.equal(dispatchJobOk({ state: "running", result: null }), false);
+});
+
+test("check --dispatch project: --project wins, else overlay check.project, else a clear error", () => {
+  const c = loadConfig(new URL("../fleet.example.json", import.meta.url), "/home/u");
+  assert.equal(checkProject(c), c.check.project);
+  assert.equal(checkProject(c, "other"), "other");
+  assert.throws(() => checkProject({ machines: [] }), /check\.project/);
 });

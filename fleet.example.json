@@ -9,6 +9,10 @@
     "remote": "git@github.com:OWNER/agenvo.git",
     "branch": "xw/dispatch-connectors"
   },
+  "check": {
+    "$comment": "check --dispatch opens a read-only task in projectsRoot/<project> on every DSH/ZCode machine; use a directory every such machine has, such as this repository's checkout.",
+    "project": "PROJECT"
+  },
   "machines": [
     {
       "name": "laptop",

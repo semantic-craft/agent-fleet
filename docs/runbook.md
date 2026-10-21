@@ -79,7 +79,7 @@ node scripts/fleet.mjs release agenvo        # 把刚装好的 connector 改为�
 ```sh
 node scripts/fleet.mjs doctor              # 本机 launchd 服务与 connector 状态
 node scripts/fleet.mjs check               # OAuth + search + 每个实例一个只读原生调用
-node scripts/fleet.mjs check --dispatch    # 另给每个 DSH/ZCode 实例派只读任务，读回 completed 结果
+node scripts/fleet.mjs check --dispatch    # 另给每个 DSH/ZCode 实例派只读任务，读回 completed 结果；项目取 overlay 的 check.project（每台派活机器 projectsRoot 下都有的目录），--project 可覆盖
 node scripts/fleet.mjs check --instance <dsh 实例> --session <sessionId>   # 向一个已有 DSH 会话追加一轮只读输入
 ```
 

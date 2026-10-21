@@ -106,3 +106,10 @@ export function approvalRedirect(location, html, callback) {
 export function dispatchJobOk(job) {
   return job?.state === "completed" && typeof job?.result === "string" && job.result.trim() !== "";
 }
+
+/** Project directory for check --dispatch: --project wins, else overlay check.project. It must exist under projectsRoot on every dispatch machine. */
+export function checkProject(config, flag) {
+  const project = flag ?? config.check?.project;
+  if (!project) throw new Error("check --dispatch needs a project that exists on every dispatch machine: set check.project in the fleet config or pass --project");
+  return project;
+}
