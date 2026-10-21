@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// agent-fleet CLI: doctor | contexts [--apply] | launchd NAME | check [--dispatch] [--project P] [--instance ID --session SID] | release agenvo|zcode|dsh|codex-runtime [--sha SHA] [--rollback] [--connector codex]
+// agent-fleet CLI: doctor | contexts [--apply] | launchd NAME | check [--dispatch] [--project P] [--instance ID --session SID] | release agenvo|zcode|dsh [--sha SHA] [--rollback] [--connector codex]
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -100,7 +100,7 @@ function contexts() {
 
 function launchd(name) {
   const file = join(root, "templates/launchd", `${name}.plist`);
-  if (!name || !existsSync(file)) throw new Error("usage: fleet.mjs launchd codex-app-server|herdr-server|desktop-agents-autostart|fleet-weekly-check|zcode-receiver|codex-runtime");
+  if (!name || !existsSync(file)) throw new Error("usage: fleet.mjs launchd codex-app-server|herdr-server|desktop-agents-autostart|fleet-weekly-check|zcode-receiver");
   const home = homedir();
   process.stdout.write(
     render(readFileSync(file, "utf8"), {
@@ -347,7 +347,7 @@ function upstream() {
 
 const commands = { doctor, contexts, launchd: () => launchd(arg), check, upstream, release: async () => (await import("./release.mjs")).release(arg, { cfg: arg === "agenvo" ? config() : {}, sha: opt.sha, rollback: opt.rollback, connector: opt.connector }) };
 if (!commands[command]) {
-  console.error("usage: fleet.mjs doctor | contexts [--apply] | launchd NAME | check [--dispatch] [--project P] [--instance ID --session SID] | upstream [--try-merge] | release agenvo|zcode|dsh|codex-runtime [--sha SHA] [--rollback] [--connector codex]  [--machine NAME] [--config PATH]");
+  console.error("usage: fleet.mjs doctor | contexts [--apply] | launchd NAME | check [--dispatch] [--project P] [--instance ID --session SID] | upstream [--try-merge] | release agenvo|zcode|dsh [--sha SHA] [--rollback] [--connector codex]  [--machine NAME] [--config PATH]");
   process.exit(2);
 }
 await commands[command]();

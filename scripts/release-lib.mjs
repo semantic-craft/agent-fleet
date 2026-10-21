@@ -12,12 +12,6 @@ export const MANIFEST = "release.json";
  * inside the release, or null when the plist is not this component's.
  */
 export const COMPONENTS = {
-  "codex-runtime": {
-    label: "io.agent-fleet.codex-runtime",
-    self: true,
-    paths: ["adapters/codex-runtime", "package.json", "package-lock.json"],
-    entry: (p = "") => /\/adapters\/codex-runtime\/cli\.mjs$/.test(p) ? "tree/adapters/codex-runtime/cli.mjs" : null,
-  },
   // The four agenvo connectors (upstream codex/herdr plus the fork's dsh/dispatch), one shared release.
   agenvo: {
     labelPrefix: "io.agenvo.connector.",
@@ -70,7 +64,7 @@ export function ownedPlists(name, plists, connector) {
   const c = component(name);
   if (!c.entry) return [];
   return plists.filter(({ label, programArg }) =>
-    (c.label ? label === c.label : String(label ?? "").startsWith(c.labelPrefix)) && c.entry(programArg) &&
+    String(label ?? "").startsWith(c.labelPrefix) && c.entry(programArg) &&
     (!connector || c.entry(programArg) === `apps/${CONNECTOR_DIRS[connector]}/cli.js`));
 }
 

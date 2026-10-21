@@ -20,15 +20,14 @@
 - 正确做法：见 [runbook 日常操作](docs/runbook.md#日常操作)。
 - 复发记录：Seen 1x (2026-10-19)。
 
-### Codex Desktop 内置的 app-server 只走 stdio
+### Codex 派活用 exec，进程退出后桌面接手
 
-**常驻 `codex app-server --listen unix://` 共用 home 只解决远程管理与历史可见，不保证 Desktop 能立即接手 writer。**
+**在 Herdr pane 里运行官方 `codex exec`，以 `codex exec resume` 追问；进程退出后通过 `codex://threads/<thread_id>` 接手。**
 
-- 起因与后果：Desktop 不暴露 socket，connector 无从附着。
-- 修复与证据：launchd 模板 `templates/launchd/codex-app-server.plist`；新建的 thread 会出现在 Desktop 共用的 state DB 里。
-- 后续证据：远程 turn 完成后 Desktop 的 resume 仍可能被 active writer 拒绝；0.163.0 unsubscribe 后仍保留无活动宽限期。不能把列表可见当成可续接。
-- 正确做法：现有共享服务与业务会话保持不动；需要确定性交还时采用用户已批准的 [专属运行时方案](docs/decisions/0007-codex-owned-runtime.md)，经隔离验证、独立审稿、私有 endpoint 和 scope 重批后切换。只结束自有且确认无工作的进程，不重启共享服务释放锁。
-- 复发记录：Seen 2x (2026-10-21)，修正原先把历史可见等同于桌面可接手的假设。
+- 起因与后果：常驻 `codex app-server` 共用 home 能读取历史，但远程 turn 完成后仍持有 writer，桌面版显示 “This is open in another app”，只能 Fork。
+- 修复与证据：调度方于 2026-10-21 实测 `codex exec --json -o` 完成并退出，`codex exec resume` 可续写，桌面线程链接打开后显示历史与正常输入框，无占用横幅。
+- 正确做法：派活走 Herdr，立刻记录 JSONL 中 `thread.started` 的 `thread_id` 并告知用户。Codex connector 只列出线程与读取历史；列表查询包含 `sourceKinds: ["exec"]`、`modelProviders: []`。exec 线程不一定出现在侧栏，因此必须提供线程链接。完整流程见[派活技能](skills/delegate-via-agenvo/SKILL.md)。
+- 复发记录：Seen 2x (2026-10-21)。
 
 ### Herdr 常驻要用 `herdr server`
 
@@ -103,13 +102,14 @@
 - 修复与证据：overlay 的 Herdr context 写明 session 取值和完整流程。
 - 复发记录：Seen 1x (2026-10-19)。
 
-### Herdr 里不用 claude；agy 首次进目录要确认信任
+### Claude Code 在 Herdr 用无头模式并显式选模型；agy 首次确认信任
 
-**这台机器的 claude CLI 有意不登录，Herdr 里起 agy 或 codex；agy 第一次进某个项目会停在信任提示（agent.get 为 blocked），用 `pane.run` 发空命令回车确认。**
+**Claude Code 已登录，在 Herdr pane 里用 `claude -p`，每轮显式传 `--model deepseek/deepseek-flash` 等可用模型。agy 首次进入项目要处理信任提示。**
 
-- 起因与后果：起 claude 后 agent.start、agent.prompt 都返回 accepted，输入却落在登录菜单上，不会有回答；agy 停在信任提示时 agent.prompt 返回 `agent_blocked`。"输入已接受"不等于"原生轮次完成"。
-- 修复与证据：经 relay 实测 agy 回车确认后 agent.prompt 得到正确回答；`dsh --profile headless` 在 pane 里也能跑完一轮（`__EXIT=0`）。规则写在 overlay 的 Herdr context。
-- 复发记录：Seen 1x (2026-10-19)。
+- 起因与后果：Claude Code 默认使用设置中的 antigravity 模型，会拒答 Claude Code 系统提示并返回 `is_error: true`，继续等待无用；agy 遇到信任提示时 `agent.prompt` 返回 `agent_blocked`。
+- 修复与证据：调度方于 2026-10-21 19:26–19:27 实测 Claude Code 已登录，显式选 `deepseek/deepseek-flash` 后成功，`--resume <session_id>` 也能续接同一会话。agy 经 relay 用 `pane.run` 发空命令回车确认信任后可回答。
+- 正确做法：用 `claude -p "<任务>" --model deepseek/deepseek-flash --output-format json > /tmp/<任务名>.json; echo __EXIT=$?`，读取 JSON 的 `result`、`session_id` 与 `is_error`；追问用 `claude -p --resume <session_id>` 并继续显式选模型。不用交互式 `agent.start kind claude`。输入已接受不等于轮次完成。
+- 复发记录：Seen 1x (2026-10-19)；模型与登录状态于 2026-10-21 更新。
 
 ### 从 DSH 的 shell 启动 Electron app 要去掉 ELECTRON_RUN_AS_NODE
 
