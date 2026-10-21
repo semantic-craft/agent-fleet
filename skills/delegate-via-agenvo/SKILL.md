@@ -5,7 +5,7 @@ description: Hand work to another coding agent (DeepSeek Harness/DSH, ZCode, Cod
 
 # 经 Agenvo 把活交给其他 agent
 
-前提：当前 agent 已连接名为 `agenvo` 的 MCP 服务器，它提供 `search` 和 `execute` 两个工具。连不上时，告诉用户运行 `codex mcp login agenvo`（或在自己的 MCP 设置里重新授权），不要改走其他通道。
+前提：当前 agent 已连接名为 `agenvo` 的 MCP 服务器，它提供 `search` 和 `execute` 两个工具。连不上时，告诉用户运行 `codex mcp login agenvo`（或在自己的 MCP 设置里重新授权）。
 
 ## 步骤
 

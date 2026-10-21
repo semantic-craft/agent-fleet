@@ -34,10 +34,3 @@ Codex 和 Herdr 的路径相同，只是原生方法不同（`thread/start` + `t
 - relay 运营方（Cloudflare）能看到流量，不是端到端加密。高度敏感的项目不要经它派活。
 - 同一 macOS 用户下 full access 能触及该用户能访问的一切；这是有意的取舍，见 [ADR-0004](decisions/0004-desktop-strict-and-full-access.md)。
 
-## 与旧机制的关系
-
-| 旧机制 | 去向 |
-| --- | --- |
-| Yobiru/tailmsg、dot-relay、agent-interop 的 dot 网关与门铃、各种 Grok↔X bridge | 被 Agenvo 取代，只保留一条通路（[ADR-0006](decisions/0006-coexistence-and-retirement.md)） |
-| `hub_run`（lease、锁定 head、独立评审）、agent-collab（Issue/CLAIM/非作者评审合并） | 已删除；代码任务直接派给 agent，经各仓库自己的 PR 流程合并 |
-| reason-net（agent 会话间互发消息） | 冻结；本架构不需要横向消息 |

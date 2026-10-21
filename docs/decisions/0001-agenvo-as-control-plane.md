@@ -3,8 +3,8 @@
 状态：已采纳（2026-10-19）
 
 ## 背景
-此前每接一个"入口 × 运行时"组合就要写一个桥（Grok→Codex、ChatGPT DOT→主力 Mac、Hermes→DSH、DSH↔ZCode、Yobiru 消息总线……），
-每个桥各有一套鉴权、账本和教训，行为也不一致。
+用户从几个入口（ChatGPT、dots、Grok Bot）指挥多台电脑上的多种运行时（Codex、DSH、ZCode、Herdr 里的 CLI agent）。
+如果每个"入口 × 运行时"组合各接一条链路，每条都要一套鉴权、账本和教训，行为也不一致。
 
 ## 决定
 所有远程入口（ChatGPT、dots、Grok Bot）都作为 MCP 客户端，连接同一个 Agenvo relay；每台电脑上的每种运行时只挂一个 connector。

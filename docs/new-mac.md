@@ -8,7 +8,7 @@
 - **DSH（DeepSeek Harness）是同等能力的后备**，防止 Codex 额度用完或出故障：它必须有和 Codex 同级的原生能力，任务出现在 DSH 桌面左栏、可以在桌面里接手；派活、追问、中断都走 DSH 的原生会话，不退回 headless。
 - 然后按需装 ZCode 和 Herdr（agy、codex CLI 在里面跑）。
 - 一律 full access，访问控制靠 relay 授权。
-- 只有一条远程通路（Agenvo）。不要恢复 Yobiru、各种 bridge 或 dot 网关（[ADR-0006](decisions/0006-coexistence-and-retirement.md)）。
+- 远程通路只有 Agenvo（见 [ADR-0006](decisions/0006-single-remote-path.md)）。
 - 这台机器的个人值（名字、地址、项目目录）只写进私有 overlay，不写进本仓库。
 
 ## 步骤

@@ -50,7 +50,7 @@
 **私有仓库的 PR 上 checks 永远为空；在本机运行 `scripts/check`，把结果写进 PR 后再合并。**
 
 - 起因与后果：一个 session 一直"等待 CI"，任务停在合并前。
-- 修复与证据：改为本机检查后合并（agent-interop-private#76）。
+- 修复与证据：改为本机检查后合并。
 - 正确做法：见 AGENTS.md 的"验收与交付"。
 - 复发记录：Seen 1x (2026-10-19)。
 
@@ -71,18 +71,18 @@
 
 ### grok.com 拦截 Worker 获取它的 CIMD 文档
 
-**Cloudflare Worker 上的 relay 不要为 Grok 打开 CIMD；让它走动态注册，不行就放弃 Grok，不写绕过方案。**
+**Cloudflare Worker 上的 relay 不要为 Grok 打开 CIMD；让它走动态注册。**
 
 - 起因与后果：打开 `clientIdMetadataDocumentEnabled` 后，Grok 的授权请求返回 400。临时 Worker 探测 `https://grok.com/oauth/mcp-client.json` 得到的是 403 challenge 页。
-- 修复与证据：撤回改动，fork 保持上游原样；记入 [ADR-0006](docs/decisions/0006-coexistence-and-retirement.md)。
+- 修复与证据：撤回改动，fork 保持上游原样；记入 [ADR-0006](docs/decisions/0006-single-remote-path.md)。
 - 复发记录：Seen 1x (2026-10-19)。
 
 ### 链接进 DSH 桌面 profile 的插件，改工作树就可能直接进生产
 
-**改 dsh-grokbot-dispatch 等 `link:` 插件时，在单独的 worktree 里开发；被链接的 checkout 只在验证后切到 main。**
+**改 DSH 插件（`adapters/dsh`）等 `link:` 插件时，在单独的 worktree 里开发；被链接的 checkout 只在验证后切到 main。**
 
 - 起因与后果：开发 native bridge 时直接编辑了被主力 Mac 桌面版链接的 checkout。另一个 agent 恰好给桌面版装插件，触发 profile 重载，桌面 Host 当场加载了半成品，其中一版在 listen 期间改了进程 umask（随后修掉）。没有发现损坏的文件或目录，但这是生产进程。
-- 修复与证据：dsh-grokbot-dispatch #6 去掉 umask 写法并加回归测试；插件日志显示 04:09:54Z、04:12:06Z 两次重载。
+- 修复与证据：插件去掉 umask 写法并加回归测试；插件日志显示 04:09:54Z、04:12:06Z 两次重载。
 - 正确做法：桌面插件的开发与隔离验证用 `DSH_HOME`/`HOME` 临时目录下的 `dsh web`；要上生产时再让链接的 checkout 前进到 main，并在桌面空闲时重载或重启。
 - 复发记录：Seen 1x (2026-10-19)。
 

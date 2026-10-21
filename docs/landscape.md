@@ -1,14 +1,16 @@
 # `~/Projects` 里与 agent 协作相关的目录
 
-快照：2026-10-19。退役路线（Yobiru/tailmsg、Dot 网关与 dot-relay、各种 Grok↔X bridge、agent-interop、hermes-dsh-dispatch 等）以及已并入本仓库的 dsh-grokbot-dispatch、zcode-dispatch的本地副本、部署副本和状态目录已全部删除，不再列出；只剩下表中的目录。各项何时退役按依赖判断，见 [ADR-0006](decisions/0006-coexistence-and-retirement.md)。用来回答"这个目录能不能动、该去哪改"。状态的含义：
+快照：2026-10-19。用来回答"这个目录能不能动、该去哪改"。状态的含义：
 
 - **核心**：本架构的组成部分。
 - **接收端**：桌面 app 的原生适配层。
 - **治理**：保留的规则或审计型派发。
-- **冻结**：不再发展。
+- **移除中**：正按 [maintenance](maintenance.md) 的"移除组件"步骤移除。
 - **无关**：名字相近，但不属于这套基础设施。
 
 2026-10-20 起，别人的代码按关系分放：只读参考在 `_ref/`，上游是别人的 fork 或封装在 `_forks/`；`fleet.json` 的 `agenvo.checkout` 指向本机实际位置。
+
+属于本架构的 launchd 任务：`io.agenvo.connector.*`（各 connector）、`dev.xw.*`、`fleet.mjs launchd` 按 `templates/launchd/` 生成的任务（标签前缀取 `LABEL_PREFIX`，默认 `dev.fleet`），以及 ZCode 接收端（按 `templates/launchd/zcode-receiver.plist` 新装时标签为 `<LABEL_PREFIX>.zcode-receiver`，主力 Mac 上现有的标签是 `dev.semantic-craft.zcode-dispatch`；`fleet.mjs release zcode` 按入口路径识别它，与标签无关）。
 
 移动或删除任何目录前，先查 launchd（`~/Library/LaunchAgents`）、`~/.config`、各 app 的配置以及其他仓库对它的引用。没有引用不等于没人用：当天还有提交的仓库，说明有其他 agent 正在维护它。
 
