@@ -8,6 +8,7 @@ import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, re
 import { fileURLToPath } from "node:url";
 import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
+import { runtimeConfig, stopRuntime, waitRuntime } from "./release-codex-runtime.mjs";
 import { CONNECTOR_DIRS, expandHome, writeJson0600 } from "./lib.mjs";
 import { MANIFEST, component, fullSha, manifestDiff, ownedPlists, profileWithPlugin, releaseOf, releaseStateName, rollbackPlan, treeHashes } from "./release-lib.mjs";
 
@@ -52,7 +53,7 @@ function livePlists(agents) {
     .map((f) => {
       const file = join(agents, f);
       const d = JSON.parse(run("plutil", ["-convert", "json", "-o", "-", file]));
-      return { file, label: d.Label, args: d.ProgramArguments ?? [], programArg: d.ProgramArguments?.[1], env: d.EnvironmentVariables ?? {} };
+      return { file, label: d.Label, args: d.ProgramArguments ?? [], programArg: d.ProgramArguments?.[1], env: d.EnvironmentVariables ?? {}, keepAlive: d.KeepAlive };
     });
 }
 
@@ -64,6 +65,14 @@ function restart(uid, { label, file }) {
     execFileSync("sleep", ["0.5"]);
   }
   throw new Error(`launchctl bootstrap ${file} failed; check it by hand`);
+}
+
+function runtimeRegistered(uid, label) {
+  try { run("launchctl", ["print", `gui/${uid}/${label}`]); return true; }
+  catch (error) {
+    if (/Could not find (?:specified )?service/i.test(String(error.stderr))) return false;
+    throw new Error("Cannot establish codex-runtime launchd registration; refusing release");
+  }
 }
 
 function zcodeEndpoint(home) {
@@ -103,7 +112,7 @@ async function connectorsOnline(home, plists, before, timeoutMs = 90_000) {
   throw new Error("connectors not online after restart: " + state().map(([d, st]) => `${d}=${st?.state ?? "?"}${st?.lastError ? " " + st.lastError : ""}`).join(", "));
 }
 
-function build(name, src, sha, dest) {
+export function build(name, src, sha, dest) {
   const c = component(name);
   const tree = name === "zcode" ? join(dest, "tree") : join(dest, ".src");
   mkdirSync(tree, { recursive: true, mode: 0o700 });
@@ -116,6 +125,21 @@ function build(name, src, sha, dest) {
     return;
   }
   const inTree = (args) => run("npm", args, { cwd: tree, stdio: ["ignore", "pipe", "inherit"] });
+  if (name === "codex-runtime") {
+    // Install from the lockfile, then include the only runtime dependency. ws has
+    // no required transitive dependencies; optional native addons are omitted.
+    inTree(["ci", "--omit=dev", "--ignore-scripts", "--omit=optional", "--no-audit", "--no-fund"]);
+    const target = join(dest, "tree");
+    mkdirSync(join(target, "adapters"), { recursive: true });
+    renameSync(join(tree, "adapters/codex-runtime"), join(target, "adapters/codex-runtime"));
+    rmSync(join(target, "adapters/codex-runtime/test"), { recursive: true, force: true });
+    mkdirSync(join(target, "node_modules"));
+    cpSync(join(tree, "node_modules/ws"), join(target, "node_modules/ws"), { recursive: true });
+    writeFileSync(join(target, "package.json"), JSON.stringify({ private: true, type: "module" }) + "\n");
+    run(process.execPath, ["--input-type=module", "-e", "await import('ws')"], { cwd: target });
+    rmSync(tree, { recursive: true, force: true });
+    return;
+  }
   inTree(["ci", "--no-audit", "--no-fund"]);
   for (const app of Object.values(CONNECTOR_DIRS)) inTree(["run", "build", "--workspace", `@agenvo/${app}`]);
   inTree(["prune", "--omit=dev", "--no-audit", "--no-fund"]);
@@ -242,7 +266,7 @@ function rollbackDsh({ root, currentFile, home, log }) {
   log("restored the desktop profile; quit and reopen DeepSeek Harness if the bridge does not reload");
 }
 
-export async function release(name, { cfg, sha, rollback = false, connector, home = homedir(), log = console.log, connectorTimeoutMs = 90_000 }) {
+export async function release(name, { cfg, sha, rollback = false, connector, home = homedir(), log = console.log, connectorTimeoutMs = 90_000, runtimeTimeoutMs = 10000 }) {
   const stateName = releaseStateName(name, connector);
   if (rollback && sha !== undefined) throw new Error("--rollback cannot be combined with --sha");
   const c = component(name);
@@ -269,6 +293,8 @@ export async function release(name, { cfg, sha, rollback = false, connector, hom
       if (cur.plistHashes?.[current.label] && cur.plistHashes[current.label] !== fileHash(current.file))
         throw new Error(`stale rollback: ${current.label} plist changed after release`);
     }
+    const runtime = name === "codex-runtime" ? runtimeConfig(plan.map(({ current }) => current)) : null;
+    const runtimePid = runtime ? await stopRuntime(runtime, runtimeRegistered(uid, plan[0].current.label), { timeoutMs: runtimeTimeoutMs }) : null;
     const before = Object.fromEntries(Object.values(CONNECTOR_DIRS).map((d) => [d, readJson(join(home, ".config/agenvo", d, "status.json"))?.pid]));
     for (const { backup, current } of plan) {
       cpSync(backup.file, current.file);
@@ -279,6 +305,7 @@ export async function release(name, { cfg, sha, rollback = false, connector, hom
     if (name === "agenvo") {
       for (const line of await connectorsOnline(home, plan.map(({ previous, current }) => ({ ...current, target: previous.programArg })), before, connectorTimeoutMs)) log(line);
     }
+    if (runtime) log(`codex-runtime: healthy pid ${(await waitRuntime(runtime, runtimePid, runtimeTimeoutMs)).pid}`);
     for (const { current } of plan) log(`restored ${current.label}.plist`);
     writeJson0600(currentFile, { sha: null, connector: connector ?? null, rolledBackFrom: cur.sha, at: new Date().toISOString() });
     return;
@@ -311,6 +338,8 @@ export async function release(name, { cfg, sha, rollback = false, connector, hom
   if (name === "zcode" && (await zcodeHealth(home)).running) throw new Error("ZCode receiver has running jobs; wait for them to finish");
 
   const dest = ensureRelease(name, src, sha, root, log);
+  const runtime = name === "codex-runtime" ? runtimeConfig(plists) : null;
+  const runtimePid = runtime ? await stopRuntime(runtime, runtimeRegistered(uid, plists[0].label), { timeoutMs: runtimeTimeoutMs }) : null;
 
   // Outside the release itself, so its manifest stays exact.
   const backup = join(root, "backups", ...(connector ? [connector] : []), `${sha}-${Date.now()}`);
@@ -331,6 +360,8 @@ export async function release(name, { cfg, sha, rollback = false, connector, hom
       const h = await zcodeHealth(home);
       if (!h.ok || h.strict_runner !== "app") throw new Error("ZCode receiver unhealthy after switch: " + JSON.stringify(h.checks ?? h));
       log(`zcode receiver ok: runner=${h.runner} strict_runner=${h.strict_runner} default_model=${h.default_model}`);
+    } else if (runtime) {
+      log(`codex-runtime: healthy pid ${(await waitRuntime(runtime, runtimePid, runtimeTimeoutMs)).pid}`);
     } else {
       for (const line of await connectorsOnline(home, plists, before)) log(line);
     }

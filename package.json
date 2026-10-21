@@ -3,7 +3,9 @@
   "private": true,
   "type": "module",
   "license": "Apache-2.0",
-  "engines": { "node": ">=24.13.0" },
+  "engines": {
+    "node": ">=24.13.0"
+  },
   "scripts": {
     "test": "node --test test/*.test.mjs adapters/*/test/*.test.mjs && node scripts/guard.mjs private",
     "guard": "node scripts/guard.mjs",
@@ -11,6 +13,7 @@
     "check": "node scripts/fleet.mjs check"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.32.1"
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "ws": "8.22.0"
   }
 }

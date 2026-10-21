@@ -2,6 +2,8 @@
 
 状态：已采纳（2026-10-19）
 
+Codex app-server 的 writer 交接采用 [ADR-0007](0007-codex-owned-runtime.md) 所述、用户已批准的生命周期托管特例；交互式 Codex CLI 的一般使用仍遵循本决策。
+
 ## 决定
 claude、codex CLI、agy（Antigravity）等终端 agent 不单独写 connector，而是在 Herdr pane 里运行，由上游 `agenvo-herdr` 管理。
 Herdr 以 headless 服务常驻（launchd 运行 `herdr server`）；用户需要看时在终端执行 `herdr` 接上。

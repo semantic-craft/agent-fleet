@@ -12,6 +12,12 @@ export const MANIFEST = "release.json";
  * inside the release, or null when the plist is not this component's.
  */
 export const COMPONENTS = {
+  "codex-runtime": {
+    label: "io.agent-fleet.codex-runtime",
+    self: true,
+    paths: ["adapters/codex-runtime", "package.json", "package-lock.json"],
+    entry: (p = "") => /\/adapters\/codex-runtime\/cli\.mjs$/.test(p) ? "tree/adapters/codex-runtime/cli.mjs" : null,
+  },
   // The four agenvo connectors (upstream codex/herdr plus the fork's dsh/dispatch), one shared release.
   agenvo: {
     labelPrefix: "io.agenvo.connector.",
