@@ -14,9 +14,11 @@ description: Hand work to another coding agent (DeepSeek Harness/DSH, ZCode, Cod
 3. **派活**：用 `execute` 调 `call({deviceId, instanceId}, method, params)`。
    - 对方没有你的上下文。任务文本要写全：目标、仓库和路径、已知事实、约束、验收方式，以及是否允许提交、推送或开 PR。
    - `project` 或 `cwd` 必须是对方机器上真实存在的目录。
+   - 新建会话后先显式选模型，再提交输入：DSH 用 `session/selectModel {request: {sessionId, provider, model, reasoningEffort}}`，返回的 `selected` 就是这个会话之后各轮使用的模型。每个会话各选一次，实例的全局默认保持原样。
    - 派出后立刻记下返回的 id（session、thread 或 job），并告诉用户。
 4. **跟进**：结果不会自动回来，要自己去读。
-   - 优先读原生状态和输出（read output 类的方法），隔一段时间再读一次。不要连续高频轮询。
+   - 按固定节奏读：派出约 60 秒后读第一次，之后每 2–3 分钟读一次；约 10 分钟仍未完成就停止等待，把会话 id 和当前状态报告给用户（ZCode 任务较慢，可放宽到约 15 分钟）。每次读取单独一次 `execute`，在调用之间等待。
+   - 先用便宜的状态判断是否完成，再读输出：DSH 读 `session/projections` 的 `turnOutline`，最后一项的 `response` 非空即本轮已结束；然后用 read output 类的方法（DSH `session/follow`，ZCode `jobs.get`）取结果。
    - 需要追问或纠偏时，用 submit input 发到**同一个**会话，不要另开新会话。只支持 `jobs.*` 的实例（目前是 ZCode）做不到追问，这种情况下新派一个任务，把上一轮的结论写进去。
    - 方向错了就 interrupt，说明原因后重新交代。
 5. **验收**：输入"已接受"、agent"空闲"、轮次结束，都不等于任务完成。读到实际结果、对照第 3 步写下的验收方式核对之后，才算完成。最后给用户的汇报要写清：结论、对方做了什么、哪些没做或没验证、需要用户决定的事。
