@@ -27,16 +27,16 @@
 
 ## Codex 派活验收
 
-通过 Agenvo 调用 Herdr 实例的 `workspace.create`（`session` 取 `session.list` 返回值，`cwd` 为真实项目绝对路径），取得 root pane，再用 `pane.run` 执行。先确保 `~/Projects/_status` 存在，为本次验收选唯一文件名：
+通过 Agenvo 调用 Herdr 实例的 `workspace.create`（`session` 取 `session.list` 返回值，`cwd` 为真实项目绝对路径），取得 root pane，再用 `pane.run` 执行。先确保 `~/Projects/_status` 存在，为本次验收选唯一文件名，把任务正文写入文件后经 stdin 传入：
 
 ```sh
-codex exec --json -o ~/Projects/_status/<验收名>.md -C <项目绝对路径> -s danger-full-access "只回复 OK" > /tmp/<验收名>.jsonl; echo __EXIT=$?
+printf '只回复 OK\n' > "/tmp/<验收名>.txt"; codex exec --json -o "$HOME/Projects/_status/<验收名>.md" -C "<项目绝对路径>" -s danger-full-access -m <模型> -c model_provider="magpie" - < "/tmp/<验收名>.txt" > "/tmp/<验收名>.jsonl"; echo __EXIT=$?
 ```
 
-从 JSONL 的 `thread.started` 记录取得 `thread_id`；用 `pane.read` 确认 `__EXIT=0`，并确认 `-o` 文件内容为 `OK`。随后在同一 pane 续接一次：
+从 JSONL 的 `thread.started` 记录取得 `thread_id`；用 `pane.read` 确认 `__EXIT=0`，并确认 `-o` 文件内容为 `OK`。随后在同一 pane 续接一次（`-C`、`-s` 放在 `resume` 之前，每轮重复 `-s`、`-m`、`-c model_provider="magpie"`）：
 
 ```sh
-codex exec resume <thread_id> --json -o ~/Projects/_status/<验收名>-2.md "只回复 OK" > /tmp/<验收名>-2.jsonl; echo __EXIT=$?
+codex exec --json -o "$HOME/Projects/_status/<验收名>-2.md" -C "<项目绝对路径>" -s danger-full-access -m <模型> -c model_provider="magpie" resume <thread_id> - < "/tmp/<验收名>.txt" > "/tmp/<验收名>-2.jsonl"; echo __EXIT=$?
 ```
 
 再次确认 `__EXIT=0` 和本轮结果 `OK`，记录同一线程的两轮结果。进程退出后在 Codex Desktop 打开 `codex://threads/<thread_id>`，检查完整历史、正常输入框和没有 “This is open in another app” 占用横幅；不要求线程出现在侧栏。

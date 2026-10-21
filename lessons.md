@@ -25,8 +25,8 @@
 **在 Herdr pane 里运行官方 `codex exec`，以 `codex exec resume` 追问；进程退出后通过 `codex://threads/<thread_id>` 接手。**
 
 - 起因与后果：常驻 `codex app-server` 共用 home 能读取历史，但远程 turn 完成后仍持有 writer，桌面版显示 “This is open in another app”，只能 Fork。
-- 修复与证据：调度方于 2026-10-21 实测 `codex exec --json -o` 完成并退出，`codex exec resume` 可续写，桌面线程链接打开后显示历史与正常输入框，无占用横幅。
-- 正确做法：派活走 Herdr，立刻记录 JSONL 中 `thread.started` 的 `thread_id` 并告知用户。Codex connector 只列出线程与读取历史；列表查询包含 `sourceKinds: ["exec"]`、`modelProviders: []`。exec 线程不一定出现在侧栏，因此必须提供线程链接。完整流程见[派活技能](skills/delegate-via-agenvo/SKILL.md)。
+- 修复与证据：调度方于 2026-10-21 实测 `codex exec --json -o` 完成并退出，`codex exec resume` 可续写，桌面线程链接打开后显示历史与正常输入框，无占用横幅。2026-10-21 22:43 用 `codex exec --help` 与 `codex exec resume --help` 核对：`resume` 不接受 `-C`、`-s`；把 `-C`、`-s danger-full-access`、`-m`、`-c model_provider="magpie"` 放在 `resume` 之前实测续写同一线程，两轮 turn context 均为 `danger-full-access`、所选模型，会话 provider 为 magpie。
+- 正确做法：派活走 Herdr，任务正文写文件经 stdin 传入，每轮都带 `-s danger-full-access`、`-m`、`-c model_provider="magpie"`，立刻记录 JSONL 中 `thread.started` 的 `thread_id` 并告知用户。Codex connector 只列出线程与读取历史；列表查询包含 `sourceKinds: ["exec"]`、`modelProviders: []`。exec 线程不一定出现在侧栏，因此必须提供线程链接。完整流程见[派活技能](skills/delegate-via-agenvo/SKILL.md)。
 - 复发记录：Seen 2x (2026-10-21)。
 
 ### Herdr 常驻要用 `herdr server`
@@ -106,9 +106,9 @@
 
 **Claude Code 已登录，在 Herdr pane 里按下方完整命令新建与续接，每轮显式传 `--model deepseek/deepseek-flash`。agy 首次进入项目要处理信任提示。**
 
-- 起因与后果：Claude Code 默认使用设置中的 antigravity 模型，会拒答 Claude Code 系统提示并返回 `is_error: true`，继续等待无用；agy 遇到信任提示时 `agent.prompt` 返回 `agent_blocked`。
-- 修复与证据：调度方于 2026-10-21 19:26–19:27 实测 Claude Code 已登录，显式选 `deepseek/deepseek-flash` 后成功，`--resume <session_id>` 也能续接同一会话。调度方于 2026-10-21 19:57 在目标开发机实测，加 `--dangerously-skip-permissions` 的无头命令返回 `is_error: false`。调度方于 2026-10-21 21:11–21:16 实测 `--model deepseek/deepseek-flash` 新建与 `--resume` 均成功，请求经 `~/.claude/settings.json` 的 `ANTHROPIC_BASE_URL` 进入本机 magpie；默认模型 `antigravity/gemini-4-argon[1m]` 在 20:19–20:23 新建与续写均被拒答。agy 经 relay 用 `pane.run` 发空命令回车确认信任后可回答。
-- 正确做法：用 `claude -p --dangerously-skip-permissions "<任务>" --model deepseek/deepseek-flash --output-format json > /tmp/<任务名>.json; echo __EXIT=$?`，读取 JSON 的 `result`、`session_id` 与 `is_error`；追问用 `claude -p --dangerously-skip-permissions --resume <session_id> "<下一句>" --model deepseek/deepseek-flash --output-format json`。不用交互式 `agent.start kind claude`。输入已接受不等于轮次完成。
+- 起因与后果：不显式传模型时 Claude Code 用设置里的默认模型，结果随设置变化，曾返回 `is_error: true`，继续等待无用；agy 遇到信任提示时 `agent.prompt` 返回 `agent_blocked`。
+- 修复与证据：调度方于 2026-10-21 19:26–19:27 实测 Claude Code 已登录，显式选 `deepseek/deepseek-flash` 后成功，`--resume <session_id>` 也能续接同一会话。调度方于 2026-10-21 19:57 在目标开发机实测，加 `--dangerously-skip-permissions` 的无头命令返回 `is_error: false`。调度方于 2026-10-21 21:11–21:16 实测 `--model deepseek/deepseek-flash` 新建与 `--resume` 均成功，请求经 `~/.claude/settings.json` 的 `ANTHROPIC_BASE_URL` 进入本机 magpie。agy 经 relay 用 `pane.run` 发空命令回车确认信任后可回答。
+- 正确做法：确认 `ANTHROPIC_BASE_URL` 指向 magpie（`http://127.0.0.1:3425`），启动前 3425 不在线就不启动；任务正文写文件，用 `claude -p --dangerously-skip-permissions --model deepseek/deepseek-flash --output-format json < "/tmp/<任务名>.txt" > "/tmp/<任务名>.json"; echo __EXIT=$?`，读取 JSON 的 `result`、`session_id` 与 `is_error`；追问用 `claude -p --dangerously-skip-permissions --resume <session_id> --model deepseek/deepseek-flash --output-format json < "/tmp/<任务名>-2.txt"`。完整命令见[派活技能](skills/delegate-via-agenvo/SKILL.md)。不用交互式 `agent.start kind claude`。输入已接受不等于轮次完成。
 - 复发记录：Seen 1x (2026-10-19)；模型与登录状态于 2026-10-21 更新。
 
 ### 从 DSH 的 shell 启动 Electron app 要去掉 ELECTRON_RUN_AS_NODE
