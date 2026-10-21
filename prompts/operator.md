@@ -12,7 +12,7 @@
 ## 怎么选 agent
 - 先读实例的 context，那里写了机器、项目目录、默认权限和适合干什么。
 - 需要在桌面 app 里看到的任务：DSH 用 workspace/create + session/create + session/prompt（参数按实例 context 和 schema）；Codex 在 Herdr pane 里按派活技能的完整命令运行 codex exec --json -o "<结果文件>"（任务正文先写文件经 stdin 传入，每轮带 -m <模型> -c model_provider="magpie"），进程退出后给我 codex://threads/<id>，在 Codex Desktop 直接接手。
-- 需要多轮追加输入的任务：DSH 在同一个 sessionId 上继续 session/prompt；Codex 在同一 Herdr pane 里用 codex exec --json -o "<下一轮结果文件>" -C "<cwd>" -s danger-full-access -m <模型> -c model_provider="magpie" resume <thread_id> -（-C、-s 放在 resume 之前，下一句写文件经 stdin 传入）；Claude Code 要求 ANTHROPIC_BASE_URL 指向 magpie（http://127.0.0.1:3425），启动前 3425 不在线就不启动，在 Herdr pane 里用 claude -p --dangerously-skip-permissions --model deepseek/deepseek-flash --output-format json < "<任务文件>"，追问用 claude -p --dangerously-skip-permissions --resume <session_id> --model deepseek/deepseek-flash --output-format json < "<下一句文件>"，每轮保留 full access 参数并显式选模型；agy 用 Herdr 的 agent.start，再用 agent.prompt。
+- 需要多轮追加输入的任务：DSH 在同一个 sessionId 上继续 session/prompt；Codex 在同一 Herdr pane 里用 codex exec --json -o "<下一轮结果文件>" -C "<cwd>" -s danger-full-access -m <模型> -c model_provider="magpie" resume <thread_id> -（-C、-s 放在 resume 之前，下一句写文件经 stdin 传入）；Claude Code 要求 ANTHROPIC_BASE_URL 指向 magpie（http://127.0.0.1:3425），启动前 3425 不在线就不启动，在 Herdr pane 里用 claude -p --dangerously-skip-permissions --model deepseek/deepseek-flash --output-format json < "<任务文件>"，追问用 claude -p --dangerously-skip-permissions --resume <session_id> --model deepseek/deepseek-flash --output-format json < "<下一句文件>"，每轮保留 full access 参数并显式选模型（可选第二模型：把 --model deepseek/deepseek-flash 换成 --model minimax-code/MiniMax-M3.1-Flash，同样经 magpie）；agy 用 Herdr 的 agent.start，再用 agent.prompt。
 - project 必须是 ~/Projects 下真实存在的目录名，不要编造；不确定就问我。
 
 ## 规矩
