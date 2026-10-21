@@ -52,7 +52,7 @@ function livePlists(agents) {
     .map((f) => {
       const file = join(agents, f);
       const d = JSON.parse(run("plutil", ["-convert", "json", "-o", "-", file]));
-      return { file, label: d.Label, args: d.ProgramArguments ?? [], programArg: d.ProgramArguments?.[1], env: d.EnvironmentVariables ?? {} };
+      return { file, label: d.Label, args: d.ProgramArguments ?? [], programArg: d.ProgramArguments?.[1] };
     });
 }
 
@@ -293,7 +293,6 @@ export async function release(name, { cfg, sha, rollback = false, connector, hom
     cpSync(p.file, join(backup, `${p.label}.plist`));
     // Replace the whole array: `-replace ProgramArguments.1` inserts instead of overwriting.
     run("plutil", ["-replace", "ProgramArguments", "-json", JSON.stringify(p.args.map((a, i) => (i === 1 ? p.target : a))), p.file]);
-    for (const k of c.dropEnv ?? []) if (k in p.env) run("plutil", ["-remove", `EnvironmentVariables.${k}`, p.file]);
   }
   writeJson0600(currentFile, { sha, connector: connector ?? null, backup, previous: plists.map(({ label, programArg }) => ({ label, programArg })), plistHashes: Object.fromEntries(plists.map((p) => [p.label, fileHash(p.file)])), switchedAt: new Date().toISOString() });
   for (const p of plists) restart(uid, p);
