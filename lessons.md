@@ -104,11 +104,11 @@
 
 ### Claude Code 在 Herdr 用无头模式并显式选模型；agy 首次确认信任
 
-**Claude Code 已登录，在 Herdr pane 里按下方完整命令新建与续接，每轮显式传 `--model deepseek/deepseek-flash`。agy 首次进入项目要处理信任提示。**
+**Claude Code 已登录，在 Herdr pane 里按下方完整命令新建与续接，每轮显式传所选模型：首选 `--model deepseek/deepseek-flash`，可选第二模型 `--model minimax-code/MiniMax-M3.1-Flash`，都经 magpie，续接沿用新建时的模型。agy 首次进入项目要处理信任提示。**
 
 - 起因与后果：不显式传模型时 Claude Code 用设置里的默认模型，结果随设置变化，曾返回 `is_error: true`，继续等待无用；agy 遇到信任提示时 `agent.prompt` 返回 `agent_blocked`。
 - 修复与证据：调度方于 2026-10-21 19:26–19:27 实测 Claude Code 已登录，显式选 `deepseek/deepseek-flash` 后成功，`--resume <session_id>` 也能续接同一会话。调度方于 2026-10-21 19:57 在目标开发机实测，加 `--dangerously-skip-permissions` 的无头命令返回 `is_error: false`。调度方于 2026-10-21 21:11–21:16 实测 `--model deepseek/deepseek-flash` 新建与 `--resume` 均成功，请求经 `~/.claude/settings.json` 的 `ANTHROPIC_BASE_URL` 进入本机 magpie。agy 经 relay 用 `pane.run` 发空命令回车确认信任后可回答。
-- 正确做法：确认 `ANTHROPIC_BASE_URL` 指向 magpie（`http://127.0.0.1:3425`），启动前 3425 不在线就不启动；任务正文写文件，用 `claude -p --dangerously-skip-permissions --model deepseek/deepseek-flash --output-format json < "/tmp/<任务名>.txt" > "/tmp/<任务名>.json"; echo __EXIT=$?`，读取 JSON 的 `result`、`session_id` 与 `is_error`；追问用 `claude -p --dangerously-skip-permissions --resume <session_id> --model deepseek/deepseek-flash --output-format json < "/tmp/<任务名>-2.txt"`。完整命令见[派活技能](skills/delegate-via-agenvo/SKILL.md)。不用交互式 `agent.start kind claude`。输入已接受不等于轮次完成。
+- 正确做法：确认 `ANTHROPIC_BASE_URL` 指向 magpie（`http://127.0.0.1:3425`），启动前 3425 不在线就不启动；任务正文写文件，以首选模型为例，用 `claude -p --dangerously-skip-permissions --model deepseek/deepseek-flash --output-format json < "/tmp/<任务名>.txt" > "/tmp/<任务名>.json"; echo __EXIT=$?`，读取 JSON 的 `result`、`session_id` 与 `is_error`；用 MiniMax 时把本条新建与追问命令里的 `--model` 都换成 `minimax-code/MiniMax-M3.1-Flash`；追问用 `claude -p --dangerously-skip-permissions --resume <session_id> --model deepseek/deepseek-flash --output-format json < "/tmp/<任务名>-2.txt"`。完整命令见[派活技能](skills/delegate-via-agenvo/SKILL.md)。不用交互式 `agent.start kind claude`。输入已接受不等于轮次完成。
 - 复发记录：Seen 1x (2026-10-19)；模型与登录状态于 2026-10-21 更新。
 
 ### 从 DSH 的 shell 启动 Electron app 要去掉 ELECTRON_RUN_AS_NODE
