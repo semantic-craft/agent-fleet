@@ -9,7 +9,7 @@ http-listen = 0.0.0.0:6152
 [Proxy]
 private = custom, secret-host.invalid, password=secret-abc
 [Rule]
-DOMAIN,headscale.example.invalid,DIRECT
+DOMAIN,controlplane.tailscale.com,DIRECT
 RULE-SET,https://subscription.invalid/token-xyz,PrivatePolicy
 FINAL,PrivatePolicy
 [Host]
@@ -18,14 +18,14 @@ private-host.invalid = server:example.invalid
   const serialized = JSON.stringify(output);
   for (const value of ["secret", "invalid", "token-xyz", "PrivatePolicy", "6152"])
     assert.equal(serialized.includes(value), false);
-  assert.equal(output.rules.tailscaleOrHeadscale, 1);
+  assert.equal(output.rules.tailscale, 1);
   assert.equal(output.rules.remoteRuleSets, 1);
   assert.equal(output.activeProfileAndRuntimeRouteVerified, false);
 });
 
 test("comments do not establish dependencies and unknown sections do not become rules", () => {
-  const output = auditProfile("# tailscaled\n[Proxy]\nDOMAIN,headscale.example.invalid,DIRECT\n[Rule]\n; iroH\nFINAL,DIRECT\n");
+  const output = auditProfile("# tailscaled\n[Proxy]\nDOMAIN,controlplane.tailscale.com,DIRECT\n[Rule]\n; iroH\nFINAL,DIRECT\n");
   assert.equal(output.rules.total, 1);
-  assert.equal(output.rules.tailscaleOrHeadscale, 0);
+  assert.equal(output.rules.tailscale, 0);
   assert.equal(output.rules.reasonOrIroh, 0);
 });
