@@ -47,7 +47,7 @@
 
 ### 私有仓库的轻量必过检查来自常开 Mac mini 的 runner
 
-**私有仓库 PR 上的轻量必过检查由常开 Mac mini 上的自托管 runner 跑，Swift/iOS 和签名在开发笔记本上跑；仓库还没接 runner 时 checks 为空，在本机运行 `scripts/check`，把结果写进 PR 后再合并。**
+**私有仓库 PR 上的轻量必过检查由常开 Mac mini 上的自托管 runner 跑，Swift/iOS 和签名在开发笔记本上跑；仓库还没接 runner 时，在本机运行 `scripts/check`，把结果写进 PR 后再合并。**
 
 - 起因与后果：一个 session 一直"等待 CI"，任务停在合并前。
 - 修复与证据：改为本机检查后合并。
