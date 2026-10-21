@@ -12,4 +12,4 @@
 用户要在 app 里看到并接手每一个任务；静默退回 headless 会让结果"看不见"。安全边界放在谁能访问 relay，而不是每一步的执行审批。
 
 ## 代价
-同一 macOS 用户下的 full access 不是安全隔离；暂无完整的隔离通路。只读任务（例如独立审稿）在 DSH 上提交后立刻用原生 `commands/execute {line:"/permission read-only"}` 切回只读，每轮开头仍有一个短暂的 full-access 窗口；建会话和提交时直接指定 sandbox 的可选字段在 [#19](https://github.com/semantic-craft/agent-fleet/issues/19) 跟进。
+同一 macOS 用户下的 full access 不是安全隔离；暂无完整的隔离通路。只读任务（例如独立审稿）在 DSH 上提交后立刻用原生 `commands/execute {agentId:<sessionId>, line:"/permission read-only", submittedAttachments:[]}` 切回只读，每轮开头仍有一个短暂的 full-access 窗口；建会话和提交时直接指定 sandbox 的可选字段在 [#19](https://github.com/semantic-craft/agent-fleet/issues/19) 跟进。
