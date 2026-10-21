@@ -12,4 +12,4 @@
 用户要在 app 里看到并接手每一个任务；静默退回 headless 会让结果"看不见"。安全边界放在谁能访问 relay，而不是每一步的执行审批。
 
 ## 代价
-同一 macOS 用户下的 full access 不是安全隔离；暂无完整的隔离通路。只读任务（例如独立审稿）在 DSH 上用 `session/create {request:{workspaceId}, permission:"read-only"}` 建会话：connector 在提交任何输入前就切到 read-only，之后的 `session/prompt` 不带 `permission` 时保持会话当前权限，整个会话没有 full-access 窗口。`session/prompt` 带 `permission` 时先切到指定预设再提交。
+同一 macOS 用户下的 full access 不是安全隔离；暂无完整的隔离通路。只读任务（例如独立审稿）在 DSH 上用 `session/create {request:{workspaceId}, permission:"read-only"}` 建会话：`session/create` 成功返回时会话已是 read-only；之后的 `session/prompt` 不带 `permission` 时保持会话当前权限。`session/prompt` 带 `permission` 时先切到指定预设再提交。
