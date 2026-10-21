@@ -10,7 +10,7 @@
     "branch": "xw/dispatch-connectors"
   },
   "check": {
-    "$comment": "check --dispatch opens a read-only task in projectsRoot/<project> on every DSH/ZCode machine; use a directory every such machine has, such as this repository's checkout.",
+    "$comment": "check --dispatch opens a read-only task in projectsRoot/<project> on every DSH machine; use a directory every such machine has, such as this repository's checkout.",
     "project": "PROJECT"
   },
   "machines": [
@@ -40,15 +40,6 @@
           "connector": "dsh",
           "endpoint": "unix://~/.local/state/agent-fleet-dsh/native.sock",
           "context": "# DSH desktop @ laptop\n- DSH 原生会话接口：session/list 列出（含手动开的会话），session/follow、session/page 读输出，workspace/create + session/create 新建，session/prompt 追加输入，session/cancel 中断。\n- 权限：session/create 和 session/prompt 可带 permission（read-only、workspace-write、danger-full-access）；create 不带时为 danger-full-access，prompt 不带时保持会话当前权限。等 runtime.changed 的 turn/end 再读结果。"
-        },
-        {
-          "id": "zcode-laptop",
-          "connector": "dispatch",
-          "kind": "zcode",
-          "endpoint": "http://127.0.0.1:7791",
-          "keyFile": "~/.config/zcode-dispatch/key",
-          "source": "agenvo",
-          "context": "# ZCode desktop @ laptop\n- jobs.create 在 ZCode 桌面新建可见会话，默认 yolo；难任务传 model。\n- 适合本机验证与 iOS 真机测试。"
         }
       ]
     }

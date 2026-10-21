@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- Strict desktop runner refuses jobs while the app is closed, so open DSH and ZCode in the background at login. -->
+<!-- Strict desktop runner refuses jobs while the app is closed, so open DSH in the background at login. -->
 <plist version="1.0">
 <dict>
   <key>Label</key><string>{{LABEL_PREFIX}}.desktop-agents-autostart</string>
   <key>ProgramArguments</key><array><string>/bin/sh</string><string>-c</string>
-    <string>sleep 20; /usr/bin/open -g -a "DeepSeek Harness"; /usr/bin/open -g -a ZCode</string></array>
+    <string>sleep 20; /usr/bin/open -g -a "DeepSeek Harness"</string></array>
   <key>RunAtLoad</key><true/>
   <key>StandardErrorPath</key><string>{{HOME}}/Library/Logs/desktop-agents-autostart.log</string>
 </dict>

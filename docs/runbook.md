@@ -5,7 +5,7 @@
 ## 0. 前提
 
 - macOS，Node 24.13 以上。
-- 原生运行时自行安装并登录：Codex（`codex` CLI，与 Codex Desktop 共用 `~/.codex`）、Herdr、DSH 桌面版、ZCode 桌面版。
+- 原生运行时自行安装并登录：Codex（`codex` CLI，与 Codex Desktop 共用 `~/.codex`）、Herdr、DSH 桌面版。
 - 一个 Cloudflare 账号，以及一个 DNS 托管在该账号里的域名（见 [ADR-0005](decisions/0005-relay-on-cloudflare.md)）。
 
 ## 1. 准备 agenvo fork（每台机器）
@@ -45,8 +45,6 @@ for f in codex-app-server herdr-server desktop-agents-autostart; do launchctl bo
 
 DSH：每台 Mac 跑 `node scripts/fleet.mjs release dsh`，把本仓库的 [adapters/dsh](../adapters/dsh/README.md) 插件（`agent-fleet-dsh`）链进桌面版的 `desktop` profile；它在 `~/.local/state/agent-fleet-dsh/native.sock`（0600）上转发桌面 Host 的原生会话接口。每次 `release dsh` 之后都要退出并重开 DeepSeek Harness，正在运行的桌面版不会自己加载新插件。
 
-ZCode 接收端（本仓库 [adapters/zcode](../adapters/zcode/README.md)）：生成 `~/.config/zcode-dispatch/key`（0600），`fleet.mjs launchd zcode-receiver` 生成 plist 并 bootstrap 一次，之后一律用 `fleet.mjs release zcode` 部署（见下文“发布与回滚”）。它只接受 `source: "agenvo"` + `runner: "app"`，ZCode.app 不在就明确失败（[ADR-0004](decisions/0004-desktop-strict-and-full-access.md)）。
-
 ## 4. 添加实例并配对（每台机器、每种 connector）
 
 ```sh
@@ -78,8 +76,8 @@ node scripts/fleet.mjs release agenvo        # 把刚装好的 connector 改为�
 
 ```sh
 node scripts/fleet.mjs doctor              # 本机 launchd 服务与 connector 状态
-node scripts/fleet.mjs check               # OAuth + search + 每个实例一个只读原生调用
-node scripts/fleet.mjs check --dispatch    # 另给每个 DSH/ZCode 实例派只读任务，读回 completed 结果；项目取 overlay 的 check.project（每台派活机器 projectsRoot 下都有的目录），--project 可覆盖
+node scripts/fleet.mjs check               # OAuth + search + Codex／Herdr／DSH 实例各一个只读原生调用
+node scripts/fleet.mjs check --dispatch    # 另给每个 DSH 实例派只读任务，等到 turn/end 读回结果；项目取 overlay 的 check.project（每台派活机器 projectsRoot 下都有的目录），--project 可覆盖
 node scripts/fleet.mjs check --instance <dsh 实例> --session <sessionId>   # 向一个已有 DSH 会话追加一轮只读输入
 ```
 
@@ -93,13 +91,12 @@ node scripts/fleet.mjs check --instance <dsh 实例> --session <sessionId>   # �
 node scripts/fleet.mjs release agenvo [--sha SHA]   # 4 个 connector；默认取 overlay 里 agenvo.remote/branch 的最新提交
 node scripts/fleet.mjs release agenvo --connector codex [--sha SHA] # 只切换 Codex connector
 node scripts/fleet.mjs release agenvo --connector codex --rollback  # 只恢复该范围的上次切换
-node scripts/fleet.mjs release zcode  [--sha SHA]   # ZCode 接收端（adapters/zcode）；默认取本仓库 origin/main
 node scripts/fleet.mjs release dsh    [--sha SHA]   # DSH 插件（adapters/dsh）；改 releases/dsh/live 并更新桌面 profile
 node scripts/fleet.mjs release <组件> --rollback     # 恢复上一次切换前的 plist
 node scripts/fleet.mjs check                         # 切换后经 relay 端到端验收
 ```
 
-拒绝的情况：提交不在上述远端分支上；zcode 提交缺少 strict runner 或 `agenvo` 限定；ZCode 接收端还有任务在跑；现役发布目录被手改过（与 `release.json` 不符）；同一提交的目录不完整。旧 plist 备份在 `releases/<组件>/backups/`，`current.json` 记录当前版本。zcode 发布不带 `ZCODE_DOT_ACCESS_CONFIG` 环境变量。
+拒绝的情况：提交不在上述远端分支上；现役发布目录被手改过（与 `release.json` 不符）；同一提交的目录不完整。旧 plist 备份在 `releases/<组件>/backups/`，`current.json` 记录当前版本。
 
 `--connector` 目前仅接受 `release agenvo --connector codex`；其他组件、connector 或非 release 命令会拒绝，`--rollback` 不能与 `--sha` 同用。构建仍复用含四个 connector 的不可变 bundle，但只修改、重启和检查 Codex 的 plist；其他三个 connector 的 plist、进程及全量 `current.json` 不变。Codex 记录在 `current-codex.json`，备份在 `backups/codex/`。
 
