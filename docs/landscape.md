@@ -20,3 +20,10 @@
 | `_forks/agenvo` | 上游 Agenvo 的最小 fork（新增 `dsh`/`zcode` kind、原生 DSH connector `apps/dsh` 和 ZCode 用的 `apps/dispatch`）；relay 与所有 connector 都从这里构建，connector 由 `fleet.mjs release agenvo` 装进发布目录运行，checkout 可以随意切分支 | 核心 |
 | `agent-plugins` | 各 coding agent 自有插件的安装根（2026-10-20）：`claude/`（Claude mod，marketplace xw-claude）、`codex/`（writing-core 构建件，xw-codex）、`zcode/`（zlib 技能包）、`dsh/`（dsh-zlib、lcu-dsh 子模块，dsh-english-coach、dsh-pomodoro） | 无关：不是通信基础设施；其中 `dsh/lcu-dsh`（LCU Computer Use 插件）线上在用 |
 | `_ref/esp32-iphone-agent`、`zotero-bridge` | 硬件 iPhone 操控实验；Zotero 文献桥 | 无关 |
+
+## `~/Projects` 的布局
+
+- 每个仓库在 `~/Projects/<仓库名>` 只有一份克隆：目录名与 GitHub 仓库名一致，工作区干净，停在默认分支（通常是 `main`），跟踪 `origin`，用 `git pull --ff-only` 跟上远端。
+- 别人的代码按关系分放：上游是别人的 fork 或封装放 `~/Projects/_forks/<仓库名>`，只读参考克隆放 `~/Projects/_ref/<仓库名>`。
+- 开发在临时 worktree 里做，例如 `git worktree add ~/Projects/.worktrees/<仓库名>/<分支> -b <分支> origin/main`。分支合并后，`git worktree remove <路径>`（含 submodule 的 worktree 要加 `--force`，先确认 submodule 也干净）再 `git worktree prune`，用 `git branch -d <分支>` 删本地分支，`git fetch --prune` 清掉远端已删的跟踪分支。squash 合并的分支 `git branch -d` 认不出已合并，先用 `gh pr list --head <分支> --state merged --json number,headRefOid` 核对 PR 已合并，且 `headRefOid` 与 `git rev-parse <分支>` 一致，再决定是否删除。
+- `~/Projects` 只放 git 仓库和 `_forks/`、`_ref/`、`.worktrees/` 这几个容器；产物、验收证据、交接材料等非仓库内容放在 `~/Projects` 之外。仓库在机器之间经 git 远端同步。
