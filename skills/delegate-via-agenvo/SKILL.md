@@ -1,6 +1,6 @@
 ---
 name: delegate-via-agenvo
-description: Hand work to another coding agent (DeepSeek Harness/DSH, ZCode, Codex, or agy/codex/dsh headless in Herdr, on this or another Mac) through the Agenvo MCP server, then follow it to a verified result. Use when the user asks to have DSH/ZCode/another agent do something, to run work in parallel on another agent, or to check on or continue such work.
+description: Hand work to another coding agent (DeepSeek Harness/DSH, Codex, Claude Code, or agy/codex/dsh headless in Herdr, on this or another Mac) through the Agenvo MCP server, then follow it to a verified result. Use when the user asks to have DSH/Codex/another agent do something, to run work in parallel on another agent, or to check on or continue such work.
 ---
 
 # 经 Agenvo 把活交给其他 agent
@@ -15,21 +15,62 @@ description: Hand work to another coding agent (DeepSeek Harness/DSH, ZCode, Cod
    - 对方没有你的上下文。任务文本要写全：目标、仓库和路径、已知事实、约束、验收方式，以及是否允许提交、推送或开 PR。
    - `project` 或 `cwd` 必须是对方机器上真实存在的目录。
    - 新建会话后先显式选模型，再提交输入：DSH 用 `session/selectModel {request: {sessionId, provider, model, reasoningEffort}}`，返回的 `selected` 就是这个会话之后各轮使用的模型。每个会话各选一次，实例的全局默认保持原样。
-   - 派出后立刻记下返回的 id（session、thread 或 job），并告诉用户。
+   - 派出后立刻记下返回的 id（session 或 thread），并告诉用户。
 4. **跟进**：结果不会自动回来，要自己去读。
-   - 按固定节奏读：派出约 60 秒后读第一次，之后每 2–3 分钟读一次；约 10 分钟仍未完成就停止等待，把会话 id 和当前状态报告给用户（ZCode 任务较慢，可放宽到约 15 分钟）。每次读取单独一次 `execute`，在调用之间等待。
-   - 先用便宜的状态判断是否完成，再读输出：DSH 读 `session/projections` 的 `turnOutline`，最后一项的 `response` 非空即本轮已结束；然后用 read output 类的方法（DSH `session/follow`，ZCode `jobs.get`）取结果。
-   - 需要追问或纠偏时，用 submit input 发到**同一个**会话，不要另开新会话。只支持 `jobs.*` 的实例（目前是 ZCode）做不到追问，这种情况下新派一个任务，把上一轮的结论写进去。
+   - 按固定节奏读：派出约 60 秒后读第一次，之后每 2–3 分钟读一次；约 10 分钟仍未完成就停止等待，把会话 id 和当前状态报告给用户。每次读取单独一次 `execute`，在调用之间等待。
+   - 先用便宜的状态判断是否完成，再读输出：DSH 读 `session/projections` 的 `turnOutline`，最后一项的 `response` 非空即本轮已结束；然后用 read output 类的方法（DSH `session/follow`）取结果。
+   - 需要追问或纠偏时，用 submit input 发到**同一个**会话，不要另开新会话。
    - 方向错了就 interrupt，说明原因后重新交代。
 5. **验收**：输入"已接受"、agent"空闲"、轮次结束，都不等于任务完成。读到实际结果、对照第 3 步写下的验收方式核对之后，才算完成。最后给用户的汇报要写清：结论、对方做了什么、哪些没做或没验证、需要用户决定的事。
 
 ## 选哪个 agent
 
 - 用户点名了就用点名的。
-- 没点名时默认用 Codex。Codex 不可用（额度用尽、离线、报错）时改用 DSH：DSH 能力和 Codex 同级，能新建、追问、中断。
-- 要在桌面 app 里看得见、能手动接手：选 DSH 或 ZCode 实例。ZCode 适合本机验证和 iOS 真机测试。
+- 没点名时默认用 Codex，经 Herdr pane 运行 `codex exec`。Codex 不可用（额度用尽、离线、报错）时改用 DSH：DSH 能力和 Codex 同级，能新建、追问、中断。
+- 要在桌面 app 里看得见、能手动接手：Codex 用下述线程链接；也可选 DSH 实例。
 - 要长时间运行、不怕笔记本合盖：选第二台 Mac 上的实例。
-- 要多轮对话，或要用 agy、codex CLI：选 Herdr 实例（`agent.start` 起 agent，`agent.prompt` 追加输入）。不要在 Herdr 里起 claude，那里的 claude 有意不登录。读实例 `context` 里的首次信任目录处理和 `dsh headless` 用法。
+- Codex、Claude Code、agy 和 `dsh headless` 选 Herdr 实例。Codex 与 Claude Code 按下文用 `pane.run`；agy 用 `agent.start`、`agent.prompt`。读实例 `context` 里的首次信任目录处理和 `dsh headless` 用法。
 - 默认是 full access。用户没有要求时，不要降低权限，也不要替用户回答对方 agent 提出的业务决定问题。
 
 出错时，先读原生状态再决定是否重试。返回 `unknown` 的写操作不要直接重发。
+
+## Codex：官方 exec 经 Herdr 派活
+
+1. 在目标机器的 Herdr 实例（ID 从实例 context 获取）先调 `session.list`，再用它返回的名字调 `workspace.create {session: "<session 名>", cwd: "<项目绝对路径>"}`，取得 root pane。`cwd` 取实例 context 中 `~/Projects/<project>` 展开的绝对路径；其他机器使用其实际实例与路径。
+2. 在 root pane 用 `pane.run` 运行以下命令。先确保 `~/Projects/_status` 存在；任务名和每轮输出路径唯一，避免把上轮文件当作本轮完成。任务正文一律先写入文件，再用 `-` 从 stdin 传入，避免 shell 展开正文；`-o`、`-C` 和所有输出路径都加引号。每轮都显式带 `-m <模型>` 和 `-c model_provider="magpie"`，请求经本机 magpie：
+
+   ```sh
+   codex exec --json -o "$HOME/Projects/_status/<任务名>.md" -C "<cwd>" -s danger-full-access -m <模型> -c model_provider="magpie" - < "/tmp/<任务名>.txt" > "/tmp/<任务名>.jsonl"; echo __EXIT=$?
+   ```
+
+3. 启动后立即读 JSONL 第一行：`type: "thread.started"` 对应的 `thread_id` 就是线程 id，立刻记下并告诉用户，同时给出 `codex://threads/<thread_id>`。这次读 id 不代替结果轮询。
+4. 派出约 60 秒后第一次检查结果，之后每 2–3 分钟检查。用 `pane.read` 看到本轮 `__EXIT=` 行，或本轮 `-o` 文件已写出，就读取结果；`-o` 保存最后一条助手消息，过程和错误看 JSONL 的 `turn.completed`、`turn.failed`、`error`。文件写出不替代退出码与失败事件核对，业务验收仍按上面的步骤执行。
+5. 追问在同一 pane 用原 thread id，下一句同样先写入文件，任务文件和输出都用新一轮文件名。`resume` 子命令不接受 `-C`、`-s`，二者放在 `resume` 之前；每轮都重复 `-s danger-full-access`、`-m <模型>` 和 `-c model_provider="magpie"`：
+
+   ```sh
+   codex exec --json -o "$HOME/Projects/_status/<任务名>-2.md" -C "<cwd>" -s danger-full-access -m <模型> -c model_provider="magpie" resume <thread_id> - < "/tmp/<任务名>-2.txt" > "/tmp/<任务名>-2.jsonl"; echo __EXIT=$?
+   ```
+
+6. 中断用 `pane.send-keys` 发送 `["ctrl+c"]`。进程退出后 writer 已交还，用户在 Codex 桌面版打开 `codex://threads/<thread_id>`，已观察到完整历史、正常输入框，且没有 “This is open in another app” 占用横幅。exec 线程不一定出现在侧栏列表里，必须把链接告诉用户。
+
+目标机器的 Codex 实例只用 `thread/list`（`sourceKinds` 含 `exec`，`modelProviders: []`）与 `thread/read` 读取历史。不要用它的 `thread/start` / `turn/start` 派活：常驻共享 server 会继续占着 writer。线程 source 是 `exec`，`--thread-source vscode` 不改变它。
+
+## Claude Code：经 magpie 无头运行并显式选模型
+
+前提：目标机器上 Claude Code 的 `ANTHROPIC_BASE_URL`（`~/.claude/settings.json` 的 `env` 或环境变量）指向本机 magpie `http://127.0.0.1:3425`。下面的命令启动前先检查 3425，不在线就不启动 Claude Code，直接以 `__EXIT=97` 结束。
+
+与 Codex 一样先创建 Herdr workspace、取得 root pane，任务正文先写入文件，再用 `pane.run` 从 stdin 传入：
+
+```sh
+if nc -z 127.0.0.1 3425 2>/dev/null; then claude -p --dangerously-skip-permissions --model deepseek/deepseek-flash --output-format json < "/tmp/<任务名>.txt" > "/tmp/<任务名>.json"; echo __EXIT=$?; else echo "magpie 127.0.0.1:3425 不在线"; echo __EXIT=97; fi
+```
+
+新建与 `--resume` 每轮都保留 `--dangerously-skip-permissions`（默认 full access），并显式传 `--model deepseek/deepseek-flash`（magpie 认得的模型名）。新建与续接分别使用本节上方和下方的完整无头命令，不使用交互式 `agent.start kind claude`。
+
+按同样的 60 秒、之后每 2–3 分钟节奏用 `pane.read` 跟进，看到 `__EXIT=` 后读取 JSON：结果在 `result`，会话 id 在 `session_id`，同时核对 `is_error` 和退出码。拿到会话 id 后记下并告诉用户，追问续接同一会话：
+
+```sh
+if nc -z 127.0.0.1 3425 2>/dev/null; then claude -p --dangerously-skip-permissions --resume <session_id> --model deepseek/deepseek-flash --output-format json < "/tmp/<任务名>-2.txt" > "/tmp/<任务名>-2.json"; echo __EXIT=$?; else echo "magpie 127.0.0.1:3425 不在线"; echo __EXIT=97; fi
+```
+
+中断同样用 `pane.send-keys ["ctrl+c"]`。

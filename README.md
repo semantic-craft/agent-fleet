@@ -1,11 +1,11 @@
 # agent-fleet
 
 让手机上的 ChatGPT dots（以及 Grok Bot 等任何支持 OAuth MCP 的助手）直接给你自己电脑上的编码 agent 派活：
-Codex、DSH 桌面版、ZCode 桌面版，以及在 Herdr 终端里运行的 Antigravity（agy）、Codex CLI 和 `dsh headless`。
+Codex、DSH 桌面版，以及在 Herdr 终端里运行的 Antigravity（agy）、Codex CLI 和 `dsh headless`。
 
 ## 目的
 
-1. **一个入口派活**：主入口是 ChatGPT dots，Grok Bot 等其他 MCP 助手是辅助，都可以直接给本地 agent 派活并拿回结果。本地 agent 包括 DSH、ZCode、Codex 桌面版，以及 Herdr 里的 agy、codex 和 dsh headless。
+1. **一个入口派活**：主入口是 ChatGPT dots，Grok Bot 等其他 MCP 助手是辅助，都可以直接给本地 agent 派活并拿回结果。本地 agent 包括 DSH、Codex 桌面版，以及 Herdr 里的 agy、codex 和 dsh headless。
 2. **以上游为底座**：架构完全按 [Xuanwo/agenvo](https://github.com/Xuanwo/agenvo) 的设计来，不另起一套。
 3. **只做边际补丁**：上游已覆盖的部分原样使用；只补上游没覆盖、而我们确实需要的部分（目前是 DSH 与 ZCode 桌面版），而且一旦上游覆盖了就删掉。
 4. **可复用、对 agent 友好**：没有对话记忆的 agent 读完本仓库，也能独立重建整套系统，并做出和原设计一致的决策。

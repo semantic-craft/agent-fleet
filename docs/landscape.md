@@ -10,7 +10,7 @@
 
 2026-10-20 起，别人的代码按关系分放：只读参考在 `_ref/`，上游是别人的 fork 或封装在 `_forks/`；`fleet.json` 的 `agenvo.checkout` 指向本机实际位置。
 
-属于本架构的 launchd 任务：`io.agenvo.connector.*`（各 connector）、`dev.xw.*`、`fleet.mjs launchd` 按 `templates/launchd/` 生成的任务（标签前缀取 `LABEL_PREFIX`，默认 `dev.fleet`），以及 ZCode 接收端（按 `templates/launchd/zcode-receiver.plist` 新装时标签为 `<LABEL_PREFIX>.zcode-receiver`，主力 Mac 上现有的标签是 `dev.semantic-craft.zcode-dispatch`；`fleet.mjs release zcode` 按入口路径识别它，与标签无关）。
+属于本架构的 launchd 任务：`io.agenvo.connector.*`（各 connector）、`dev.xw.*`、`fleet.mjs launchd` 按 `templates/launchd/` 生成的任务（标签前缀取 `LABEL_PREFIX`，默认 `dev.fleet`），以及 ZCode 接收端（按 `templates/launchd/zcode-receiver.plist` 新装时标签为 `<LABEL_PREFIX>.zcode-receiver`，主力 Mac 上现有的标签是 `dev.semantic-craft.zcode-dispatch`；`fleet.mjs release zcode` 按入口路径识别它，与标签无关）。旧 Codex worker `io.agent-fleet.codex-runtime` 的代码已不在本仓库，主力 Mac 上的 launchd 任务保留运行，退役受阻：只有取得它没有进行中的 turn、pending 请求、子任务、后台进程和 hook，且能正常 shutdown 的证据后才退役；退役时不删锁文件，也不全量重启其他 connector。
 
 移动或删除任何目录前，先查 launchd（`~/Library/LaunchAgents`）、`~/.config`、各 app 的配置以及其他仓库对它的引用。没有引用不等于没人用：当天还有提交的仓库，说明有其他 agent 正在维护它。
 
@@ -26,6 +26,4 @@
 - 每个仓库在 `~/Projects/<仓库名>` 只有一份克隆：目录名与 GitHub 仓库名一致，工作区干净，停在默认分支（通常是 `main`），跟踪 `origin`，用 `git pull --ff-only` 跟上远端。
 - 别人的代码按关系分放：上游是别人的 fork 或封装放 `~/Projects/_forks/<仓库名>`，只读参考克隆放 `~/Projects/_ref/<仓库名>`。
 - 开发在临时 worktree 里做，例如 `git worktree add ~/Projects/.worktrees/<仓库名>/<分支> -b <分支> origin/main`。分支合并后，`git worktree remove <路径>`（含 submodule 的 worktree 要加 `--force`，先确认 submodule 也干净）再 `git worktree prune`，用 `git branch -d <分支>` 删本地分支，`git fetch --prune` 清掉远端已删的跟踪分支。squash 合并的分支 `git branch -d` 认不出已合并，先用 `gh pr list --head <分支> --state merged --json number,headRefOid` 核对 PR 已合并，且 `headRefOid` 与 `git rev-parse <分支>` 一致，再决定是否删除。
-- `~/Projects` 只放 git 仓库和 `_forks/`、`_ref/`、`.worktrees/` 这几个容器；产物、验收证据、交接材料等非仓库内容放在 `~/Projects` 之外。仓库在机器之间经 git 远端同步。
-
-Codex owned runtime（本仓库 `adapters/codex-runtime`）：独立本地 stdio 生命周期管理服务，使用新私有 Unix endpoint；只在专用 worker 的完整安全屏障成立后 EOF。不复用共享 server，不新增仓库。尚未部署；上游支持确定性 thread unload 后评估移除。移除前恢复 connector endpoint/relay scope，并确认无未释放 worker。
+- `~/Projects` 只放 git 仓库和 `_forks/`、`_ref/`、`.worktrees/`、`_status/`（派活结果文件）这几个容器；其他产物、验收证据、交接材料等非仓库内容放在 `~/Projects` 之外。仓库在机器之间经 git 远端同步。

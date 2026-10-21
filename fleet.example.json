@@ -28,12 +28,12 @@
         {
           "id": "codex-laptop",
           "connector": "codex",
-          "context": "# Codex @ laptop\n- thread/start + turn/start；可在同一 thread 追加输入。\n- 项目在 ~/Projects/<project>；默认 danger-full-access。"
+          "context": "# Codex @ laptop\n- 只用 thread/list（sourceKinds 含 exec、modelProviders: []）和 thread/read 读历史；派活走 Herdr 的 codex exec。\n- 项目在 ~/Projects/<project>；默认 danger-full-access。"
         },
         {
           "id": "herdr-laptop",
           "connector": "herdr",
-          "context": "# Herdr @ laptop\n- agent.start 起 claude/codex/agy，agent.prompt 追加输入。\n- full access：claude --dangerously-skip-permissions；codex --dangerously-bypass-approvals-and-sandbox。"
+          "context": "# Herdr @ laptop\n- Codex 用 workspace.create + pane.run 运行 codex exec --json -o \"<结果文件>\" -C \"<cwd>\" -s danger-full-access -m <模型> -c model_provider=\"magpie\" - < \"<任务文件>\"；追问 codex exec --json -o \"<下一轮结果文件>\" -C \"<cwd>\" -s danger-full-access -m <模型> -c model_provider=\"magpie\" resume <thread_id> - < \"<下一句文件>\"，进程退出后通过 codex://threads/<id> 桌面接手。\n- Claude Code 要求 ANTHROPIC_BASE_URL 指向 magpie（http://127.0.0.1:3425），启动前 3425 不在线就不启动；用 pane.run 运行 claude -p --dangerously-skip-permissions --model deepseek/deepseek-flash --output-format json < \"<任务文件>\"，追问用 claude -p --dangerously-skip-permissions --resume <session_id> --model deepseek/deepseek-flash --output-format json < \"<下一句文件>\"，每轮保留 full access 参数并显式选模型。\n- agy 用 agent.start（args 带 --dangerously-skip-permissions）和 agent.prompt。"
         },
         {
           "id": "dsh-laptop",

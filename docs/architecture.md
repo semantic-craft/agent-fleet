@@ -4,7 +4,7 @@
 
 1. 人只面对一个入口：手机上的 ChatGPT（主力是 dots），也可以是 Grok Bot。
 2. 助手能看到每台电脑上的 agent 在做什么，并能新建任务、追加输入、读结果。
-3. 任务在用户平时用的桌面 app 里可见（Codex Desktop、DSH、ZCode），也可以在 Herdr 终端里运行（agy、codex CLI、dsh headless）。
+3. 任务在用户平时用的桌面 app 里可见（Codex Desktop、DSH），也可以在 Herdr 终端里运行（agy、codex CLI、dsh headless）。
 4. 电脑不开入站端口；合盖、断网、关闭聊天都不会中断已经在跑的 agent。
 
 ## 组件与职责
@@ -19,14 +19,14 @@
 
 ## 一次派活的路径
 
-1. 用户对 dot 说"让 ZCode 在 koe 里跑一下真机测试"。
+1. 用户对 dot 说"让 DSH 在 koe 里跑一下测试"。
 2. 助手调 `search`，拿到实例列表、在线状态和每个实例的 `context`（写着项目目录、默认权限、适合干什么）。
-3. 助手调 `execute`，里面是 `call({deviceId, instanceId: "zcode-laptop"}, "jobs.create", {project: "koe", text: ...})`。
-4. relay 经 WSS 把调用交给笔记本上的 `agenvo-dispatch`，后者向 ZCode 接收端 `POST /v1/jobs`，带 `source: "agenvo"`、`runner: "app"`、`mode: "yolo"`。
-5. ZCode 桌面在左栏建出可见会话并开始执行；connector 立即返回 job id。
-6. connector 每 5 秒轮询自己派出的 job；完成时发出 `runtime.changed`（`nativeType: "job.finished"`），dot 被唤醒后调 `jobs.get` 读结果，再决定下一步。
+3. 助手调 `execute`，依次 `call({deviceId, instanceId: "dsh-laptop"}, "workspace/create", {request: {path: ".../koe"}})`、`session/create`、`session/prompt`。
+4. relay 经 WSS 把调用交给笔记本上的 `agenvo-dsh`，后者经 Unix socket 调 DSH 桌面版 Host 的原生端点。
+5. DSH 桌面在左栏该项目下建出可见会话并开始执行；connector 立即返回 session id。
+6. 轮次结束时 connector 转发原生 `turn/end`（`runtime.changed`），dot 被唤醒后调 `session/follow` 读结果，再决定下一步。
 
-Codex 和 Herdr 的路径相同，只是原生方法不同（`thread/start` + `turn/start`；`agent.start` + `agent.prompt`），而且可以在同一个 thread 或 pane 里继续追加输入。DSH 也一样：`agenvo-dsh` 调 DSH 桌面版自己的 `session/list`、`session/create`、`session/prompt`、`session/follow` 等，能列出并续写用户手动开的会话，事件是原生的 `turn/start`、`turn/end`。只有 ZCode 的接收端只能新建会话，后续输入要在桌面 app 里手动接着聊。
+Codex 派活经 Herdr 的 `workspace.create` + `pane.run` 运行官方 `codex exec`，追问用 `codex exec resume` 续接同一线程；进程退出后 writer 交还，用户通过 `codex://threads/<thread_id>` 在桌面版继续。Codex connector 只用 `thread/list`（`sourceKinds` 含 `exec`、`modelProviders: []`）和 `thread/read` 读取历史。Claude Code 同样在 Herdr pane 里运行，按派活技能中的完整示例新建与续接，请求经本机 magpie，每轮显式使用 `deepseek/deepseek-flash`；agy 用 `agent.start` + `agent.prompt`。完整命令见[派活技能](../skills/delegate-via-agenvo/SKILL.md)。DSH 的 `agenvo-dsh` 调 DSH 桌面版自己的 `session/list`、`session/create`、`session/prompt`、`session/follow` 等，能列出并续写用户手动开的会话，事件是原生的 `turn/start`、`turn/end`。
 
 ## 信任边界
 

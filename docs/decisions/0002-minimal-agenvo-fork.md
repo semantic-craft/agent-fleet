@@ -23,7 +23,6 @@ fork 里不放部署记录、个人值或本仓库的文档。
 
 ## 不做的事
 
-Codex writer 的确定性交接有一个用户已批准的特例：独立生命周期托管服务，见 [ADR-0007](0007-codex-owned-runtime.md)。它保留原 connector 和原生 thread 协议，不加入调度或输入重放。
 - 不在 connector 里加队列、重试或调度；原生服务或接收端负责执行，助手负责判断。
 - 原生接口能做到的，不另造任务模型：DSH 直接用原生会话方法。
 - 不为 CLI 型 agent 写 connector（见 ADR-0003）。
