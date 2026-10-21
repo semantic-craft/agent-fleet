@@ -87,6 +87,8 @@ node scripts/fleet.mjs check --instance <dsh 实例> --session <sessionId>   # �
 
 ## 发布与回滚
 
+专属 Codex runtime 使用独立组件、正常停机协议和私有 endpoint，首装不能直接 bootstrap 模板。见[专属 runtime 发布说明](codex-runtime-release.md)。它与 `release agenvo --connector codex` 是两个独立步骤。
+
 常驻服务从不直接跑 git checkout，否则在 checkout 里切分支或重新构建会立即影响线上。`release` 把一个已推送的提交构建进 `~/.local/share/agent-fleet/releases/<组件>/<sha>/`（带逐文件 sha256 的 `release.json`），把该组件的 launchd plist 指过去，重启并验证：
 
 ```sh

@@ -1,0 +1,40 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, rm, stat } from 'node:fs/promises';
+import { join } from 'node:path';
+import { once } from 'node:events';
+import { OwnedRuntimeManager } from '../manager.mjs';
+import { serve } from '../server.mjs';
+import { fakeFactory } from './fake-worker.mjs';
+import { rpcClient, until } from './support.mjs';
+
+test('private Unix reconnect preserves pending request and does not close owner', async t => {
+  const root = await mkdtemp('/tmp/owned-transport-');
+  const factory = fakeFactory();
+  const manager = new OwnedRuntimeManager({ stateDir: join(root, 'state'), createWorker: factory.createWorker });
+  const socketPath = join(root, 'runtime.sock');
+  const service = await serve({ socketPath, manager });
+  const clients = [];
+  t.after(async () => {
+    for (const c of clients) c.ws.terminate();
+    service.wss.close(); await new Promise(resolve => service.server.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  });
+  assert.equal((await stat(socketPath)).mode & 0o777, 0o600);
+  const a = await rpcClient(socketPath); clients.push(a); await a.initialize(); a.notify('initialized');
+  const { thread } = await a.rpc('thread/start');
+  const owner = factory.workers.find(w => w.loaded.has(thread.id));
+  owner.emitPacket('item/tool/requestUserInput', { threadId: thread.id, questions: [] }, 91);
+  const first = await until(() => a.notifications.find(p => p.method === 'item/tool/requestUserInput'));
+  a.close(); await once(a.ws, 'close');
+  assert.equal(owner.eofCount, 0);
+  const b = await rpcClient(socketPath); clients.push(b); await b.initialize(); b.notify('initialized');
+  const replay = await until(() => b.notifications.find(p => p.method === 'item/tool/requestUserInput'));
+  assert.equal(replay.id, first.id, 'same pending request, no new native work');
+  b.ws.send(JSON.stringify({ id: replay.id, result: { answers: {} } }));
+  await until(() => owner.replies.length, n => n === 1);
+  assert.equal(owner.replies[0].id, 91);
+  assert.equal(factory.workers.flatMap(w => w.calls).filter(c => c.method === 'turn/start').length, 0);
+  await b.rpc('runtime/release', { threadId: thread.id });
+  assert.equal(owner.eofCount, 1);
+});

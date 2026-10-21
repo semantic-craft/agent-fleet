@@ -27,3 +27,5 @@
 - 别人的代码按关系分放：上游是别人的 fork 或封装放 `~/Projects/_forks/<仓库名>`，只读参考克隆放 `~/Projects/_ref/<仓库名>`。
 - 开发在临时 worktree 里做，例如 `git worktree add ~/Projects/.worktrees/<仓库名>/<分支> -b <分支> origin/main`。分支合并后，`git worktree remove <路径>`（含 submodule 的 worktree 要加 `--force`，先确认 submodule 也干净）再 `git worktree prune`，用 `git branch -d <分支>` 删本地分支，`git fetch --prune` 清掉远端已删的跟踪分支。squash 合并的分支 `git branch -d` 认不出已合并，先用 `gh pr list --head <分支> --state merged --json number,headRefOid` 核对 PR 已合并，且 `headRefOid` 与 `git rev-parse <分支>` 一致，再决定是否删除。
 - `~/Projects` 只放 git 仓库和 `_forks/`、`_ref/`、`.worktrees/` 这几个容器；产物、验收证据、交接材料等非仓库内容放在 `~/Projects` 之外。仓库在机器之间经 git 远端同步。
+
+Codex owned runtime（本仓库 `adapters/codex-runtime`）：独立本地 stdio 生命周期管理服务，使用新私有 Unix endpoint；只在专用 worker 的完整安全屏障成立后 EOF。不复用共享 server，不新增仓库。尚未部署；上游支持确定性 thread unload 后评估移除。移除前恢复 connector endpoint/relay scope，并确认无未释放 worker。

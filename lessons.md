@@ -22,12 +22,13 @@
 
 ### Codex Desktop 内置的 app-server 只走 stdio
 
-**要远程管理 Codex，就另起一个 `codex app-server --listen unix://` 常驻，与 Desktop 共用 `~/.codex`。**
+**常驻 `codex app-server --listen unix://` 共用 home 只解决远程管理与历史可见，不保证 Desktop 能立即接手 writer。**
 
 - 起因与后果：Desktop 不暴露 socket，connector 无从附着。
 - 修复与证据：launchd 模板 `templates/launchd/codex-app-server.plist`；新建的 thread 会出现在 Desktop 共用的 state DB 里。
-- 正确做法：使用该模板，connector 的 endpoint 指向 `~/.codex/app-server-control/app-server-control.sock`。
-- 复发记录：Seen 1x (2026-10-19)。
+- 后续证据：远程 turn 完成后 Desktop 的 resume 仍可能被 active writer 拒绝；0.163.0 unsubscribe 后仍保留无活动宽限期。不能把列表可见当成可续接。
+- 正确做法：现有共享服务与业务会话保持不动；需要确定性交还时采用用户已批准的 [专属运行时方案](docs/decisions/0007-codex-owned-runtime.md)，经隔离验证、独立审稿、私有 endpoint 和 scope 重批后切换。只结束自有且确认无工作的进程，不重启共享服务释放锁。
+- 复发记录：Seen 2x (2026-10-21)，修正原先把历史可见等同于桌面可接手的假设。
 
 ### Herdr 常驻要用 `herdr server`
 
