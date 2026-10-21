@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// agent-fleet CLI: doctor | contexts [--apply] | launchd NAME | check [--dispatch] [--project P] [--instance ID --session SID] | release agenvo|zcode [--sha SHA] [--rollback]
+// agent-fleet CLI: doctor | contexts [--apply] | launchd NAME | check [--dispatch] [--project P] [--instance ID --session SID] | release agenvo|zcode|dsh [--sha SHA] [--rollback] [--connector codex]
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -7,6 +7,7 @@ import { homedir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import { releaseStateName } from "./release-lib.mjs";
 import {
   approvalRedirect,
   checkProject,
@@ -34,9 +35,16 @@ const { values: opt, positionals } = parseArgs({
     config: { type: "string" },
     sha: { type: "string" },
     rollback: { type: "boolean" },
+    connector: { type: "string" },
   },
 });
 const [command, arg] = positionals;
+if (opt.connector !== undefined) {
+  if (command !== "release") throw new Error("--connector is only supported by release");
+  releaseStateName(arg, opt.connector);
+}
+if (command === "release" && opt.rollback && opt.sha !== undefined)
+  throw new Error("--rollback cannot be combined with --sha");
 const readJson = (p) => {
   try {
     return JSON.parse(readFileSync(p, "utf8"));
@@ -337,9 +345,9 @@ function upstream() {
   process.exitCode = 1; // a pending upgrade needs attention, so the weekly job notifies
 }
 
-const commands = { doctor, contexts, launchd: () => launchd(arg), check, upstream, release: async () => (await import("./release.mjs")).release(arg, { cfg: arg === "agenvo" ? config() : {}, sha: opt.sha, rollback: opt.rollback }) };
+const commands = { doctor, contexts, launchd: () => launchd(arg), check, upstream, release: async () => (await import("./release.mjs")).release(arg, { cfg: arg === "agenvo" ? config() : {}, sha: opt.sha, rollback: opt.rollback, connector: opt.connector }) };
 if (!commands[command]) {
-  console.error("usage: fleet.mjs doctor | contexts [--apply] | launchd NAME | check [--dispatch] [--project P] [--instance ID --session SID] | upstream [--try-merge] | release agenvo|zcode [--sha SHA] [--rollback]  [--machine NAME] [--config PATH]");
+  console.error("usage: fleet.mjs doctor | contexts [--apply] | launchd NAME | check [--dispatch] [--project P] [--instance ID --session SID] | upstream [--try-merge] | release agenvo|zcode|dsh [--sha SHA] [--rollback] [--connector codex]  [--machine NAME] [--config PATH]");
   process.exit(2);
 }
 await commands[command]();

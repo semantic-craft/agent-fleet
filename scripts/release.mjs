@@ -2,13 +2,16 @@
 // ~/.local/share/agent-fleet/releases/<component>/<sha>/, point the component's launchd plists at it,
 // restart them and verify. Live services never run from a git checkout, so switching branches or
 // rebuilding there cannot break them. See docs/runbook.md "发布与回滚".
+import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
 import { CONNECTOR_DIRS, expandHome, writeJson0600 } from "./lib.mjs";
-import { MANIFEST, component, fullSha, manifestDiff, ownedPlists, profileWithPlugin, releaseOf, treeHashes } from "./release-lib.mjs";
+import { MANIFEST, component, fullSha, manifestDiff, ownedPlists, profileWithPlugin, releaseOf, releaseStateName, rollbackPlan, treeHashes } from "./release-lib.mjs";
+
+const fileHash = (file) => createHash("sha256").update(readFileSync(file)).digest("hex");
 
 const repoRoot = join(fileURLToPath(new URL(".", import.meta.url)), "..");
 
@@ -89,7 +92,7 @@ async function zcodeHealth(home, timeoutMs = 60_000) {
 
 /** Every connector this release restarted reports `online` from a new process. */
 async function connectorsOnline(home, plists, before, timeoutMs = 90_000) {
-  const dirs = plists.map((p) => /\/apps\/([^/]+)\/cli\.js$/.exec(p.target)[1]);
+  const dirs = plists.map((p) => /\/apps\/([^/]+)\/(?:dist\/)?cli\.js$/.exec(p.target)[1]);
   const deadline = Date.now() + timeoutMs;
   const state = () => dirs.map((d) => [d, readJson(join(home, ".config/agenvo", d, "status.json"))]);
   while (Date.now() < deadline) {
@@ -239,12 +242,14 @@ function rollbackDsh({ root, currentFile, home, log }) {
   log("restored the desktop profile; quit and reopen DeepSeek Harness if the bridge does not reload");
 }
 
-export async function release(name, { cfg, sha, rollback = false, home = homedir(), log = console.log }) {
+export async function release(name, { cfg, sha, rollback = false, connector, home = homedir(), log = console.log, connectorTimeoutMs = 90_000 }) {
+  const stateName = releaseStateName(name, connector);
+  if (rollback && sha !== undefined) throw new Error("--rollback cannot be combined with --sha");
   const c = component(name);
   const uid = userInfo().uid;
   const agents = join(home, "Library/LaunchAgents");
   const root = join(home, ".local/share/agent-fleet/releases", name);
-  const currentFile = join(root, "current.json");
+  const currentFile = join(root, stateName);
   mkdirSync(root, { recursive: true, mode: 0o700 });
 
   if (rollback && name === "dsh") return rollbackDsh({ root, currentFile, home, log });
@@ -252,13 +257,30 @@ export async function release(name, { cfg, sha, rollback = false, home = homedir
     const cur = readJson(currentFile);
     if (!cur?.backup || !existsSync(cur.backup)) throw new Error(`no recorded switch to roll back in ${currentFile}`);
     if (name === "zcode" && (await zcodeHealth(home)).running) throw new Error("ZCode receiver has running jobs; wait for them to finish");
-    for (const f of readdirSync(cur.backup)) {
-      const file = join(agents, f);
-      cpSync(join(cur.backup, f), file);
-      restart(uid, { label: f.replace(/\.plist$/, ""), file });
-      log(`restored ${f}`);
+    const plan = rollbackPlan(name, connector, cur, livePlists(cur.backup), livePlists(agents), root);
+    for (const { previous, current } of plan) {
+      if (!existsSync(previous.programArg)) throw new Error(`rollback entry missing: ${previous.programArg}`);
+      const rel = releaseOf(previous.programArg, root);
+      if (rel) {
+        const manifest = readJson(join(rel, MANIFEST));
+        if (!manifest || manifestDiff(manifest.files, treeHashes(rel, [MANIFEST])).length)
+          throw new Error(`rollback release incomplete or edited: ${rel}`);
+      }
+      if (cur.plistHashes?.[current.label] && cur.plistHashes[current.label] !== fileHash(current.file))
+        throw new Error(`stale rollback: ${current.label} plist changed after release`);
     }
-    writeJson0600(currentFile, { sha: null, rolledBackFrom: cur.sha, at: new Date().toISOString() });
+    const before = Object.fromEntries(Object.values(CONNECTOR_DIRS).map((d) => [d, readJson(join(home, ".config/agenvo", d, "status.json"))?.pid]));
+    for (const { backup, current } of plan) {
+      cpSync(backup.file, current.file);
+    }
+    // Keep a scoped, freshness-checked retry record until restarted connectors are healthy.
+    writeJson0600(currentFile, { ...cur, rollbackPending: true, plistHashes: Object.fromEntries(plan.map(({ current }) => [current.label, fileHash(current.file)])) });
+    for (const { current } of plan) restart(uid, current);
+    if (name === "agenvo") {
+      for (const line of await connectorsOnline(home, plan.map(({ previous, current }) => ({ ...current, target: previous.programArg })), before, connectorTimeoutMs)) log(line);
+    }
+    for (const { current } of plan) log(`restored ${current.label}.plist`);
+    writeJson0600(currentFile, { sha: null, connector: connector ?? null, rolledBackFrom: cur.sha, at: new Date().toISOString() });
     return;
   }
 
@@ -277,7 +299,7 @@ export async function release(name, { cfg, sha, rollback = false, home = homedir
 
   if (name === "dsh") return releaseDsh({ c, src, sha, root, currentFile, home, log });
 
-  const plists = ownedPlists(name, livePlists(agents)).map((p) => ({ ...p, target: join(root, sha, c.entry(p.programArg)) }));
+  const plists = ownedPlists(name, livePlists(agents), connector).map((p) => ({ ...p, target: join(root, sha, c.entry(p.programArg)) }));
   if (!plists.length) throw new Error(`no launchd plist in ${agents} belongs to ${name}`);
   for (const p of plists) {
     const rel = releaseOf(p.programArg, root);
@@ -291,7 +313,7 @@ export async function release(name, { cfg, sha, rollback = false, home = homedir
   const dest = ensureRelease(name, src, sha, root, log);
 
   // Outside the release itself, so its manifest stays exact.
-  const backup = join(root, "backups", `${sha}-${Date.now()}`);
+  const backup = join(root, "backups", ...(connector ? [connector] : []), `${sha}-${Date.now()}`);
   mkdirSync(backup, { recursive: true, mode: 0o700 });
   const before = Object.fromEntries(Object.values(CONNECTOR_DIRS).map((d) => [d, readJson(join(home, ".config/agenvo", d, "status.json"))?.pid]));
   for (const p of plists) {
@@ -300,7 +322,7 @@ export async function release(name, { cfg, sha, rollback = false, home = homedir
     run("plutil", ["-replace", "ProgramArguments", "-json", JSON.stringify(p.args.map((a, i) => (i === 1 ? p.target : a))), p.file]);
     for (const k of c.dropEnv ?? []) if (k in p.env) run("plutil", ["-remove", `EnvironmentVariables.${k}`, p.file]);
   }
-  writeJson0600(currentFile, { sha, backup, previous: plists.map(({ label, programArg }) => ({ label, programArg })), switchedAt: new Date().toISOString() });
+  writeJson0600(currentFile, { sha, connector: connector ?? null, backup, previous: plists.map(({ label, programArg }) => ({ label, programArg })), plistHashes: Object.fromEntries(plists.map((p) => [p.label, fileHash(p.file)])), switchedAt: new Date().toISOString() });
   for (const p of plists) restart(uid, p);
   log(`switched ${plists.map((p) => p.label).join(", ")} to ${dest}`);
 
@@ -313,7 +335,7 @@ export async function release(name, { cfg, sha, rollback = false, home = homedir
       for (const line of await connectorsOnline(home, plists, before)) log(line);
     }
   } catch (e) {
-    throw new Error(`${e.message}\nroll back with: node scripts/fleet.mjs release ${name} --rollback`);
+    throw new Error(`${e.message}\nroll back with: node scripts/fleet.mjs release ${name}${connector ? ` --connector ${connector}` : ""} --rollback`);
   }
   log("next: node scripts/fleet.mjs check (end-to-end through the relay)");
 }
