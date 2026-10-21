@@ -28,12 +28,12 @@
         {
           "id": "codex-laptop",
           "connector": "codex",
-          "context": "# Codex @ laptop\n- thread/start + turn/start；可在同一 thread 追加输入。\n- 项目在 ~/Projects/<project>；默认 danger-full-access。"
+          "context": "# Codex @ laptop\n- 只用 thread/list（sourceKinds 含 exec、modelProviders: []）和 thread/read 读历史；派活走 Herdr 的 codex exec。\n- 项目在 ~/Projects/<project>；默认 danger-full-access。"
         },
         {
           "id": "herdr-laptop",
           "connector": "herdr",
-          "context": "# Herdr @ laptop\n- agent.start 起 claude/codex/agy，agent.prompt 追加输入。\n- full access：claude --dangerously-skip-permissions；codex --dangerously-bypass-approvals-and-sandbox。"
+          "context": "# Herdr @ laptop\n- Codex 用 workspace.create + pane.run 运行 codex exec --json -o <结果文件> -s danger-full-access；追问 codex exec resume <thread_id>，进程退出后通过 codex://threads/<id> 桌面接手。\n- Claude Code 用 pane.run 运行 claude -p --model <可用模型> --output-format json（例如 deepseek/deepseek-flash），追问加 --resume <session_id>，每轮显式选模型。\n- agy 用 agent.start（args 带 --dangerously-skip-permissions）和 agent.prompt。"
         },
         {
           "id": "dsh-laptop",

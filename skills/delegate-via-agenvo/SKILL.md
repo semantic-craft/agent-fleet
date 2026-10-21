@@ -1,6 +1,6 @@
 ---
 name: delegate-via-agenvo
-description: 通过 Agenvo MCP 把任务交给本机或其他 Mac 上的 Codex、DSH、ZCode、Claude Code 或 Herdr 中的 CLI agent，并跟进到验收。用户要求委派其他 agent、并行派活、查看或继续已派任务时使用。
+description: Hand work to another coding agent (DeepSeek Harness/DSH, ZCode, Codex, Claude Code, or agy/codex/dsh headless in Herdr, on this or another Mac) through the Agenvo MCP server, then follow it to a verified result. Use when the user asks to have DSH/ZCode/another agent do something, to run work in parallel on another agent, or to check on or continue such work.
 ---
 
 # 经 Agenvo 把活交给其他 agent
@@ -33,7 +33,6 @@ description: 通过 Agenvo MCP 把任务交给本机或其他 Mac 上的 Codex�
 - 默认是 full access。用户没有要求时，不要降低权限，也不要替用户回答对方 agent 提出的业务决定问题。
 
 出错时，先读原生状态再决定是否重试。返回 `unknown` 的写操作不要直接重发。
-
 
 ## Codex：官方 exec 经 Herdr 派活
 
