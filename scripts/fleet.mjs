@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import {
   approvalRedirect,
+  checkProject,
   configPath,
   connectorConfigPath,
   contextPlan,
@@ -27,7 +28,7 @@ const { values: opt, positionals } = parseArgs({
     apply: { type: "boolean" },
     dispatch: { type: "boolean" },
     "try-merge": { type: "boolean" },
-    project: { type: "string", default: "agenvo" },
+    project: { type: "string" },
     instance: { type: "string" },
     session: { type: "string" },
     config: { type: "string" },
@@ -105,6 +106,7 @@ function launchd(name) {
 
 async function check() {
   const cfg = config();
+  const project = opt.dispatch ? checkProject(cfg, opt.project) : opt.project;
   const base = cfg.relay.baseUrl;
   const secret = readFileSync(cfg.relay.adminSecretFile, "utf8").trim();
   const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
@@ -178,7 +180,7 @@ async function check() {
     if (opt.dispatch) {
       const jobs = [];
       for (const i of items.filter((x) => x.online && x.kind === "zcode")) {
-        const r = await call(i, "jobs.create", { project: opt.project, text: "只读验收：用一句话说明这个目录是什么项目，不要修改任何文件。", timeout_seconds: 600 });
+        const r = await call(i, "jobs.create", { project, text: "只读验收：用一句话说明这个目录是什么项目，不要修改任何文件。", timeout_seconds: 600 });
         if (r.result?.id) jobs.push([i, r.result.id]);
         else (failures++, console.log(`  ${i.instanceId} jobs.create FAILED ${JSON.stringify(r.error ?? r).slice(0, 200)}`));
       }
@@ -203,7 +205,7 @@ async function check() {
       const targets = items.filter((x) => x.online && x.kind === "dsh" && (!opt.instance || x.instanceId === opt.instance));
       await Promise.all(targets.map(async (i) => {
         const root = cfg.machines.find((m) => (m.instances ?? []).some((x) => x.id === i.instanceId))?.projectsRoot;
-        const r = await dshTurn((m, p) => call(i, m, p), { root, project: opt.project, sessionId: opt.session });
+        const r = await dshTurn((m, p) => call(i, m, p), { root, project, sessionId: opt.session });
         if (!r.ok) failures++;
         console.log(`  ${i.instanceId} session ${r.sessionId ?? "-"}: ${r.ok ? "turn/end completed" : "FAILED"} :: ${r.text}`);
       }));
