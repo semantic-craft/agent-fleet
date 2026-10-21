@@ -65,7 +65,7 @@ description: Hand work to another coding agent (DeepSeek Harness/DSH, Codex, Cla
 if nc -z 127.0.0.1 3425 2>/dev/null; then claude -p --dangerously-skip-permissions --model deepseek/deepseek-flash --output-format json < "/tmp/<任务名>.txt" > "/tmp/<任务名>.json"; echo __EXIT=$?; else echo "magpie 127.0.0.1:3425 不在线"; echo __EXIT=97; fi
 ```
 
-新建与 `--resume` 每轮都保留 `--dangerously-skip-permissions`（默认 full access），并显式传 `--model deepseek/deepseek-flash`（magpie 认得的模型名）。新建与续接分别使用本节上方和下方的完整无头命令，不使用交互式 `agent.start kind claude`。
+新建与 `--resume` 每轮都保留 `--dangerously-skip-permissions`（默认 full access），并显式传 `--model`。Claude Code 只用两个模型，都经 magpie：首选 `deepseek/deepseek-flash`（即上下示例）；可选第二模型 `minimax-code/MiniMax-M3.1-Flash`，用时把示例里的 `--model deepseek/deepseek-flash` 换成 `--model minimax-code/MiniMax-M3.1-Flash`，续接沿用新建时的模型。新建与续接分别使用本节上方和下方的完整无头命令，不使用交互式 `agent.start kind claude`。
 
 按同样的 60 秒、之后每 2–3 分钟节奏用 `pane.read` 跟进，看到 `__EXIT=` 后读取 JSON：结果在 `result`，会话 id 在 `session_id`，同时核对 `is_error` 和退出码。拿到会话 id 后记下并告诉用户，追问续接同一会话：
 
