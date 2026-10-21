@@ -40,7 +40,7 @@ export function auditProfile(text) {
     },
     rules: {
       total: rules.length,
-      tailscaleOrHeadscale: match(/tailscale|tailscaled|headscale/i),
+      tailscale: match(/tailscale|tailscaled/i),
       reasonOrIroh: match(/reason[-.]net|iroh|pkarr|(?:^|[,.])n0\.computer/i),
       udp: match(/PROTOCOL,UDP/i),
       remoteRuleSets: match(/^RULE-SET,/i),

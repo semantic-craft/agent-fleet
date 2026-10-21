@@ -4,12 +4,12 @@
 
 Agenvo connector 主动通过 WSS `/connect` 连接 relay；客户端的 HTTPS `/mcp` 和 OAuth 在 relay。Mac 无需为 Agenvo 新增公网入站、DERP、P2P 打洞、自定义 DNS 或 TUN。以 fork 的 `packages/connector/src/connection.ts` 和上游 [安装说明](https://github.com/Xuanwo/agenvo/blob/main/docs/installation.md)、[架构](https://github.com/Xuanwo/agenvo/blob/main/design/architecture.zh-CN.md) 为依据；部署版本以 overlay 与 launchd 实际发布路径为准。
 
-不要把 Tailscale/Headscale 的 DERP 规则认作 reason-network 专用规则。[reason-network DESIGN.md](https://github.com/reason-machines/reason-network/blob/main/DESIGN.md) 中的 iroh/QUIC、n0 DNS、pkarr/mDNS 与 HTTPS relay 属于另一条路径。旧规则是否保留取决于当前消费者，不能仅凭迁移完成就删除。
+不要把 Tailscale 的 DERP 规则认作 reason-network 专用规则。[reason-network DESIGN.md](https://github.com/reason-machines/reason-network/blob/main/DESIGN.md) 中的 iroh/QUIC、n0 DNS、pkarr/mDNS 与 HTTPS relay 属于另一条路径。旧规则是否保留取决于当前消费者，不能仅凭迁移完成就删除。
 
 2026-10-20 迁移前只读检查：
 
 - Surge GUI 显示当前配置 Atlas、出站模式为规则判定。后续概览明确显示系统代理“由于子网设置，Surge 已暂停”、增强模式“禁用”（转换值 0）；进程页面显示“无进程”。因此不能把已加载 Atlas 等同于 Agenvo 流量由本机 Surge 接管。受限 shell 的 `scutil --proxy` 空字典不作为这一结论的独立依据。
-- Atlas 含 Tailscale/Headscale 直连、UDP 端口/进程例外、Home Tailnet 地址段路由、真实 IP 例外、DNS 劫持和 TUN 排除；它们也服务其他设备与 tailnet，不能删除。静态文件未找到 reason-network/iroh 专属规则，但远端 RULE-SET 未展开。
+- Atlas 含 Tailscale 直连、UDP 端口/进程例外、Home Tailnet 地址段路由、真实 IP 例外、DNS 劫持和 TUN 排除；它们也服务其他设备与 tailnet，不能删除。静态文件未找到 reason-network/iroh 专属规则，但远端 RULE-SET 未展开。
 - DSH endpoint 是 Unix socket；Herdr 是本机原生服务；ZCode 当前 endpoint 是 tailnet 地址上的 HTTP 接收端。故“relay 无需 tailnet”不等于“当前 ZCode 部署无需 tailnet”。
 - 四个 connector 的 launchd 路径均固定于发布提交 `e0d1daf43ffa6f02ba9ee14a068fb30e8ce7d399`，不是开发 checkout。
 - 四份 connector 配置指向同一 HTTPS relay；`connection.ts` 将其改为 WSS 并追加 `/connect`，实际目标域名仅保留在 overlay，不写入仓库。`lsof` 观察到四个对应 PID 均有到同一 `198.18.*:443` 的 ESTABLISHED TCP，dispatch 另有到自身 tailnet 接收端的 TCP。配置与 socket 证据支持该 WSS 路径，但未用 TLS 抓包证明 socket 的目标名称。
@@ -45,7 +45,7 @@ node scripts/audit-network.mjs <当前配置文件>
 
 第一次 bootout 后立即 bootstrap 返回错误 5，已自动恢复原文件并验证原地址健康，三份原文件哈希一致。随后增加卸载后短暂等待和有界注册重试，成功完成；不能由一次成功推断所有 launchd 错误 5 都是时序问题。
 
-迁移后证据：`lsof` 仅见 `127.0.0.1:7791 LISTEN`；三份原文件权限保留；回环和 Agenvo `health` 都为 `ok=true, running=0, strict_runner=app, app_available=true`。Agenvo 回读原 job `bc2bc1454d801170` 仍为 `runner=app, state=completed, exit_code=0`，requestId `410cef04-8915-4a69-a4bb-8c4904248bf0`。没有重复模型任务，没有删除共享 Tailscale/Headscale 或 Surge 规则。
+迁移后证据：`lsof` 仅见 `127.0.0.1:7791 LISTEN`；三份原文件权限保留；回环和 Agenvo `health` 都为 `ok=true, running=0, strict_runner=app, app_available=true`。Agenvo 回读原 job `bc2bc1454d801170` 仍为 `runner=app, state=completed, exit_code=0`，requestId `410cef04-8915-4a69-a4bb-8c4904248bf0`。没有重复模型任务，没有删除共享 Tailscale 或 Surge 规则。
 
 回滚：先确认无运行任务，恢复三份已验证备份及原权限，重新加载接收端定义并重启 dispatch connector；核对 relay 当前 scope，必要时重新批准恢复后的指纹；最后验证原地址健康与已有 job 回读。不要对正在使用的文件盲目覆盖，先检查是否有迁移后的并发修改。当前迁移没有更换发布版本；以后重新生成 launchd 时也应保留这三个回环变量，否则默认 discovery 会重新引入 tailnet 依赖。
 
