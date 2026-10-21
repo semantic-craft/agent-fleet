@@ -10,12 +10,12 @@ Herdr 以 headless 服务常驻（launchd 运行 `herdr server`）；用户需�
 ## 理由
 
 - 上游 connector 已支持 workspace、pane、读输出和事件，无需另写 connector 或调度器。
-- Codex 派活使用官方 `codex exec`，进程退出即交还 writer，桌面版可通过线程链接直接续写；常驻共享 app-server 会继续占用 writer。
-- Claude Code 用 `claude -p` 输出结构化结果，以 session id 续接。
+- Codex 派活使用官方 `codex exec`，进程退出即交还 writer，已观察到桌面版通过线程链接打开后显示完整历史、正常输入框，且没有 “This is open in another app” 占用横幅；常驻共享 app-server 会继续占用 writer。
+- Claude Code 用 `claude -p --dangerously-skip-permissions` 输出结构化结果，以 session id 续接。
 
 ## 约定
 
 - Codex 用 `workspace.create` + `pane.run`，追问用 `codex exec resume`；Codex connector 仅列出线程和读取历史。
-- Claude Code 每轮显式传 `--model`（例如 `deepseek/deepseek-flash`）；默认 antigravity 模型会拒答 Claude Code。使用无头 `claude -p`，不使用交互式 `agent.start kind claude`。
-- full access 参数由调用方传入：Codex 用 `-s danger-full-access`；agy 在 `agent.start` 的 `args` 里传 `--dangerously-skip-permissions`。实例 `context` 记录实际配置，connector 不强制。
+- Claude Code 每轮显式传 `--model`（例如 `deepseek/deepseek-flash`）；默认 antigravity 模型会拒答 Claude Code。使用无头 `claude -p --dangerously-skip-permissions`，不使用交互式 `agent.start kind claude`。
+- full access 参数由调用方传入：Codex 用 `-s danger-full-access`；Claude Code 新建与 `--resume` 每轮都用 `--dangerously-skip-permissions`；agy 在 `agent.start` 的 `args` 里传 `--dangerously-skip-permissions`。实例 `context` 记录实际配置，connector 不强制。
 - 新建、跟进、续接、中断与桌面接手的完整步骤见[派活技能](../../skills/delegate-via-agenvo/SKILL.md)。

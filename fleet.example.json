@@ -33,7 +33,7 @@
         {
           "id": "herdr-laptop",
           "connector": "herdr",
-          "context": "# Herdr @ laptop\n- Codex 用 workspace.create + pane.run 运行 codex exec --json -o <结果文件> -s danger-full-access；追问 codex exec resume <thread_id>，进程退出后通过 codex://threads/<id> 桌面接手。\n- Claude Code 用 pane.run 运行 claude -p --model <可用模型> --output-format json（例如 deepseek/deepseek-flash），追问加 --resume <session_id>，每轮显式选模型。\n- agy 用 agent.start（args 带 --dangerously-skip-permissions）和 agent.prompt。"
+          "context": "# Herdr @ laptop\n- Codex 用 workspace.create + pane.run 运行 codex exec --json -o <结果文件> -s danger-full-access；追问 codex exec resume <thread_id>，进程退出后通过 codex://threads/<id> 桌面接手。\n- Claude Code 用 pane.run 运行 claude -p --dangerously-skip-permissions --model <可用模型> --output-format json（例如 deepseek/deepseek-flash），追问加 --resume <session_id>，每轮保留 full access 参数并显式选模型。\n- agy 用 agent.start（args 带 --dangerously-skip-permissions）和 agent.prompt。"
         },
         {
           "id": "dsh-laptop",

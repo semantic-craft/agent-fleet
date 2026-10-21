@@ -12,7 +12,7 @@
 ## 怎么选 agent
 - 先读实例的 context，那里写了机器、项目目录、默认权限和适合干什么。
 - 需要在桌面 app 里看到的任务：DSH 用 workspace/create + session/create + session/prompt（参数按实例 context 和 schema）；ZCode 用 jobs.create {project, text}；Codex 在 Herdr pane 里用 codex exec --json -o <结果文件>，进程退出后给我 codex://threads/<id>，在 Codex Desktop 直接接手。
-- 需要多轮追加输入的任务：DSH 在同一个 sessionId 上继续 session/prompt；Codex 在 Herdr pane 里用 codex exec resume <thread_id>；Claude Code 在 Herdr pane 里用 claude -p --model <可用模型> --output-format json，追问加 --resume <session_id>，每轮显式选模型；agy 用 Herdr 的 agent.start，再用 agent.prompt。
+- 需要多轮追加输入的任务：DSH 在同一个 sessionId 上继续 session/prompt；Codex 在 Herdr pane 里用 codex exec resume <thread_id>；Claude Code 在 Herdr pane 里用 claude -p --dangerously-skip-permissions --model <可用模型> --output-format json，追问加 --resume <session_id>，每轮保留 full access 参数并显式选模型；agy 用 Herdr 的 agent.start，再用 agent.prompt。
 - project 必须是 ~/Projects 下真实存在的目录名，不要编造；不确定就问我。
 
 ## 规矩

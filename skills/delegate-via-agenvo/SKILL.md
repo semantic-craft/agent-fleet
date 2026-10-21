@@ -57,7 +57,7 @@ description: Hand work to another coding agent (DeepSeek Harness/DSH, ZCode, Cod
    codex exec resume <thread_id> --json -o ~/Projects/_status/<任务名>-2.md "<下一句>" > /tmp/<任务名>-2.jsonl; echo __EXIT=$?
    ```
 
-6. 中断用 `pane.send-keys` 发送 `["ctrl+c"]`。进程退出后 writer 已交还，用户在 Codex 桌面版打开 `codex://threads/<thread_id>` 就能直接继续发消息。exec 线程不一定出现在侧栏列表里，必须把链接告诉用户。
+6. 中断用 `pane.send-keys` 发送 `["ctrl+c"]`。进程退出后 writer 已交还，用户在 Codex 桌面版打开 `codex://threads/<thread_id>`，已观察到完整历史、正常输入框，且没有 “This is open in another app” 占用横幅。exec 线程不一定出现在侧栏列表里，必须把链接告诉用户。
 
 目标机器的 Codex 实例只用 `thread/list`（`sourceKinds` 含 `exec`，`modelProviders: []`）与 `thread/read` 读取历史。不要用它的 `thread/start` / `turn/start` 派活：常驻共享 server 会继续占着 writer。线程 source 是 `exec`，`--thread-source vscode` 不改变它。
 
@@ -66,15 +66,15 @@ description: Hand work to another coding agent (DeepSeek Harness/DSH, ZCode, Cod
 Claude Code 已登录。与 Codex 一样先创建 Herdr workspace、取得 root pane，再用 `pane.run`：
 
 ```sh
-claude -p "<任务>" --model deepseek/deepseek-flash --output-format json > /tmp/<任务名>.json; echo __EXIT=$?
+claude -p --dangerously-skip-permissions "<任务>" --model deepseek/deepseek-flash --output-format json > /tmp/<任务名>.json; echo __EXIT=$?
 ```
 
-每轮必须显式传 `--model`；设置中的默认 antigravity 模型会拒答 Claude Code 系统提示，等待不会解决。使用无头 `claude -p`，不使用交互式 `agent.start kind claude`。
+新建与 `--resume` 每轮都保留 `--dangerously-skip-permissions`，默认 full access，并显式传 `--model`；设置中的默认 antigravity 模型会拒答 Claude Code 系统提示，等待不会解决。使用无头 `claude -p --dangerously-skip-permissions`，不使用交互式 `agent.start kind claude`。
 
 按同样的 60 秒、之后每 2–3 分钟节奏用 `pane.read` 跟进，看到 `__EXIT=` 后读取 JSON：结果在 `result`，会话 id 在 `session_id`，同时核对 `is_error` 和退出码。拿到会话 id 后记下并告诉用户，追问续接同一会话：
 
 ```sh
-claude -p --resume <session_id> "<下一句>" --model deepseek/deepseek-flash --output-format json > /tmp/<任务名>-2.json; echo __EXIT=$?
+claude -p --dangerously-skip-permissions --resume <session_id> "<下一句>" --model deepseek/deepseek-flash --output-format json > /tmp/<任务名>-2.json; echo __EXIT=$?
 ```
 
 中断同样用 `pane.send-keys ["ctrl+c"]`。
