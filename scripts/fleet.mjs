@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// agent-fleet CLI: doctor | contexts [--apply] | launchd NAME | check [--dispatch] [--project P] [--instance ID --session SID] | release agenvo|zcode|dsh [--sha SHA] [--rollback] [--connector codex]
+// agent-fleet CLI: doctor | contexts [--apply] | launchd NAME | check [--dispatch] [--project P] [--instance ID --session SID] | release agenvo|dsh [--sha SHA] [--rollback] [--connector codex]
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -14,7 +14,6 @@ import {
   configPath,
   connectorConfigPath,
   contextPlan,
-  dispatchJobOk,
   loadConfig,
   localMachine,
   render,
@@ -100,7 +99,7 @@ function contexts() {
 
 function launchd(name) {
   const file = join(root, "templates/launchd", `${name}.plist`);
-  if (!name || !existsSync(file)) throw new Error("usage: fleet.mjs launchd codex-app-server|herdr-server|desktop-agents-autostart|fleet-weekly-check|zcode-receiver");
+  if (!name || !existsSync(file)) throw new Error("usage: fleet.mjs launchd codex-app-server|herdr-server|desktop-agents-autostart|fleet-weekly-check");
   const home = homedir();
   process.stdout.write(
     render(readFileSync(file, "utf8"), {
@@ -177,36 +176,13 @@ async function check() {
       if (!i?.online) failures++;
       console.log(`${id}: ${i ? (i.online ? "online" : "OFFLINE") : "NOT IN RELAY"} ${i?.kind ?? ""}`);
     }
-    const probes = { codex: ["thread/list", { limit: 1 }], herdr: ["session.list", {}], dsh: ["session/list", { _request: {}, limit: 1 }], zcode: ["health", {}] };
+    const probes = { codex: ["thread/list", { limit: 1 }], herdr: ["session.list", {}], dsh: ["session/list", { _request: {}, limit: 1 }] };
     for (const i of items.filter((x) => x.online && probes[x.kind])) {
       const [m, p] = probes[i.kind];
       const r = await call(i, m, p);
       const ok = r.execution === "accepted" && !r.error;
       if (!ok) failures++;
       console.log(`  ${i.instanceId} ${m}: ${ok ? "ok" : "FAILED " + JSON.stringify(r.error ?? r).slice(0, 200)}`);
-    }
-    if (opt.dispatch) {
-      const jobs = [];
-      for (const i of items.filter((x) => x.online && x.kind === "zcode")) {
-        const r = await call(i, "jobs.create", { project, text: "只读验收：用一句话说明这个目录是什么项目，不要修改任何文件。", timeout_seconds: 600 });
-        if (r.result?.id) jobs.push([i, r.result.id]);
-        else (failures++, console.log(`  ${i.instanceId} jobs.create FAILED ${JSON.stringify(r.error ?? r).slice(0, 200)}`));
-      }
-      const deadline = Date.now() + 10 * 60_000;
-      while (jobs.length && Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, 15_000));
-        for (let k = jobs.length - 1; k >= 0; k--) {
-          const [i, id] = jobs[k];
-          const j = (await call(i, "jobs.get", { id })).result ?? {};
-          if (["running", "queued"].includes(j.state)) continue;
-          jobs.splice(k, 1);
-          const pass = dispatchJobOk(j);
-          if (!pass) failures++;
-          const verdict = !pass && j.state === "completed" ? "completed without result" : j.state;
-          console.log(`  ${i.instanceId} job ${id}: ${verdict} runner=${j.runner} source=${j.source} :: ${String(j.result ?? j.error ?? "").replace(/\s+/g, " ").slice(0, 120)}`);
-        }
-      }
-      for (const [i, id] of jobs) (failures++, console.log(`  ${i.instanceId} job ${id}: still running after 10 min`));
     }
     // DSH: native session/prompt into a new session (or --session SID on --instance ID), then wait for its turn/end.
     if (opt.dispatch || opt.session) {
@@ -347,7 +323,7 @@ function upstream() {
 
 const commands = { doctor, contexts, launchd: () => launchd(arg), check, upstream, release: async () => (await import("./release.mjs")).release(arg, { cfg: arg === "agenvo" ? config() : {}, sha: opt.sha, rollback: opt.rollback, connector: opt.connector }) };
 if (!commands[command]) {
-  console.error("usage: fleet.mjs doctor | contexts [--apply] | launchd NAME | check [--dispatch] [--project P] [--instance ID --session SID] | upstream [--try-merge] | release agenvo|zcode|dsh [--sha SHA] [--rollback] [--connector codex]  [--machine NAME] [--config PATH]");
+  console.error("usage: fleet.mjs doctor | contexts [--apply] | launchd NAME | check [--dispatch] [--project P] [--instance ID --session SID] | upstream [--try-merge] | release agenvo|dsh [--sha SHA] [--rollback] [--connector codex]  [--machine NAME] [--config PATH]");
   process.exit(2);
 }
 await commands[command]();

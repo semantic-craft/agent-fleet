@@ -20,21 +20,6 @@ export const COMPONENTS = {
       return m && Object.values(CONNECTOR_DIRS).includes(m[1]) ? `apps/${m[1]}/cli.js` : null;
     },
   },
-  // The ZCode receiver that agenvo-dispatch calls (adapters/zcode in this repository). The old
-  // zcode-dispatch entry (receiver/server.mjs) is still recognised so the first switch can adopt it.
-  zcode: {
-    labelPrefix: "", // any label: the entry path identifies the receiver (templates/launchd/zcode-receiver.plist)
-    self: true,
-    paths: ["adapters/zcode"],
-    entry: (p = "") => (/\/adapters\/zcode\/receiver\.mjs$/.test(p) || (/\/zcode[^/]*\//.test(p) && /\/receiver\/server\.mjs$/.test(p)) ? "tree/adapters/zcode/receiver.mjs" : null),
-    // The archived tree must carry these, or the release would drop ADR-0004 behaviour.
-    probes: [
-      ["adapters/zcode/receiver.mjs", "strict_runner: 'app'"],
-      ["adapters/zcode/core.mjs", 'source must be "agenvo"'],
-    ],
-    // Retired with the Dot gateway (ADR-0006); a release never carries it forward.
-    dropEnv: ["ZCODE_DOT_ACCESS_CONFIG"],
-  },
   // The DSH desktop plugin (adapters/dsh). No launchd job: the desktop profile links the plugin at
   // releases/dsh/live/plugin, and `live` points at the current release.
   dsh: {

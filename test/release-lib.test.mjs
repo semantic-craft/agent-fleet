@@ -20,14 +20,8 @@ test("agenvo owns only connector plists whose entry is a known connector app", (
   assert.equal(COMPONENTS.agenvo.entry(plists[1].programArg), "apps/herdr/cli.js");
 });
 
-test("zcode owns only its receiver plist and maps it into the release tree", () => {
-  const plists = [
-    { label: "dev.semantic-craft.zcode-dispatch", programArg: "/u/.local/share/zcode-dispatch/releases/x/tree/receiver/server.mjs" },
-    { label: "dev.other", programArg: "/x/receiver/server.mjs" },
-  ];
-  assert.deepEqual(ownedPlists("zcode", plists).map((p) => p.label), ["dev.semantic-craft.zcode-dispatch"]);
-  assert.equal(COMPONENTS.zcode.entry(plists[0].programArg), "tree/adapters/zcode/receiver.mjs");
-  assert.throws(() => ownedPlists("telnet", plists), /unknown component/);
+test("unknown components are rejected", () => {
+  assert.throws(() => ownedPlists("telnet", [{ label: "dev.other", programArg: "/x/receiver/server.mjs" }]), /unknown component/);
 });
 
 test("releaseOf recognises only paths inside a full-SHA release under the root", () => {
@@ -61,9 +55,6 @@ test("profileWithPlugin swaps the old plugin for agent-fleet-dsh in place and is
   assert.equal(profileWithPlugin(next, opts), null);
 });
 
-test("zcode adopts the old zcode-dispatch entry and the new adapter entry; dsh owns no plist", () => {
-  assert.equal(COMPONENTS.zcode.entry("/x/releases/zcode/abc/tree/receiver/server.mjs"), "tree/adapters/zcode/receiver.mjs");
-  assert.equal(COMPONENTS.zcode.entry("/x/other/receiver/server.mjs"), null);
-  assert.equal(COMPONENTS.zcode.entry(`/x/releases/zcode/${SHA}/tree/adapters/zcode/receiver.mjs`), "tree/adapters/zcode/receiver.mjs");
+test("dsh owns no plist", () => {
   assert.deepEqual(ownedPlists("dsh", [{ label: "x", programArg: "/a/cli.js" }]), []);
 });

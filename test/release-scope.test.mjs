@@ -70,17 +70,14 @@ for(const direction of ['scoped-after-full','full-after-scoped']) test(`stale ro
 
 test('scope and unsupported CLI combinations fail before config or production access',()=>{
   assert.equal(releaseStateName('agenvo','codex'),'current-codex.json');
-  for(const args of [['release','zcode','--connector','codex'],['doctor','--connector','codex'],['release','agenvo','--connector','herdr'],['release','agenvo','--connector','codex','--rollback','--sha',B]]) {
+  for(const args of [['release','dsh','--connector','codex'],['doctor','--connector','codex'],['release','agenvo','--connector','herdr'],['release','agenvo','--connector','codex','--rollback','--sha',B]]) {
     const r=spawnSync(process.execPath,[cli,...args],{encoding:'utf8',stdio:['ignore','pipe','pipe']});
     assert.notEqual(r.status,0); assert.match(r.stderr,/--connector|--rollback/);
   }
 });
 
-test('legacy full zcode rollback record maps old receiver entry correctly; scopes cannot mix',()=>{
-  const root='/fixture/releases/zcode', label='example.receiver', old='/fixture/zcode-dispatch/receiver/server.mjs';
-  const previous={label,programArg:old}, record={sha:B,previous:[previous]};
-  const live=[{label,programArg:join(root,B,'tree/adapters/zcode/receiver.mjs')}];
-  assert.equal(rollbackPlan('zcode',undefined,record,[previous],live,root).length,1);
+test('a full rollback record cannot be consumed by a scoped rollback',()=>{
+  const root='/fixture/releases/agenvo', record={sha:B,previous:[{label:'example.connector',programArg:'/fixture/apps/codex/cli.js'}]};
   assert.throws(()=>rollbackPlan('agenvo','codex',record,[],[],root),/scope/);
 });
 

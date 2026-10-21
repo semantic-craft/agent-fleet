@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { approvalRedirect, checkProject, contextPlan, dispatchJobOk, loadConfig, localMachine, render, writeJson0600 } from "../scripts/lib.mjs";
+import { approvalRedirect, checkProject, contextPlan, loadConfig, localMachine, render, writeJson0600 } from "../scripts/lib.mjs";
 
 const dir = mkdtempSync(join(tmpdir(), "fleet-"));
 const write = (obj) => {
@@ -17,7 +17,6 @@ test("example config loads and expands ~ against the given home", () => {
   assert.equal(c.relay.adminSecretFile, "/home/u/.config/agenvo/admin-secret");
   assert.equal(c.machines[0].projectsRoot, "/home/u/Projects");
   assert.equal(c.machines[0].instances.find((i) => i.id === "dsh-laptop").connector, "dsh");
-  assert.equal(c.machines[0].instances.find((i) => i.id === "zcode-laptop").keyFile, "/home/u/.config/zcode-dispatch/key");
 });
 
 test("config rejects unknown connectors and duplicate ids", () => {
@@ -60,16 +59,6 @@ test("approval redirect handles both 303 and the production HTML page", () => {
   const html = `<a href="${cb}?code=abc&amp;state=fleet">Return</a>`;
   assert.equal(approvalRedirect(null, html, cb), `${cb}?code=abc&state=fleet`);
   assert.throws(() => approvalRedirect(null, "<p>no</p>", cb), /neither/);
-});
-
-test("dispatch job verdict: only a completed job with a non-blank result passes", () => {
-  assert.equal(dispatchJobOk({ state: "completed", result: "done" }), true);
-  assert.equal(dispatchJobOk({ state: "completed", result: "  done  " }), true);
-  assert.equal(dispatchJobOk({ state: "completed", result: null }), false);
-  assert.equal(dispatchJobOk({ state: "completed", result: "" }), false);
-  assert.equal(dispatchJobOk({ state: "completed", result: "   " }), false);
-  assert.equal(dispatchJobOk({ state: "failed", result: "done" }), false);
-  assert.equal(dispatchJobOk({ state: "running", result: null }), false);
 });
 
 test("check --dispatch project: --project wins, else overlay check.project, else a clear error", () => {

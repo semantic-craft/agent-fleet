@@ -11,7 +11,7 @@ Herdr 以 headless 服务常驻（launchd 运行 `herdr server`）；用户需�
 
 - 上游 connector 已支持 workspace、pane、读输出和事件，无需另写 connector 或调度器。
 - Codex 派活使用官方 `codex exec`，进程退出即交还 writer，已观察到桌面版通过线程链接打开后显示完整历史、正常输入框，且没有 “This is open in another app” 占用横幅；常驻共享 app-server 会继续占用 writer。
-- Claude Code 用 `claude -p --dangerously-skip-permissions --model deepseek/deepseek-flash --output-format json`（任务正文经 stdin）输出结构化结果，以 session id 续接；请求经 `ANTHROPIC_BASE_URL` 指向的本机 magpie。
+- Claude Code 的无头模式输出结构化 JSON 结果，以 session id 续接；请求经 `ANTHROPIC_BASE_URL` 指向的本机 magpie。完整命令只在派活技能里维护。
 
 ## 约定
 

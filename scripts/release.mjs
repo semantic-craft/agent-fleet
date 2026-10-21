@@ -1,4 +1,4 @@
-// `fleet.mjs release agenvo|zcode [--sha SHA] [--rollback]`: build a pinned, pushed commit into
+// `fleet.mjs release agenvo|dsh [--sha SHA] [--rollback]`: build a pinned, pushed commit into
 // ~/.local/share/agent-fleet/releases/<component>/<sha>/, point the component's launchd plists at it,
 // restart them and verify. Live services never run from a git checkout, so switching branches or
 // rebuilding there cannot break them. See docs/runbook.md "发布与回滚".
@@ -66,30 +66,6 @@ function restart(uid, { label, file }) {
   throw new Error(`launchctl bootstrap ${file} failed; check it by hand`);
 }
 
-function zcodeEndpoint(home) {
-  const c = readJson(join(home, ".config/agenvo/dispatch/config.json"));
-  const e = c?.instances?.find((i) => i.source === "agenvo")?.endpoint;
-  if (!e) throw new Error("no agenvo-dispatch instance with source agenvo; cannot reach the ZCode receiver /health");
-  return e.replace(/\/$/, "");
-}
-
-async function zcodeHealth(home, timeoutMs = 60_000) {
-  const url = zcodeEndpoint(home) + "/health";
-  const deadline = Date.now() + timeoutMs;
-  let last;
-  while (Date.now() < deadline) {
-    try {
-      const r = await fetch(url, { signal: AbortSignal.timeout(5000) });
-      if (r.ok) return await r.json();
-      last = new Error("HTTP " + r.status);
-    } catch (e) {
-      last = e;
-    }
-    await sleep(1000);
-  }
-  throw new Error(`ZCode receiver ${url} unhealthy: ${last?.message}`);
-}
-
 /** Every connector this release restarted reports `online` from a new process. */
 async function connectorsOnline(home, plists, before, timeoutMs = 90_000) {
   const dirs = plists.map((p) => /\/apps\/([^/]+)\/(?:dist\/)?cli\.js$/.exec(p.target)[1]);
@@ -105,10 +81,9 @@ async function connectorsOnline(home, plists, before, timeoutMs = 90_000) {
 
 export function build(name, src, sha, dest) {
   const c = component(name);
-  const tree = name === "zcode" ? join(dest, "tree") : join(dest, ".src");
+  const tree = join(dest, ".src");
   mkdirSync(tree, { recursive: true, mode: 0o700 });
   execFileSync("/bin/sh", ["-c", 'r=$1 s=$2 d=$3; shift 3; git -C "$r" archive "$s" -- "$@" | tar -x -C "$d"', "sh", src.dir, sha, tree, ...(c.paths ?? ["."])]);
-  if (name === "zcode") return;
   if (name === "dsh") {
     renameSync(join(tree, "adapters/dsh"), join(dest, "plugin"));
     rmSync(join(dest, "plugin/test"), { recursive: true, force: true });
@@ -256,7 +231,6 @@ export async function release(name, { cfg, sha, rollback = false, connector, hom
   if (rollback) {
     const cur = readJson(currentFile);
     if (!cur?.backup || !existsSync(cur.backup)) throw new Error(`no recorded switch to roll back in ${currentFile}`);
-    if (name === "zcode" && (await zcodeHealth(home)).running) throw new Error("ZCode receiver has running jobs; wait for them to finish");
     const plan = rollbackPlan(name, connector, cur, livePlists(cur.backup), livePlists(agents), root);
     for (const { previous, current } of plan) {
       if (!existsSync(previous.programArg)) throw new Error(`rollback entry missing: ${previous.programArg}`);
@@ -308,7 +282,6 @@ export async function release(name, { cfg, sha, rollback = false, connector, hom
     const diff = m ? manifestDiff(m.files, treeHashes(rel, [MANIFEST])) : ["(no manifest)"];
     if (diff.length) throw new Error(`live release ${rel} was edited by hand (${diff.slice(0, 3).join(", ")}); reconcile it first`);
   }
-  if (name === "zcode" && (await zcodeHealth(home)).running) throw new Error("ZCode receiver has running jobs; wait for them to finish");
 
   const dest = ensureRelease(name, src, sha, root, log);
 
@@ -327,13 +300,7 @@ export async function release(name, { cfg, sha, rollback = false, connector, hom
   log(`switched ${plists.map((p) => p.label).join(", ")} to ${dest}`);
 
   try {
-    if (name === "zcode") {
-      const h = await zcodeHealth(home);
-      if (!h.ok || h.strict_runner !== "app") throw new Error("ZCode receiver unhealthy after switch: " + JSON.stringify(h.checks ?? h));
-      log(`zcode receiver ok: runner=${h.runner} strict_runner=${h.strict_runner} default_model=${h.default_model}`);
-    } else {
-      for (const line of await connectorsOnline(home, plists, before)) log(line);
-    }
+    for (const line of await connectorsOnline(home, plists, before)) log(line);
   } catch (e) {
     throw new Error(`${e.message}\nroll back with: node scripts/fleet.mjs release ${name}${connector ? ` --connector ${connector}` : ""} --rollback`);
   }
