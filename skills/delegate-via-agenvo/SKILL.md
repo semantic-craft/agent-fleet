@@ -36,7 +36,7 @@ description: Hand work to another coding agent (DeepSeek Harness/DSH, Codex, Cla
 
 ## Codex：官方 exec 经 Herdr 派活
 
-1. 在目标机器的 Herdr 实例（ID 从实例 context 获取）调 `workspace.create {session: "default", cwd: "<项目绝对路径>"}`，取得 root pane。`cwd` 取实例 context 中 `~/Projects/<project>` 展开的绝对路径；其他机器使用其实际实例与路径。
+1. 在目标机器的 Herdr 实例（ID 从实例 context 获取）先调 `session.list`，再用它返回的名字调 `workspace.create {session: "<session 名>", cwd: "<项目绝对路径>"}`，取得 root pane。`cwd` 取实例 context 中 `~/Projects/<project>` 展开的绝对路径；其他机器使用其实际实例与路径。
 2. 在 root pane 用 `pane.run` 运行以下命令。先确保 `~/Projects/_status` 存在；任务名和每轮输出路径唯一，避免把上轮文件当作本轮完成。任务正文一律先写入文件，再用 `-` 从 stdin 传入，避免 shell 展开正文；`-o`、`-C` 和所有输出路径都加引号。每轮都显式带 `-m <模型>` 和 `-c model_provider="magpie"`，请求经本机 magpie：
 
    ```sh
