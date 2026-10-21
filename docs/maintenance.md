@@ -20,5 +20,6 @@
 ## 什么算"维护好了"
 
 - `~/Projects` 里每个 agent 相关目录在 [landscape](landscape.md) 都有一行，状态与实际一致。
+- `~/Projects` 符合 [landscape](landscape.md#projects-的布局) 的布局：每个仓库一份停在默认分支的干净克隆，已合并的 worktree 和本地分支已清理。
 - overlay 是 connector 实例 context 的唯一来源，执行 `contexts` 显示全部 in sync。
 - `check --dispatch` 通过，relay 上除了用户自己的正式授权，没有残留的测试授权。
