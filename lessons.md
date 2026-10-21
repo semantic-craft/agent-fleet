@@ -144,3 +144,13 @@
 - 修复与证据：#7（46335b3）给 Host 的 pnpm 加 `CI=true --no-frozen-lockfile`，运行中的 DSH 不会加载新插件时直接说明、不再空等 60 秒；`npm test` 28/28。修正后的命令尚未在第二台 Mac 跑过（#7 自述）。
 - 正确做法：发布、安装类脚本的验收至少有一次无 TTY 实跑（`node scripts/fleet.mjs release <组件> </dev/null`），并在 PR 里写明在哪台机器跑过。
 - 复发记录：Seen 1x (2026-10-19)。
+
+### squash 合并时把 PR 正文带进 commit 正文
+
+**合并用 PR 正文当 commit 正文（`gh pr merge --squash --body-file` 或网页上保留默认正文），至少保留验收三项。**
+
+- 起因与后果：#29（786ee70）的 PR 正文写了改动、回滚范围校验和验证，squash 后 commit 正文是空的，只看 `git log` 的人看不到 Codex connector 单独发布与回滚的边界和没跑到的项目。sonori 在 2026-10-20、2026-10-21 也出过同样的事。
+- 修复与证据：没有补救提交（main 不改写历史）；本条只约束之后的合并。
+- 正确做法：同日 #28（64f87f5）、#23（f80ac7a）的 commit 正文带着验证披露和审稿结论。
+- 复发记录：Seen 1x (2026-10-21)。
+
