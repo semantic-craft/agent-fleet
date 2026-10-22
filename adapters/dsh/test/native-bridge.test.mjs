@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import * as bridge from '../native-bridge.js';
 import { createHandler, listenNativeBridge } from '../native-bridge.js';
 
 function call(socketPath, urlPath, body) {
@@ -97,4 +98,128 @@ test('native bridge leaves the Peer to the Gateway on DSH versions without creat
   const ok = JSON.parse((await call(socket, '/api/session/list', { args: { _request: {} } })).raw);
   assert.deepEqual(ok, { ok: true, value: { items: [] } });
   assert.equal('peer' in seen[0], false);
+});
+
+async function workspaceFixture(t) {
+  const dir = fs.mkdtempSync(path.join('/tmp', 'dshws-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const realPath = fs.realpathSync(dir);
+  const workspaces = [];
+  const registry = {
+    async resolveByPath(p) { return workspaces.find((w) => w.path === fs.realpathSync(p)); },
+    list() { return workspaces; },
+    async readSessionHeader(id) {
+      if (id !== 's1') throw new Error('session persistence holds no such session');
+      return { cwd: dir };
+    },
+    async create(p, title) {
+      const workspace = { id: 'w1', path: fs.realpathSync(p), title, sessionIds: [],
+        async attachSession(id) { if (!this.sessionIds.includes(id)) this.sessionIds.push(id); } };
+      workspaces.push(workspace);
+      return workspace;
+    },
+  };
+  let current = registry;
+  const socket = path.join(dir, 'native.sock');
+  t.after(await listenNativeBridge(socket, createHandler({ getGateway: () => undefined,
+    getPeer: () => undefined, getWorkspaceRegistry: () => current, logger: {} }), {}));
+  return { dir, realPath, registry, workspaces, setRegistry(value) { current = value; },
+    async attach(args) { const r = await call(socket, '/bridge/workspace/attachSession', { args }); return { status: r.status, body: JSON.parse(r.raw) }; },
+    async health() { return JSON.parse((await call(socket, '/health')).raw); } };
+}
+
+test('bridge attaches idempotently to an existing project without renaming it', async (t) => {
+  const f = await workspaceFixture(t);
+  await f.registry.create(f.dir, 'Original');
+  for (let i = 0; i < 2; i++) {
+    assert.deepEqual(await f.attach({ path: f.dir, sessionId: 's1', title: 'Ignored' }), {
+      status: 200, body: { ok: true, value: { workspace: {
+        workspaceId: 'w1', path: f.realPath, title: 'Original', sessionIds: ['s1'],
+      }, created: false } },
+    });
+  }
+  assert.equal(f.workspaces.length, 1);
+});
+
+for (const naming of ['default', 'collision', 'explicit']) {
+  test(`bridge creates a project with ${naming} title`, async (t) => {
+    const f = await workspaceFixture(t);
+    const base = path.basename(f.realPath);
+    if (naming === 'collision') f.workspaces.push({ path: '/other', title: base });
+    const result = await f.attach({ path: f.dir, sessionId: 's1', ...(naming === 'explicit' ? { title: 'Chosen' } : {}) });
+    assert.equal(result.status, 200);
+    assert.deepEqual(result.body, { ok: true, value: { workspace: {
+      workspaceId: 'w1', path: f.realPath,
+      title: naming === 'explicit' ? 'Chosen' : naming === 'collision' ? `${base} · tmp` : base,
+      sessionIds: ['s1'],
+    }, created: true } });
+  });
+}
+
+test('bridge preserves attach errors and uses its own fallback code', async (t) => {
+  const f = await workspaceFixture(t);
+  const w = await f.registry.create(f.dir, 'Existing');
+  const message = 'session s1: its cwd resolves to /other, not this workspace';
+  w.attachSession = async () => { throw new Error(message); };
+  assert.deepEqual(await f.attach({ path: f.dir, sessionId: 's1' }), {
+    status: 200, body: { ok: false, error: { code: 'bridge/attach-failed', message, details: {} } },
+  });
+  w.attachSession = async () => { throw Object.assign(new Error('native failure'), { code: 'session/missing', details: { sessionId: 's1' } }); };
+  assert.deepEqual((await f.attach({ path: f.dir, sessionId: 's1' })).body.error,
+    { code: 'session/missing', message: 'native failure', details: { sessionId: 's1' } });
+});
+
+test('bridge preflight rejects mismatched cwd and unknown sessions before creating a project', async (t) => {
+  const f = await workspaceFixture(t);
+  const other = path.join(f.dir, 'other');
+  fs.mkdirSync(other);
+  const mismatch = await f.attach({ path: other, sessionId: 's1' });
+  assert.equal(mismatch.status, 200);
+  assert.equal(mismatch.body.ok, false);
+  assert.equal(mismatch.body.error.code, 'bridge/attach-failed');
+  assert.ok(mismatch.body.error.message.includes(f.realPath));
+  assert.ok(mismatch.body.error.message.includes(fs.realpathSync(other)));
+  const unknown = await f.attach({ path: f.dir, sessionId: 'unknown' });
+  assert.equal(unknown.body.error.message, 'session persistence holds no such session');
+  assert.equal(f.workspaces.length, 0);
+});
+
+test('bridge accepts cwd symlinks and supports registries without header preflight', async (t) => {
+  const f = await workspaceFixture(t);
+  const alias = path.join(f.dir, 'alias');
+  fs.symlinkSync(f.dir, alias);
+  assert.equal((await f.attach({ path: alias, sessionId: 's1' })).body.ok, true);
+  delete f.registry.readSessionHeader;
+  assert.equal((await f.attach({ path: f.dir, sessionId: 's1' })).body.ok, true);
+});
+
+test('bridge validates arguments before accessing the registry', async (t) => {
+  const f = await workspaceFixture(t);
+  f.setRegistry(undefined);
+  for (const args of [{ sessionId: 's1' }, { path: 'relative', sessionId: 's1' },
+    { path: f.dir }, { path: f.dir, sessionId: ' ' }, { path: f.dir, sessionId: 's1', title: '' },
+    { path: f.dir, sessionId: 's1', title: 42 }, null, []]) {
+    const result = await f.attach(args);
+    assert.equal(result.status, 400);
+    assert.equal(typeof result.body.error, 'string');
+  }
+});
+
+test('bridge reads registry availability per call and reports it in health', async (t) => {
+  const f = await workspaceFixture(t);
+  assert.equal((await f.health()).workspaceRegistry, true);
+  f.setRegistry(undefined);
+  assert.equal((await f.health()).workspaceRegistry, false);
+  assert.deepEqual(await f.attach({ path: f.dir, sessionId: 's1' }), {
+    status: 503, body: { error: 'DSH Host workspace registry is not available' },
+  });
+});
+
+test('projectTitle uses basename or a shortened parent on collision', () => {
+  const title = bridge.projectTitle;
+  assert.equal(title('/private/tmp/turing-koe-p1/koe', [], '/home/test'), 'koe');
+  assert.equal(title('/private/tmp/turing-koe-p1/koe', ['koe'], '/home/test'), 'koe · tmp/turing-koe-p1');
+  assert.equal(title('/home/test/work/koe', ['koe'], '/home/test'), 'koe · ~/work');
+  assert.equal(title('/home/test/koe', ['koe'], '/home/test'), 'koe · ~');
+  assert.equal(title('/home/test-other/koe', ['koe'], '/home/test'), 'koe · home/test-other');
 });

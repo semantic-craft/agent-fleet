@@ -5,15 +5,20 @@
  * connector can manage every desktop session — including ones the user opened
  * by hand — through the same endpoints the desktop UI uses.
  *
- * Nothing here interprets sessions. Each request names one native endpoint and
+ * Native requests name one native endpoint and
  * its native named arguments; the call goes through `ctx.typertGateway` with
  * one dedicated owner Peer (`interactions: 'none'`, so it never receives or
  * answers forwarded waterfalls), and the native result or RemoteError comes
  * back unchanged.
  *
- *   GET  /health                     -> {ok, pid, peer}
+ *   GET  /health                     -> {ok, pid, peer, workspaceRegistry}
  *   POST /api/<namespace>/<method>   {args} -> {ok:true, value} | {ok:false, error:{code,message,details}}
  *   POST /stream/<namespace>/<method> {args} -> NDJSON lines {item} ..., then {end:true} or {error}
+ *   POST /bridge/workspace/attachSession {args:{path,sessionId,title?}} -> {ok,value:{workspace,created}} | {ok:false,error}
+ *
+ * The /bridge route is plugin-owned, not native: it uses the Host's internal
+ * workspaceRegistry. DSH service name/signature changes can produce 503 or
+ * bridge/attach-failed; /api and /stream remain native endpoint forwarding.
  *
  * Access control is the socket itself: its directory is 0700 and the socket
  * 0600, so only the macOS user who runs the desktop app can connect.
@@ -21,6 +26,7 @@
 import fs from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
+import os from 'node:os';
 import path from 'node:path';
 
 const ENDPOINT = /^\/(api|stream)\/([A-Za-z$][A-Za-z0-9_$.-]*)\/([A-Za-z$][A-Za-z0-9_$.-]*)$/;
@@ -37,10 +43,38 @@ export function socketPath(cfg) {
 }
 
 /** RemoteError (or any thrown value) -> the native RPC failure shape. */
-export function remoteFailure(error) {
+export function remoteFailure(error, fallbackCode = 'gateway/internal') {
   if (error && typeof error === 'object' && typeof error.code === 'string')
     return { code: error.code, message: String(error.message ?? error.code), details: error.details ?? {} };
-  return { code: 'gateway/internal', message: error instanceof Error ? error.message : String(error), details: {} };
+  return { code: fallbackCode, message: error instanceof Error ? error.message : String(error), details: {} };
+}
+
+/** Title for a new workspace; inputs are canonical paths and existing titles. */
+export function projectTitle(realPath, existingTitles, home) {
+  const base = path.basename(realPath);
+  if (!existingTitles.includes(base)) return base;
+  const stripPrivate = (p) => p.replace(/^\/private(?=\/|$)/, '');
+  let parent = stripPrivate(path.dirname(realPath));
+  const homePath = stripPrivate(home);
+  if (parent === homePath || parent.startsWith(homePath + '/')) parent = '~' + parent.slice(homePath.length);
+  return `${base} · ${parent.replace(/^\//, '')}`;
+}
+
+async function attachSession(registry, args) {
+  let workspace = await registry.resolveByPath(args.path);
+  const created = !workspace;
+  if (!workspace) {
+    const realPath = await fs.promises.realpath(args.path);
+    if (typeof registry.readSessionHeader === 'function') {
+      const header = await registry.readSessionHeader(args.sessionId);
+      const cwd = await fs.promises.realpath(header.cwd);
+      if (cwd !== realPath) throw new Error(`session ${args.sessionId}: its cwd resolves to ${cwd}, not workspace path ${realPath}`);
+    }
+    const title = args.title ?? projectTitle(realPath, registry.list().map((w) => w.title), os.homedir());
+    workspace = await registry.create(args.path, title);
+  }
+  await workspace.attachSession(args.sessionId);
+  return { workspace: { workspaceId: workspace.id, path: workspace.path, title: workspace.title, sessionIds: workspace.sessionIds }, created };
 }
 
 // Native results are JSON values; keep byte values and bigints representable instead of failing the reply.
@@ -67,17 +101,33 @@ function readJson(req) {
 }
 
 /**
- * Build the request handler. `getGateway()` and `getPeer()` are read per call so
+ * Build the request handler. Gateway, Peer and workspace registry are read per call so
  * a reloaded Gateway or a fresh Peer is used without restarting the listener.
  * `getPeer()` returns undefined on DSH versions without `connection.createPeer`.
  */
-export function createHandler({ getGateway, getPeer, logger = console }) {
+export function createHandler({ getGateway, getPeer, getWorkspaceRegistry = () => undefined, logger = console }) {
   return async (req, res) => {
     const send = (status, body) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(json(body)); };
     try {
       if (req.method === 'GET' && req.url === '/health') {
         const peer = getPeer();
-        return send(200, { ok: Boolean(getGateway()), pid: process.pid, dsh: DSH_VERSION, peer: peer ? { principal: 'owner', interactions: 'none' } : 'gateway-operator' });
+        return send(200, { ok: Boolean(getGateway()), pid: process.pid, dsh: DSH_VERSION, workspaceRegistry: Boolean(getWorkspaceRegistry()), peer: peer ? { principal: 'owner', interactions: 'none' } : 'gateway-operator' });
+      }
+      if (req.method === 'POST' && req.url === '/bridge/workspace/attachSession') {
+        const body = await readJson(req);
+        const args = body?.args;
+        const nonempty = (value) => typeof value === 'string' && value.trim().length > 0;
+        if (!body || Array.isArray(body) || !args || typeof args !== 'object' || Array.isArray(args)
+          || !nonempty(args.path) || !path.isAbsolute(args.path) || !nonempty(args.sessionId)
+          || (args.title !== undefined && !nonempty(args.title)))
+          return send(400, { error: 'body must be {"args": {"path": <absolute path>, "sessionId": <nonempty string>, "title"?: <nonempty string>}}' });
+        try {
+          const registry = getWorkspaceRegistry();
+          if (!registry) return send(503, { error: 'DSH Host workspace registry is not available' });
+          return send(200, { ok: true, value: await attachSession(registry, args) });
+        } catch (error) {
+          return send(200, { ok: false, error: remoteFailure(error, 'bridge/attach-failed') });
+        }
       }
       const match = ENDPOINT.exec(req.url ?? '');
       if (req.method !== 'POST' || !match) return send(404, { error: 'not found' });
@@ -165,7 +215,7 @@ export function installNativeBridge(ctx, { cfg, logger = console }) {
     const file = socketPath(cfg);
     let close;
     let stopped = false;
-    listenNativeBridge(file, createHandler({ getGateway: () => ctx.get?.('typertGateway'), getPeer, logger }), logger)
+    listenNativeBridge(file, createHandler({ getGateway: () => ctx.get?.('typertGateway'), getWorkspaceRegistry: () => ctx.get?.('workspaceRegistry'), getPeer, logger }), logger)
       .then((fn) => { if (stopped) fn(); else close = fn; })
       .catch((e) => logger.error?.(`native bridge not started: ${e.message}`));
     return async () => {

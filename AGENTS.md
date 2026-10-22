@@ -21,7 +21,7 @@
 2. **只为上游没有 connector、但用户要求在其桌面 app 里可见的运行时写 connector**。优先附着运行时自己的原生会话接口（DSH：桌面 Host 的 Typert 端点，经插件 native bridge），保留原生方法名；只有拿不到原生接口时才薄封装接收端 HTTP 契约（ZCode）。都不引入调度、队列或状态机。见 [ADR-0002](docs/decisions/0002-minimal-agenvo-fork.md)。
 3. **fork 补丁最小化。** 对 agenvo 的改动只限新增 kind、`apps/dsh` 与 `apps/dispatch`。上游一旦支持外部 kind，就去掉 fork。不在 fork 里写部署记录或个人值。
 4. **个人值不进本仓库。** 域名、IP、账号、主机名、路径写在 overlay（默认 `~/.config/agent-fleet/fleet.json`，可用 `AGENT_FLEET_CONFIG` 覆盖）。如果某项改造离开个人值就没意义，先怀疑这项改造的必要性。
-5. **桌面可见、full access。** 派给 DSH 的任务必须出现在桌面 app 里，app 不在就明确失败，不退回 headless。执行权限默认 full access，访问控制靠 relay 的设备配对与 OAuth 授权。见 [ADR-0004](docs/decisions/0004-desktop-strict-and-full-access.md)。
+5. **桌面可见、full access。** 派给 DSH 的任务必须出现在桌面 app 里，app 不在就明确失败，不退回 headless。执行权限默认 full access，访问控制靠 relay 的设备配对与 OAuth 授权。见 [ADR-0004](docs/decisions/0004-desktop-strict-and-full-access.md)。用户明确要 CLI 通道时可在 Herdr 跑 `dsh headless`，但必须按[派活技能](skills/delegate-via-agenvo/SKILL.md)登记到桌面项目，使其仍在桌面可见。
 6. **一个 relay，一个 owner。** 所有已授权客户端都能访问所有已批准实例；测试授权用完即撤，不碰用户的正式授权。
 
 ## 验收与交付

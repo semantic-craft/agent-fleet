@@ -30,10 +30,29 @@ description: Hand work to another coding agent (DeepSeek Harness/DSH, Codex, Cla
 - 要在桌面 app 里看得见、能手动接手：Codex 用下述线程链接；也可选 DSH 实例。
 - 要在 Antigravity 桌面版里查看：用下述 agy 无头命令，按官方说明用户可在桌面版的 `@conversation` 下拉里调出（只承诺查看，不承诺在桌面续写）。
 - 要长时间运行、不怕笔记本合盖：选第二台 Mac 上的实例。
-- Codex、Claude Code、agy 和 `dsh headless` 选 Herdr 实例。Codex、Claude Code 与 agy 无头命令按下文用 `pane.run`；要在终端里交互操作 agy 时用 `agent.start`、`agent.prompt`。读实例 `context` 里的首次信任目录处理和 `dsh headless` 用法。
+- Codex、Claude Code 和 agy 无头命令，以及 `dsh headless`，选 Herdr 实例。Codex、Claude Code 与 agy 无头命令按下文用 `pane.run`；要在终端里交互操作 agy 时用 `agent.start`、`agent.prompt`。读实例 `context` 里的首次信任目录处理；`dsh headless` 按下节「DSH headless 经 Herdr，在桌面项目下可见」执行。
 - 默认是 full access。用户没有要求时，不要降低权限，也不要替用户回答对方 agent 提出的业务决定问题。
 
 出错时，先读原生状态再决定是否重试。返回 `unknown` 的写操作不要直接重发。
+
+## DSH headless 经 Herdr，在桌面项目下可见
+
+用户明确要 CLI 通道时，在目标机器的 Herdr workspace（cwd 为项目绝对路径）用 `pane.run` 启动，桌面 Host 与 DSH 实例仍须在线。
+
+1. 命令带 `--json`，例如 `dsh --profile headless --json "<任务>"; echo __EXIT=$?`。任务正文长时先写文件，经 stdin 的 `-` 传入：
+
+   ```sh
+   dsh --profile headless --json - < "/tmp/<任务名>.txt"; echo __EXIT=$?
+   ```
+
+2. 立即读取第一行 session 事件（`{"type":"session","sessionId":"<id>","cwd":"<cwd>"}`），记录 sessionId 和 cwd。
+3. 拿到 sessionId 立刻经同机 DSH 实例调用一次 connector 方法 `workspace/attachSession {path: <cwd>, sessionId}`，对应插件路由 `/bridge/workspace/attachSession`。CLI 运行中调用安全：登记不拿会话写锁。核对返回 `ok:true`，把返回的项目 title 和 sessionId 告诉用户：「DSH 桌面左栏项目『<title>』下」。失败时报告错误，不能声称已在项目下可见。
+4. 项目路径已存在时不改名，直接归入。新项目默认用 `basename(realpath)`；与已有项目 title 重名时用 `"<basename> · <短父路径>"`。短父路径取 realpath 的父目录，去掉开头 `/private`，把 home 前缀换成 `~`，再去掉开头 `/`。
+   例如 `/private/tmp/turing-koe-p1/koe` 重名时为 `koe · tmp/turing-koe-p1`，`$HOME/work/koe` 为 `koe · ~/work`；调用者也可显式给 title，仅用于新项目。
+5. 按前述节奏读输出，核对 `__EXIT=` 与业务结果；CLI 追问沿用 `--session-id <sessionId>`，每轮保留 `--profile headless --json`。
+6. **只在最后一轮 CLI 已退出、确定不再用 `--session-id` 追问后**，经 DSH 实例用 `session/rename {request:{sessionId, title:"[CLI] <任务名>"}}` 改名。rename 会让桌面 Host 拿住该会话写锁，之后 CLI 续写报 `already owned by an active write handle`（2026-10-22 隔离实测，等 45 秒仍未释放）。改名后的追问走桌面或 DSH 实例的 `session/prompt`。
+
+反向接管不可行：桌面/Host 先建的会话，CLI `--session-id` 报 `runs under agent preset "standard", which the one-shot runner does not compose`。需要 CLI 通道时从 headless 新建，再登记到项目。
 
 ## Codex：官方 exec 经 Herdr 派活
 

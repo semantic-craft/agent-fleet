@@ -172,3 +172,13 @@
 - 验证点：`git log --format='%h %s%n%b' -10 origin/main` 中每个合并提交正文非空，且带验收三项。
 - 复发记录：Seen 1x (2026-10-21)。
 
+
+### DSH session/rename 会让桌面 Host 拿住会话写锁
+
+**CLI 会话登记到项目可在运行中做；改名只在最后一轮 CLI 退出且不再用 `--session-id` 追问后做。**
+
+- 起因与后果：调度方于 2026-10-22 在隔离 `dsh web`（临时 HOME/DSH_HOME）实测，`session/rename` 后 CLI 续写报 `already owned by an active write handle`，等待 45 秒仍未释放。
+- 修复与证据：派活技能将 `workspace/attachSession` 与 `session/rename` 分开；前者经 registry.create + attachSession 登记并推送 workspace/follow upsert，不拿会话写锁，CLI 可继续续写。2026-10-22 在隔离 dsh web 上用本插件实测：新路径返回 created:true 且重名规则生效；cwd 不一致返回 bridge/attach-failed，不新建空项目；登记后 CLI `--session-id` 续写不报写锁错误。
+- 正确做法：拿到 sessionId 立即登记并告知项目 title；完成全部 CLI 轮次后再改为 `[CLI] <任务名>`，之后追问走桌面或 DSH 实例的 `session/prompt`。详见[派活技能](skills/delegate-via-agenvo/SKILL.md#dsh-headless-经-herdr在桌面项目下可见)。
+- 验证点：隔离环境中登记后 CLI `--session-id` 仍可续写；改名后 CLI 复现写锁错误，桌面或 DSH 实例接手。插件假注册表回归测试见 `adapters/dsh/test/native-bridge.test.mjs`，不替代真实写锁验收。
+- 复发记录：Seen 1x (2026-10-22)。
