@@ -1,3 +1,7 @@
 - 2026-10-21 | Anthropic 讲 Claude Code 在大型代码库里分层放说明文件，和各仓库 AGENTS.md、lessons.md 的放法直接相关。 | https://x.com/frxiaobei/status/2056415871460135321
 - 2026-10-21 | Karpathy 那份 65 行极简 AGENTS.md，可拿来对照现有全局规则。 | https://x.com/Saccc_c/status/2058467100537090544
 - 2026-10-21 | 拆解 SOUL.md（agent 人设文件）该写什么，设计 Bot 岗位时可对照。 | https://x.com/akshay_pachaar/status/2058584154292584853
+- 2026-10-22 | html-plan 借鉴：scripts/gate.sh 加 --check-brief，检查字数预算、每个问题必有推荐答案、必有「不改什么」、问题不超过 5 个，并核对 brief 里的「文件:行」在指定提交上存在。用户要求用 html-plan / software factory 优化任务进度追踪，@ 和留言机制保留；只是候选，由图灵排期。 | https://github.com/anthropics/claude-plugins-community/tree/main/html-plan
+- 2026-10-22 | software factory（草稿，未合并）对照缺口①：审查不过的返工次数设上限，超限转人。用户要求用 html-plan / software factory 优化任务进度追踪，@ 和留言机制保留；只是候选，由图灵排期。 | https://github.com/mattpocock/skills/pull/1316
+- 2026-10-22 | software factory（草稿，未合并）对照缺口②：Codex、DSH、Claude Code 之间认领 issue，防止重复开工。用户要求用 html-plan / software factory 优化任务进度追踪，@ 和留言机制保留；只是候选，由图灵排期。 | https://github.com/mattpocock/skills/pull/1316
+- 2026-10-22 | software factory（草稿，未合并）对照缺口③：agenvo 派活或 patrol 巡检失败时自动开 issue。用户要求用 html-plan / software factory 优化任务进度追踪，@ 和留言机制保留；只是候选，由图灵排期。 | https://github.com/mattpocock/skills/pull/1316
