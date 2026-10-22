@@ -187,7 +187,7 @@
 
 **`dsh --profile headless` 派出的会话，拿到 sessionId 立刻经同机 DSH 实例 `workspace/attachSession` 登记到项目，再把项目 title 和 sessionId 告诉用户。**
 
-- 起因与后果：2026-10-22 koe 会议纪要第 1 期在 Helios 的 /tmp 克隆（`/private/tmp/turing-koe-p1/koe`）里用 `dsh --profile headless` 派活，会话已经落盘，桌面 Host 的 `session/list` 也列得出，但它没有记到任何项目下，桌面左栏的项目里找不到，用户看不到进度。桌面版只在首次初始化时按 cwd 自动归组，之后 CLI 新建的会话一律不归项目；原生端点也没有把已有会话记进项目的方法。
+- 起因与后果：2026-10-22 koe 会议纪要第 1 期在主力 Mac 的临时 /tmp 克隆里用 `dsh --profile headless` 派活，会话已经落盘，桌面 Host 的 `session/list` 也列得出，但它没有记到任何项目下，桌面左栏的项目里找不到，用户看不到进度。桌面版只在首次初始化时按 cwd 自动归组，之后 CLI 新建的会话一律不归项目；原生端点也没有把已有会话记进项目的方法。
 - 修复与证据：#39 给插件加 `workspace/attachSession`，派活技能写明登记步骤与项目 title 规则；隔离 `dsh web` 实测登记后会话出现在项目下，CLI `--session-id` 可继续续写（见上一条）。
 - 正确做法（Done right）：照[派活技能](skills/delegate-via-agenvo/SKILL.md#dsh-headless-经-herdr在桌面项目下可见)第 2–3 步，读第一行 session 事件后立即登记，核对 `ok:true`；登记失败如实报告，不说用户能在桌面里看到。
 - 验证点：`rg -n 'workspace/attachSession' skills/delegate-via-agenvo/SKILL.md` 有结果；之后每次 headless 派活的回报里都有「DSH 桌面左栏项目『<title>』下」和 sessionId。
@@ -197,7 +197,7 @@
 
 **Codex 桌面版能否接着发消息，由用户在桌面里手动发一轮来验证；不为自动化桌面检查去申请辅助功能权限，也不重签 herdr。**
 
-- 起因与后果：2026-10-21 想经 Herdr 用 osascript 自动点 Codex 桌面版，验证派活线程能续发、出现在侧栏。权限记在 herdr 头上（launchd 起的 `~/.local/bin/herdr` 0.9.3），herdr 只有 adhoc 签名、没有 Team ID；用户三轮守在 Helios 前点 Allow，「控制 System Events」记住了，辅助功能一直没授予（22:17–22:22 六次检查都是 false，这项权限不弹窗，点 Allow 解决不了），自动检查始终没跑通。
+- 起因与后果：2026-10-21 想经 Herdr 用 osascript 自动点 Codex 桌面版，验证派活线程能续发、出现在侧栏。权限记在 herdr 头上（launchd 起的 herdr 0.9.3），herdr 只有 adhoc 签名、没有 Team ID；用户三轮守在主力 Mac 前点 Allow，「控制 System Events」记住了，辅助功能一直没授予（22:17–22:22 六次检查都是 false，这项权限不弹窗，点 Allow 解决不了），自动检查始终没跑通。
 - 修复与证据：用户 2026-10-21 22:26 定：不自动化桌面，不申请辅助功能，不重签 herdr；「桌面在同一线程续发」以用户 22:16、22:17 在桌面里发出的两个 turn 为证记为通过；侧栏是否出现不单独测，技能写明 exec 线程不一定在侧栏、必须给链接。
 - 正确做法（Done right）：派活和追问一律走 `codex exec resume`，不需要桌面权限；要验证桌面能续发，请用户在桌面里发一轮并截图或给时间点。授予 herdr 辅助功能等于让 herdr 里跑的任何命令都能控制键盘鼠标，且 adhoc 签名下每次升级 herdr 都可能要重新授权。
 - 验证点：`rg -n 'osascript|System Events' skills/ prompts/ scripts/` 无派活或验收用的桌面自动化步骤；`rg -n '不一定出现在侧栏' skills/delegate-via-agenvo/SKILL.md` 有结果。
@@ -207,8 +207,8 @@
 
 **改用户机器上的配置文件前，先读当前内容和修改时间；和交代的背景对不上就先停下问，不按交代的「原值」直接覆盖。派活要换模型，就在每条命令里显式写决定清单里的模型，不改用户自己的默认模型。**
 
-- 起因与后果：2026-10-21 22:33 交代把 Helios `~/.claude/settings.json` 的默认模型从「gemini-4-argon」换成 `deepseek/deepseek-flash`。实际文件里 5 处都是用户自己 22:16 刚设的 `minimax-code/MiniMax-M3.1-Flash`，改动照样覆盖了，改完才报「和背景对不上」；用户确认 MiniMax 是他有意设的，只好用备份还原。
-- 修复与证据：改前有备份（`~/Backups/claude-settings-20261021/settings.json`，sha256 ac78a753…），按 sha256 还原后不带 `--model` 跑短会话，用量里是 MiniMax。派活命令每轮显式带 `--model`（#32、#35），用户自己的默认模型保持他设的值。
+- 起因与后果：2026-10-21 22:33 交代把主力 Mac 上 `~/.claude/settings.json` 的默认模型从「gemini-4-argon」换成 `deepseek/deepseek-flash`。实际文件里 5 处都是用户自己 22:16 刚设的 `minimax-code/MiniMax-M3.1-Flash`，改动照样覆盖了，改完才报「和背景对不上」；用户确认 MiniMax 是他有意设的，只好用备份还原。
+- 修复与证据：改前做了备份，按 sha256 核对还原后不带 `--model` 跑短会话，用量里是 MiniMax。派活命令每轮显式带 `--model`（#32、#35），用户自己的默认模型保持他设的值。
 - 正确做法（Done right）：动用户配置前读文件、记 mtime 与要改的字段原值，和交代不一致就停下报告；派活所用模型查决定清单，写进每条命令（Codex `-m`、Claude Code `--model`、agy `--model`、DSH `session/selectModel`），不靠改用户或实例的全局默认。
 - 验证点：`rg -n -- '--model deepseek/deepseek-flash' skills/delegate-via-agenvo/SKILL.md` 在新建和 `--resume` 两条命令里都有结果；派活回报里写明所用模型，且没有改用户 settings 的步骤。
 - 复发记录：Seen 1x (2026-10-21)。
@@ -217,7 +217,7 @@
 
 **报「已修好」前，按用户看到的原症状在真实路径上复现一次；合并、部署、单测通过都只是前提。**
 
-- 起因与后果：Codex 桌面版「This is open in another app」要先 Fork 的问题，#30 与 agenvo#5 已合并并部署，被当作已修好转告用户。2026-10-21 19:10 经 agenvo 派出的线程在桌面版里仍显示占用：connector 仍连着共享的 app-server，专属运行时又被现有 hook 发出的 `hook/started` 卡住。做那次修复的会话在 Helios 上也找不到。
+- 起因与后果：Codex 桌面版「This is open in another app」要先 Fork 的问题，#30 与 agenvo#5 已合并并部署，被当作已修好转告用户。2026-10-21 19:10 经 agenvo 派出的线程在桌面版里仍显示占用：connector 仍连着共享的 app-server，专属运行时又被现有 hook 发出的 `hook/started` 卡住。做那次修复的会话在主力 Mac 上也找不到。
 - 修复与证据：#32 改为在 Herdr pane 里跑官方 `codex exec`，用 `codex exec resume` 追问；2026-10-21 实测进程退出后桌面打开 `codex://threads/<thread_id>` 有完整历史、正常输入框、无占用横幅（见上文 Codex exec 派活那条）。
 - 正确做法（Done right）：修复的验收项写成用户看到的现象（例如「桌面打开派活线程，没有占用横幅，能直接输入」），部署后在真实机器上按这个现象复现一次再报；没复现就写「已部署，未实测」。
 - 验证点：之后修复类 PR 的正文或合并后回报里，有一条在真实机器上按原症状复现的记录（时间、机器、看到了什么）。
