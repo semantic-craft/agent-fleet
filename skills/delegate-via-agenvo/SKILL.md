@@ -95,9 +95,9 @@ if nc -z 127.0.0.1 3425 2>/dev/null; then claude -p --dangerously-skip-permissio
 
 中断同样用 `pane.send-keys ["ctrl+c"]`。
 
-## Antigravity：agy 无头经 Herdr，桌面版调出
+## Antigravity：agy 无头经 Herdr，结果在终端查看
 
-Antigravity 桌面版（Antigravity 2.0）没有公开的派活接口，派活一律在 Herdr pane 里运行官方 CLI `agy`。CLI 与桌面版共用 agent 内核、设置和项目定义（`~/.gemini/config/`），会话分开存放：CLI 在 `~/.gemini/antigravity-cli/`，桌面在 `~/.gemini/antigravity/`。桌面版会为 CLI 会话实时建索引（`source` 为 `CORTEX_TRAJECTORY_SOURCE_CLI`），默认不放进侧栏项目列表。
+Antigravity 桌面版没有公开的派活接口，派活一律在 Herdr pane 里运行官方 CLI `agy`。CLI 会话存放在 `~/.gemini/antigravity-cli/conversations/`；桌面版（2.25.0）的 `@conversation` 只查 `~/.gemini/antigravity/conversation_summaries.db` 的 `conversations_fts`，搜不到 CLI 会话（2026-10-22 实测）。派活不加 `--new-project`，该参数只在桌面侧栏生成空项目。
 
 1. 与 Codex 一样先创建 Herdr workspace、取得 root pane，任务正文先写入文件。用 `pane.run` 运行下面的命令，每轮显式传 `--model`（名称用 `agy models` 列出的 slug，例如 `gemini-4-argon-high`），并保留 `--dangerously-skip-permissions`：
 
