@@ -12,7 +12,7 @@ Herdr 以 headless 服务常驻（launchd 运行 `herdr server`）；用户需�
 - 上游 connector 已支持 workspace、pane、读输出和事件，无需另写 connector 或调度器。
 - Codex 派活使用官方 `codex exec`，进程退出即交还 writer，已观察到桌面版通过线程链接打开后显示完整历史、正常输入框，且没有 “This is open in another app” 占用横幅；常驻共享 app-server 会继续占用 writer。
 - Claude Code 的无头模式输出结构化 JSON 结果，以 session id 续接；请求经 `ANTHROPIC_BASE_URL` 指向的本机 magpie。完整命令只在派活技能里维护。
-- agy 的无头模式（`agy -p --output-format json`）输出 `conversation_id` 与结果，以 `--conversation` 续接；Antigravity 桌面版没有公开派活接口，但能用 `@conversation` 调出 CLI 会话，所以不需要为它写 connector。
+- agy 的无头模式（`agy -p --output-format json`）输出 `conversation_id` 与结果，以 `--conversation` 续接；Antigravity 桌面版没有公开派活接口，2.25.0 也调不出 CLI 会话（`@conversation` 只搜桌面自己的索引，2026-10-22 实测）；加 `--new-project` 只会在桌面侧栏生成一个空项目（显示 No conversations yet），会话本身仍不可见、`@conversation` 搜不到（2026-10-22 用户实测），所以派活不要加 `--new-project`。agy 只作为 Herdr 里的 CLI agent 使用，不承诺桌面可见，也不为它写 connector。
 
 ## 约定
 

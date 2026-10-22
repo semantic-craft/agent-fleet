@@ -4,7 +4,7 @@
 
 1. 人只面对一个入口：手机上的 ChatGPT（主力是 dots），也可以是 Grok Bot。
 2. 助手能看到每台电脑上的 agent 在做什么，并能新建任务、追加输入、读结果。
-3. 任务在用户平时用的桌面 app 里可见（Codex Desktop、DSH；Antigravity 桌面版经 `@conversation` 调出 agy 会话），也可以在 Herdr 终端里运行（agy、codex CLI、dsh headless）。
+3. 任务在用户平时用的桌面 app 里可见（Codex Desktop、DSH；agy 会话只在 Herdr 终端可见，Antigravity 桌面版 2.25.0 调不出 CLI 会话），也可以在 Herdr 终端里运行（agy、codex CLI、dsh headless）。
 4. 电脑不开入站端口；合盖、断网、关闭聊天都不会中断已经在跑的 agent。
 
 ## 组件与职责
@@ -26,7 +26,7 @@
 5. DSH 桌面在左栏该项目下建出可见会话并开始执行；connector 立即返回 session id。
 6. 轮次结束时 connector 转发原生 `turn/end`（`runtime.changed`），dot 被唤醒后调 `session/follow` 读结果，再决定下一步。
 
-Codex 派活经 Herdr 的 `workspace.create` + `pane.run` 运行官方 `codex exec`，追问用 `codex exec resume` 续接同一线程；进程退出后 writer 交还，用户通过 `codex://threads/<thread_id>` 在桌面版继续。Codex connector 只用 `thread/list`（`sourceKinds` 含 `exec`、`modelProviders: []`）和 `thread/read` 读取历史。Claude Code 同样在 Herdr pane 里运行，按派活技能中的完整示例新建与续接，请求经本机 magpie，每轮显式使用 `deepseek/deepseek-flash`（可选第二模型 `minimax-code/MiniMax-M3.1-Flash`，同样经 magpie）；agy 用无头 `agy -p --output-format json` 派活，以 `conversation_id` 续接，用户在 Antigravity 桌面版的 `@conversation` 下拉里调出；需要终端交互时用 `agent.start` + `agent.prompt`。完整命令见[派活技能](../skills/delegate-via-agenvo/SKILL.md)。DSH 的 `agenvo-dsh` 调 DSH 桌面版自己的 `session/list`、`session/create`、`session/prompt`、`session/follow` 等，能列出并续写用户手动开的会话，事件是原生的 `turn/start`、`turn/end`。
+Codex 派活经 Herdr 的 `workspace.create` + `pane.run` 运行官方 `codex exec`，追问用 `codex exec resume` 续接同一线程；进程退出后 writer 交还，用户通过 `codex://threads/<thread_id>` 在桌面版继续。Codex connector 只用 `thread/list`（`sourceKinds` 含 `exec`、`modelProviders: []`）和 `thread/read` 读取历史。Claude Code 同样在 Herdr pane 里运行，按派活技能中的完整示例新建与续接，请求经本机 magpie，每轮显式使用 `deepseek/deepseek-flash`（可选第二模型 `minimax-code/MiniMax-M3.1-Flash`，同样经 magpie）；agy 用无头 `agy -p --output-format json` 派活，以 `conversation_id` 续接，结果在 Herdr pane 和结果文件里查看（Antigravity 桌面版目前调不出 CLI 会话）；需要终端交互时用 `agent.start` + `agent.prompt`。完整命令见[派活技能](../skills/delegate-via-agenvo/SKILL.md)。DSH 的 `agenvo-dsh` 调 DSH 桌面版自己的 `session/list`、`session/create`、`session/prompt`、`session/follow` 等，能列出并续写用户手动开的会话，事件是原生的 `turn/start`、`turn/end`。
 
 ## 信任边界
 
