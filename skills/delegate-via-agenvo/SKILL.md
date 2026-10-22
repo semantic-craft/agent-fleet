@@ -15,7 +15,13 @@ description: Hand work to another coding agent (DeepSeek Harness/DSH, Codex, Cla
    - 对方没有你的上下文。任务文本要写全：目标、仓库和路径、已知事实、约束、验收方式，以及是否允许提交、推送或开 PR。
    - `project` 或 `cwd` 必须是对方机器上真实存在的目录。
    - 新建会话后先显式选模型，再提交输入：DSH 用 `session/selectModel {request: {sessionId, provider, model, reasoningEffort}}`，返回的 `selected` 就是这个会话之后各轮使用的模型。每个会话各选一次，实例的全局默认保持原样。
-   - 派出后立刻记下返回的 id（session 或 thread），并告诉用户。
+   - 派出后立刻记下会话 id（session、thread 或 conversation），连同桌面版里的查看入口一起告诉用户：
+     - DSH 实例：经 `workspace/create` 和带 workspaceId 的 `session/create` 新建的会话在桌面左栏对应项目下，报项目名和 sessionId。
+     - DSH headless：拿到 sessionId 立刻登记到桌面项目，报项目 title 和 sessionId（见「DSH headless 经 Herdr，在桌面项目下可见」）。
+     - Codex：报 thread_id，并给出 `codex://threads/<thread_id>`（见「Codex：官方 exec 经 Herdr 派活」）。
+     - Claude Code：报 `session_id`、cwd 和 Herdr pane。
+     - agy：报 `conversation_id`、cwd 和结果文件路径；Antigravity 桌面版看不到这类会话（见「选哪个 agent」），在 Herdr 里看或用 `agy --conversation <id>` 续接。
+     - 登记或链接没拿到时，如实报告，不说用户能在桌面版里看到。
 4. **跟进**：结果不会自动回来，要自己去读。
    - 按固定节奏读：派出约 60 秒后读第一次，之后每 2–3 分钟读一次；约 10 分钟仍未完成就停止等待，把会话 id 和当前状态报告给用户。每次读取单独一次 `execute`，在调用之间等待。
    - 先用便宜的状态判断是否完成，再读输出：DSH 读 `session/projections` 的 `turnOutline`，最后一项的 `response` 非空即本轮已结束；然后用 read output 类的方法（DSH `session/follow`）取结果。
