@@ -1,0 +1,3 @@
+- 2026-10-21 | Anthropic 讲 Claude Code 在大型代码库里分层放说明文件，和各仓库 AGENTS.md、lessons.md 的放法直接相关。 | https://x.com/frxiaobei/status/2056415871460135321
+- 2026-10-21 | Karpathy 那份 65 行极简 AGENTS.md，可拿来对照现有全局规则。 | https://x.com/Saccc_c/status/2058467100537090544
+- 2026-10-21 | 拆解 SOUL.md（agent 人设文件）该写什么，设计 Bot 岗位时可对照。 | https://x.com/akshay_pachaar/status/2058584154292584853
