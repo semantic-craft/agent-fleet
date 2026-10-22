@@ -199,7 +199,7 @@
 
 - 起因与后果：2026-10-21 想经 Herdr 用 osascript 自动点 Codex 桌面版，验证派活线程能续发、出现在侧栏。权限记在 herdr 头上（launchd 起的 herdr 0.9.3），herdr 只有 adhoc 签名、没有 Team ID；用户三轮守在主力 Mac 前点 Allow，「控制 System Events」记住了，辅助功能一直没授予（22:17–22:22 六次检查都是 false，这项权限不弹窗，点 Allow 解决不了），自动检查始终没跑通。
 - 修复与证据：用户 2026-10-21 22:26 定：不自动化桌面，不申请辅助功能，不重签 herdr；「桌面在同一线程续发」以用户 22:16、22:17 在桌面里发出的两个 turn 为证记为通过；侧栏是否出现不单独测，技能写明 exec 线程不一定在侧栏、必须给链接。
-- 正确做法（Done right）：派活和追问一律走 `codex exec resume`，不需要桌面权限；要验证桌面能续发，请用户在桌面里发一轮并截图或给时间点。授予 herdr 辅助功能等于让 herdr 里跑的任何命令都能控制键盘鼠标，且 adhoc 签名下每次升级 herdr 都可能要重新授权。
+- 正确做法（Done right）：Codex 新建派活用 `codex exec`，追问用 `codex exec resume`，均经 Herdr pane 执行，不需要桌面权限；要验证桌面能续发，请用户在桌面里发一轮并截图或给时间点。授予 herdr 辅助功能等于让 herdr 里跑的任何命令都能控制键盘鼠标，且 adhoc 签名下每次升级 herdr 都可能要重新授权。
 - 验证点：`rg -n 'osascript|System Events' skills/ prompts/ scripts/` 无派活或验收用的桌面自动化步骤；`rg -n '不一定出现在侧栏' skills/delegate-via-agenvo/SKILL.md` 有结果。
 - 复发记录：Seen 1x (2026-10-21)。
 
@@ -218,7 +218,7 @@
 **报「已修好」前，按用户看到的原症状在真实路径上复现一次；合并、部署、单测通过都只是前提。**
 
 - 起因与后果：Codex 桌面版「This is open in another app」要先 Fork 的问题，#30 与 agenvo#5 已合并并部署，被当作已修好转告用户。2026-10-21 19:10 经 agenvo 派出的线程在桌面版里仍显示占用：connector 仍连着共享的 app-server，专属运行时又被现有 hook 发出的 `hook/started` 卡住。做那次修复的会话在主力 Mac 上也找不到。
-- 修复与证据：#32 改为在 Herdr pane 里跑官方 `codex exec`，用 `codex exec resume` 追问；2026-10-21 实测进程退出后桌面打开 `codex://threads/<thread_id>` 有完整历史、正常输入框、无占用横幅（见上文 Codex exec 派活那条）。
+- 修复与证据：#32 让派活在 Herdr pane 里跑官方 `codex exec`，用 `codex exec resume` 追问；2026-10-21 实测进程退出后桌面打开 `codex://threads/<thread_id>` 有完整历史、正常输入框、无占用横幅（见上文 Codex exec 派活那条）。
 - 正确做法（Done right）：修复的验收项写成用户看到的现象（例如「桌面打开派活线程，没有占用横幅，能直接输入」），部署后在真实机器上按这个现象复现一次再报；没复现就写「已部署，未实测」。
 - 验证点：之后修复类 PR 的正文或合并后回报里，有一条在真实机器上按原症状复现的记录（时间、机器、看到了什么）。
 - 复发记录：Seen 1x (2026-10-21)。
