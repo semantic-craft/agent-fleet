@@ -27,7 +27,7 @@ description: Hand work to another coding agent (DeepSeek Harness/DSH, Codex, Cla
 
 - 用户点名了就用点名的。
 - 没点名时默认用 Codex，经 Herdr pane 运行 `codex exec`。Codex 不可用（额度用尽、离线、报错）时改用 DSH：DSH 能力和 Codex 同级，能新建、追问、中断。
-- 要在桌面 app 里看得见、能手动接手：Codex 用下述线程链接；也可选 DSH 实例；Antigravity 用下述 agy 无头命令，用户在 Antigravity 桌面版的 `@conversation` 下拉里调出。
+- 要在桌面 app 里看得见、能手动接手：Codex 用下述线程链接；也可选 DSH 实例；Antigravity 用下述 agy 无头命令，按官方说明用户可在 Antigravity 桌面版的 `@conversation` 下拉里调出查看。
 - 要长时间运行、不怕笔记本合盖：选第二台 Mac 上的实例。
 - Codex、Claude Code、agy 和 `dsh headless` 选 Herdr 实例。Codex、Claude Code 与 agy 无头命令按下文用 `pane.run`；要在终端里交互操作 agy 时用 `agent.start`、`agent.prompt`。读实例 `context` 里的首次信任目录处理和 `dsh headless` 用法。
 - 默认是 full access。用户没有要求时，不要降低权限，也不要替用户回答对方 agent 提出的业务决定问题。
@@ -92,7 +92,7 @@ Antigravity 桌面版（Antigravity 2.0）没有公开的派活接口，派活�
    agy -p "$(cat "/tmp/<任务名>-2.txt")" --conversation <conversation_id> --output-format json --dangerously-skip-permissions --model <模型> > "/tmp/<任务名>-2.json" 2> "/tmp/<任务名>-2.err"; echo __EXIT=$?
    ```
 
-4. 桌面查看：告诉用户在 Antigravity 桌面版的输入框打开 `@conversation` 下拉，按 `conversation_id` 或任务内容找到这条 CLI 会话。CLI 会话默认不会出现在侧栏的项目下面。
+4. 桌面查看：把 `conversation_id` 和 cwd 告诉用户，请用户在 Antigravity 桌面版输入框的 `@conversation` 下拉里调出这条 CLI 会话（官方说明的入口）。CLI 会话默认不在侧栏的项目下面。在桌面里续写 CLI 会话的方式以官方文档为准，不要承诺。
 5. 中断用 `pane.send-keys` 发送 `["ctrl+c"]`。
 
 `agent.start kind agy` 的交互式用法只在需要终端里逐步操作、处理信任提示时使用；派活和拿结果用上面的无头命令。
