@@ -139,7 +139,7 @@
 - 起因与后果：第一次 `release zcode` 用 `-replace ProgramArguments.1 -string <新路径>`，结果数组变成 `[node, 新, 旧]`，接收端多带了一个旧路径参数启动（碰巧无害）。
 - 修复与证据：`scripts/release.mjs` 改为整体替换数组；重跑后 `plutil -extract ProgramArguments` 只有两项。
 - 正确做法：不要用带下标的 `-replace` 改数组元素。
-- 验证点：`rg -n 'ProgramArguments\.[0-9]' scripts/` 无结果，`scripts/release.mjs` 用 `-replace ProgramArguments -json` 整体替换；发布后 `plutil -extract ProgramArguments json -o - <plist>` 只有两项。
+- 验证点：`rg -n '"-replace", "ProgramArguments\.' scripts/` 无结果（没有按下标改数组的 `plutil` 调用；`scripts/release.mjs:294` 注释里提到的 `ProgramArguments.1` 不算）；`rg -n '"-replace", "ProgramArguments", "-json"' scripts/release.mjs` 有结果；发布后 `plutil -extract ProgramArguments json -o - <plist>` 只有两项。
 - 复发记录：Seen 1x (2026-10-19)。
 
 ### 常驻服务不要从 git checkout 运行
