@@ -1,7 +1,10 @@
 /**
  * agent-fleet-dsh: mounted in the DSH desktop app's own Host (profile "desktop").
- * Its only job is the native bridge (native-bridge.js): the Host's Typert endpoints on
- * a same-user Unix socket, which the Agenvo `dsh` connector attaches to. No dispatch,
+ * Its only job is the native bridge (native-bridge.js): the Host's Typert endpoints and
+ * plugin-owned POST /bridge/workspace/attachSession on a same-user Unix socket.
+ * The latter uses internal workspaceRegistry, not a native endpoint; DSH upgrades
+ * changing that service can return 503 or bridge/attach-failed. The Agenvo `dsh`
+ * connector attaches here. No dispatch,
  * queue or job state lives here (agent-fleet ADR-0002).
  */
 import os from 'node:os';
