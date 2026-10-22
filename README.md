@@ -45,6 +45,8 @@ ChatGPT / dots / Grok Bot ──MCP(OAuth, HTTPS)──► Agenvo relay（Cloudf
 
 ## 检查
 
+- [scripts/gate.sh](scripts/gate.sh)：只读 PR 合并门禁，`gate.sh <owner/repo> <pr> <sha>`；离线正文检查用 `gate.sh --check-body <文件>`。
+
 ```sh
 npm install
 git config core.hooksPath .githooks       # 一次性：提交前自动跑 guard

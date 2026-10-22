@@ -1,9 +1,46 @@
 #!/usr/bin/env bash
-# 合并门禁（只读）：gate.sh <owner/repo> <pr号> <期望head完整sha>
+# 合并门禁（只读）：gate.sh <owner/repo> <pr> <sha>
+# 离线正文检查：gate.sh --check-body <文件>
+# 盒上 /workspace/status/gate.sh 是从本文件拷贝的副本，改动先改本文件再拷贝
 # 只用 gh api graphql 读取；不合并、不写入、不打印 token。
 set -uo pipefail
 
-usage() { echo "用法: $0 <owner/repo> <pr号> <期望head完整40位sha>" >&2; exit 2; }
+FAIL=0
+ok()  { echo "PASS  $*"; }
+bad() { echo "FAIL  $*"; FAIL=1; }
+
+check_body() {
+  local body_file=$1 LAST WANT_LAST HITS INFO_HITS w n
+  LAST=$(grep -v '^[[:space:]]*$' "$body_file" | tail -n 1 | sed 's/[[:space:]]*$//')
+  WANT_LAST='squash 时以本正文作为提交说明。'
+  [ "$LAST" = "$WANT_LAST" ] && ok "正文最后一个非空行为「$WANT_LAST」" || bad "正文最后一个非空行为「$LAST」，期望「$WANT_LAST」"
+
+  HITS=""
+  for w in 已删除 已停用 已退役 不再使用 不要用 部分取代 不恢复 改为 改成 原先 已移除 已废弃 弃用 已替换; do
+    n=$(grep -c -F -- "$w" "$body_file" || true)
+    [ "$n" -gt 0 ] && HITS="$HITS $w(${n}行)"
+  done
+  [ -z "$HITS" ] && ok "正文无墓碑词" || bad "正文含墓碑词:$HITS"
+
+  INFO_HITS=""
+  for w in 不再 旧版 以前 之前 原来; do
+    n=$(grep -c -F -- "$w" "$body_file" || true)
+    [ "$n" -gt 0 ] && INFO_HITS="$INFO_HITS $w(${n}行)"
+  done
+  [ -z "$INFO_HITS" ] || echo "INFO  正文含提示词:$INFO_HITS"
+}
+
+finish() {
+  if [ "$FAIL" -eq 0 ]; then echo "RESULT PASS"; exit 0; else echo "RESULT FAIL"; exit 1; fi
+}
+
+usage() { echo "用法: $0 <owner/repo> <pr号> <期望head完整40位sha> 或 $0 --check-body <文件>" >&2; exit 2; }
+if [ "${1-}" = --check-body ]; then
+  [ $# -eq 2 ] || usage
+  [ -f "$2" ] && [ -r "$2" ] || { echo "正文文件必须是可读的普通文件" >&2; exit 2; }
+  check_body "$2"
+  finish
+fi
 [ $# -eq 3 ] || usage
 REPO=$1; PR=$2; WANT=$3
 [[ $REPO =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || usage
@@ -62,9 +99,6 @@ STATE=$(jq -r "$P.state" "$TMP/pr.json"); HEAD=$(jq -r "$P.headRefOid" "$TMP/pr.
 MERGEABLE=$(jq -r "$P.mergeable" "$TMP/pr.json"); MSS=$(jq -r "$P.mergeStateStatus" "$TMP/pr.json")
 jq -r "$P.body // \"\"" "$TMP/pr.json" | tr -d '\r' > "$TMP/body.txt"
 
-FAIL=0
-ok()  { echo "PASS  $*"; }
-bad() { echo "FAIL  $*"; FAIL=1; }
 
 echo "门禁: $REPO#$PR  $(jq -r "$P.url" "$TMP/pr.json")"
 
@@ -81,16 +115,7 @@ else
   jq -r 'select(.isResolved==false)|"      - \(.path // "?"):\(.line // "?") \(.comments.nodes[0].author.login // "?") \(.comments.nodes[0].url // "")"' "$TMP/threads.jsonl"
 fi
 
-LAST=$(grep -v '^[[:space:]]*$' "$TMP/body.txt" | tail -n 1 | sed 's/[[:space:]]*$//')
-WANT_LAST='squash 时以本正文作为提交说明。'
-[ "$LAST" = "$WANT_LAST" ] && ok "正文最后一个非空行为「$WANT_LAST」" || bad "正文最后一个非空行为「$LAST」，期望「$WANT_LAST」"
-
-HITS=""
-for w in 已删除 已停用 已退役 不再使用 不要用 部分取代 不恢复; do
-  n=$(grep -c -F -- "$w" "$TMP/body.txt" || true)
-  [ "$n" -gt 0 ] && HITS="$HITS $w(${n}行)"
-done
-[ -z "$HITS" ] && ok "正文无墓碑词" || bad "正文含墓碑词:$HITS"
+check_body "$TMP/body.txt"
 
 # statusCheckRollup：只列出，不判不过
 QUOTA_RE='usage limit|usage limits|quota|credits|rate limit|额度'
@@ -118,4 +143,4 @@ jq -r --arg re "$QUOTA_RE" --arg ccq "$CC_QUOTA" '
   end' "$TMP/checks.jsonl"
 [ "$CC_QUOTA" -gt 0 ] && echo "INFO  chatgpt-codex-connector 有 $CC_QUOTA 条评论/评审提到额度用尽"
 
-if [ "$FAIL" -eq 0 ]; then echo "RESULT PASS"; exit 0; else echo "RESULT FAIL"; exit 1; fi
+finish
