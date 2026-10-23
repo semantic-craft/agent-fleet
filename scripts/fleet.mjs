@@ -329,13 +329,21 @@ async function herdrTurn(call, { root, project }) {
         if (errors > 3) return fail(`pane.get: ${JSON.stringify(got.error)}`);
       }
       if (!gone) return fail("turn pane still open after 60 s");
-      // The marker is split in the typed command, so only the command's output matches it.
-      await native("pane.run", { session, paneId: reader, command: `printf '%s=%s\\n' 'EXIT-${tag}' "$(cat ${file}.exit)"; rm -f ${file}.exit` });
-      for (let n = 0; n < 5; n++) {
-        await sleep(1000);
-        const out = (await native("pane.read", { session, paneId: reader, lines: 20 })).output ?? "";
-        const exit = new RegExp(`EXIT-${tag}=(\\d+)`).exec(out)?.[1];
-        if (exit !== undefined) return { ok: exit === "0", pane, text: `exit ${exit} in ${cwd}` };
+      // The marker is split in the typed command, so only the command's output matches it. Printing is idempotent,
+      // so an `unknown` reader command is reconciled by reading for the marker and, if it never shows, sending it once more.
+      const show = `printf '%s=%s\\n' 'EXIT-${tag}' "$(cat ${file}.exit 2>/dev/null)"`;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const shown = await call("pane.run", { session, paneId: reader, command: show });
+        if (shown.error && shown.error.code !== "execution_unknown") return fail(`pane.run: ${JSON.stringify(shown.error)}`);
+        for (let n = 0; n < 5; n++) {
+          await sleep(1000);
+          const read = await call("pane.read", { session, paneId: reader, lines: 20 });
+          if (read.error) continue;
+          const exit = new RegExp(`EXIT-${tag}=(\\d+)`).exec(herdrValue(read).output ?? "")?.[1];
+          if (exit === undefined) continue;
+          await call("pane.run", { session, paneId: reader, command: `rm -f ${file}.exit` }).catch(() => {});
+          return { ok: exit === "0", pane, text: `exit ${exit} in ${cwd}` };
+        }
       }
       return fail("exit file not read back through the root pane");
     } finally {
