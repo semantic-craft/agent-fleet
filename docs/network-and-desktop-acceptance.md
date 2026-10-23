@@ -17,13 +17,26 @@ Agenvo connector 主动通过 WSS `/connect` 连接 relay；客户端的 HTTPS `
 
 ### 重连可观察性
 
-connector 的 stdout/stderr 仍指向 `/dev/null`，本机没有连接历史；`status.json` 只是最近状态。relay 一侧可以只读观察：在 agenvo checkout 里运行 `npx wrangler tail --config wrangler.local.json --format json`，Durable Object 会为每次断开记一条 `Connector <deviceId> disconnected with code <code>`。查看时不改任何配置。
+connector 的 stdout/stderr 仍指向 `/dev/null`，本机没有连接历史。断线次数从下面三处只读来源数，查看时不改任何配置：
 
-2026-10-23 17:10–17:15 的样本：relay 记到 16 次 `1006`（未收到关闭帧），覆盖两台 Mac 的全部 connector（主力 Mac 的 codex、dsh、herdr、dispatch，第二台 Mac 的 dsh），每个 connector 约 1–3 分钟一次。同期在主力 Mac 上每 15 秒用 `lsof` 记录各 connector 到 relay 的 TCP 连接（都经同一个 `198.18.*:443`）：herdr 换了 2 次本地端口，codex 1 次，dsh 一次没换。relay 记到的主力 Mac dsh 断开（6 次）多于本机实际重连，原因未查明：可能是网络路径上的中间层，也可能有别处的进程用同一设备身份连接。`/api/admin/state` 只给出每台设备当前的 `epoch` 与 `versionObservedAt`，几分钟内全部更新过，说明 relay 侧确实在频繁重建连接。
+- **本机**：各 connector 的 `status.json` 每次状态变化都会更新 `state` 与 `updatedAt`。每台 Mac 每 2 秒读一次，`offline`/`connecting` 回到 `online` 就是一次重连。
+- **relay**：每 15 秒读 `/api/admin/state`，某台设备的 `epoch` 变一次，就是 relay 接受了一次新连接（`versionObservedAt` 是 hello 时刻）。脚本请求要带 curl 类的 User-Agent，Python `urllib` 的默认 UA 会被 Cloudflare 边缘直接返回 403。
+- **网关**：在第二台 Mac 上，`surge-cli rule explain https://<relay 主机>/connect` 看命中规则和出口，`surge-cli --raw dump active` 看 relay 连接的策略、起始时间和字节数。
 
-影响：断线时进行中的调用返回 `execution_unknown`，之后几秒返回 `device_offline`；同日经 relay 实测，同样的 `pane.run` 既出现过返回 `unknown` 但命令已执行，也出现过 `unknown` 且命令没送达。断线期间的事件不补发。派活技能因此要求：`unknown` 的写操作先读原生状态再决定，订阅事件也保留轮询。源码行为不变：30 秒心跳、超过 90 秒未收到 pong 时断开、带抖动的指数重连。
+在 agenvo checkout 里运行 `npx wrangler tail --config wrangler.local.json --format json`，能看到 Durable Object 记的 `Connector <deviceId> disconnected with code <code>`，但不能用它数断线：WebSocket 升级请求和 `Connector … connected` 日志在 tail 里看不到；tail 自己的连接也走机场线路，会断开、会丢事件；relay 记的 `1006` 多半属于更早断掉的连接（见下）。
 
-重连问题已经出现（见上），下一步由用户决定：先在实际接管流量的网关（第二台 Mac 上的 Surge）或获准的路由诊断中核实 relay 主机的 WSS 出口，再讨论针对 relay 主机的规则（例如固定出口或直连）。本仓库不替用户改网关配置。ZCode 同机回环迁移已另行获得明确批准并完成，见下节。不要为主动事件唤醒开 Mac 入站端口。
+2026-10-23 17:49–18:21 三处同时记录（31.5 分钟）：
+
+- 本机实际断线 30 次（主力 Mac 的 4 个 connector 共 27 次，第二台 Mac 的 dsh 3 次），成串出现，18:01–18:07 占 22 次。
+- relay 的 28 次 `epoch` 变化都能在 ±20 秒内对上本机的一次重连，没有别的进程或机器在用这些设备身份。两台 Mac 上按 deviceId 搜索，凭据也只各有一份。
+- 19 次能精确定时的断线里，18 次发生在 connector 发出 30 秒心跳后 0.07–0.26 秒，正好是经这条线路到 Cloudflare 的一个往返（复用连接上的请求往返 65–240 ms）；另 1 次是 18:07:40 两台 Mac 的 5 个 connector 在 1 秒内同时断开。
+- tail 记到 23 条 `1006`，没有一条是 relay 自己发现现役连接断开时记下的：21 条属于早就被新连接替换的连接，1 条在被替换的同时清理，1 条无法判定。
+
+原因：relay 主机在网关的 Surge 里没有专门规则，落到 `FINAL` → `Daily`（机场新加坡 Smart 组）→ 经国内中转的机场节点。这个出口到 Cloudflare 的路由不稳：同一个出口 IP 的请求落在 8 个 Cloudflare 接入点，新加坡和欧美日混在一起。一条连接中途被换到别的路径或接入点就失效了；connector 下一次心跳写进去，一个往返后收到重置，立即重连。Cloudflare 原接入点上的那条连接收不到任何东西，成了孤儿，要等新连接替换它，或几分钟到十几分钟后超时，relay 才记 `1006`。所以 `1006` 的计数既滞后，也对不上是哪次断线；17:10–17:15 那次样本里「relay 记到的 dsh 断开多于本机实际重连」就是这个原因。
+
+影响：出口失效到下一次心跳之间（最多 30 秒），relay 仍把调用写进孤儿连接，命令送不到，10 秒后返回 `execution_unknown`；connector 重连时，旧连接上进行中的调用一律结束为 `execution_unknown`（可能已执行）；新连接 hello 完成前（约 0.1–0.3 秒）返回 `device_offline`；断线期间的事件不补发。派活技能因此要求：`unknown` 的写操作先读原生状态再决定，订阅事件也保留轮询。源码行为不变：30 秒心跳、超过 90 秒未收到 pong 时断开、带抖动的指数重连。
+
+下一步由用户决定：在 network-profiles 仓库的 Atlas profile 里给 relay 主机加一条规则，不让它走机场线路（首选 `DIRECT`，不理想再试自建美国机的 `Atlas-US`），用该仓库的部署脚本下发，再按上面三处来源复测 30 分钟，对比本次基线（31.5 分钟 30 次）。本仓库不替用户改网关配置。ZCode 同机回环迁移已另行获得明确批准并完成，见下节。不要为主动事件唤醒开 Mac 入站端口。诊断报告与复测脚本在 `~/Projects/_artifacts/agent-fleet/relay-1006-diagnosis/`。
 
 只读结构检查（不输出主机、规则值、URL 或认证信息）：
 
