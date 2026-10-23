@@ -14,9 +14,14 @@ import {
   configPath,
   connectorConfigPath,
   contextPlan,
+  expandHome,
+  forkRef,
+  herdrValue,
   loadConfig,
   localMachine,
+  paneGone,
   render,
+  unlistedInstances,
   writeJson0600,
 } from "./lib.mjs";
 
@@ -176,6 +181,9 @@ async function check() {
       if (!i?.online) failures++;
       console.log(`${id}: ${i ? (i.online ? "online" : "OFFLINE") : "NOT IN RELAY"} ${i?.kind ?? ""}`);
     }
+    // Assistants see every approved instance; one missing from the overlay has no managed context and no probe below.
+    for (const i of unlistedInstances(items, cfg))
+      console.log(`${i.instanceId}: WARNING approved in the relay but not in the fleet config (${i.online ? "online" : "offline"} ${i.kind ?? ""})`);
     const probes = { codex: ["thread/list", { limit: 1 }], herdr: ["session.list", {}], dsh: ["session/list", { _request: {}, limit: 1 }] };
     for (const i of items.filter((x) => x.online && probes[x.kind])) {
       const [m, p] = probes[i.kind];
@@ -184,12 +192,21 @@ async function check() {
       if (!ok) failures++;
       console.log(`  ${i.instanceId} ${m}: ${ok ? "ok" : "FAILED " + JSON.stringify(r.error ?? r).slice(0, 200)}`);
     }
+    const rootOf = (i) => cfg.machines.find((m) => (m.instances ?? []).some((x) => x.id === i.instanceId))?.projectsRoot;
+    // Herdr: one dispatch turn as the skill runs it (a tab whose shell exits when the command ends), without a model call.
+    if (opt.dispatch && !opt.session) {
+      const targets = items.filter((x) => x.online && x.kind === "herdr" && (!opt.instance || x.instanceId === opt.instance));
+      for (const i of targets) {
+        const r = await herdrTurn((m, p) => call(i, m, p), { root: rootOf(i), project });
+        if (!r.ok) failures++;
+        console.log(`  ${i.instanceId} turn pane ${r.pane ?? "-"}: ${r.ok ? "exited, exit file read back" : "FAILED"} :: ${r.text}`);
+      }
+    }
     // DSH: native session/prompt into a new session (or --session SID on --instance ID), then wait for its turn/end.
     if (opt.dispatch || opt.session) {
       const targets = items.filter((x) => x.online && x.kind === "dsh" && (!opt.instance || x.instanceId === opt.instance));
       await Promise.all(targets.map(async (i) => {
-        const root = cfg.machines.find((m) => (m.instances ?? []).some((x) => x.id === i.instanceId))?.projectsRoot;
-        const r = await dshTurn((m, p) => call(i, m, p), { root, project, sessionId: opt.session });
+        const r = await dshTurn((m, p) => call(i, m, p), { root: rootOf(i), project, sessionId: opt.session });
         if (!r.ok) failures++;
         console.log(`  ${i.instanceId} session ${r.sessionId ?? "-"}: ${r.ok ? "turn/end completed" : "FAILED"} :: ${r.text}`);
       }));
@@ -269,17 +286,88 @@ async function dshTurn(call, { root, project, sessionId }) {
   return fail("no turn/end within 10 min");
 }
 
+/**
+ * One Herdr dispatch turn through the relay, shaped like the skill's: the command runs in its own tab and ends
+ * with `echo $? > <exit file>; exit`, so the pane disappears (native pane_exited) when the turn ends; the exit file
+ * is then read through the workspace's root pane. `ok` only when the pane exited and the exit file says 0.
+ */
+async function herdrTurn(call, { root, project }) {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  let pane;
+  const fail = (text) => ({ ok: false, pane, text: String(text).slice(0, 200) });
+  if (!root) return fail("no projectsRoot for this machine in fleet.json");
+  // Every failure names the native method, so a broken step is visible without rerunning by hand.
+  const native = async (method, params) => {
+    try {
+      return herdrValue(await call(method, params));
+    } catch (e) {
+      throw new Error(`${method}: ${e.message}`);
+    }
+  };
+  try {
+    const session = (await native("session.list", {})).items?.find((s) => s.endpointPresent)?.session;
+    if (!session) return fail("session.list: no reachable Herdr session");
+    const cwd = `${root}/${project}`;
+    const ws = await native("workspace.create", { session, cwd, label: "fleet-check" });
+    const workspaceId = ws.workspace.workspace_id;
+    const reader = ws.root_pane.pane_id;
+    try {
+      pane = (await native("tab.create", { session, workspaceId, cwd, label: "fleet-check-1" })).root_pane.pane_id;
+      const tag = `fleet-check-${Date.now()}`;
+      const file = `/tmp/${tag}`;
+      // A command that ends at once can take the pane away before the CLI confirms delivery: `unknown`, not a
+      // failure. As the skill says, do not resend; the pane state and the exit file below decide.
+      const run = await call("pane.run", { session, paneId: pane, command: `test -d ${JSON.stringify(cwd)}; echo $? > ${file}.exit; exit` });
+      if (run.error && run.error.code !== "execution_unknown") return fail(`pane.run: ${JSON.stringify(run.error)}`);
+      // Connector links reconnect now and then (device_offline / unknown for a few seconds): tolerate a few in a row.
+      let gone = false;
+      for (let errors = 0, deadline = Date.now() + 60_000; !gone && Date.now() < deadline; ) {
+        await sleep(2000);
+        const got = await call("pane.get", { session, paneId: pane });
+        gone = paneGone(got);
+        errors = !gone && got.error ? errors + 1 : 0;
+        if (errors > 3) return fail(`pane.get: ${JSON.stringify(got.error)}`);
+      }
+      if (!gone) return fail("turn pane still open after 60 s");
+      // The marker is split in the typed command, so only the command's output matches it. Printing is idempotent,
+      // so an `unknown` reader command is reconciled by reading for the marker and, if it never shows, sending it once more.
+      const show = `printf '%s=%s\\n' 'EXIT-${tag}' "$(cat ${file}.exit 2>/dev/null)"`;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const shown = await call("pane.run", { session, paneId: reader, command: show });
+        if (shown.error && shown.error.code !== "execution_unknown") return fail(`pane.run: ${JSON.stringify(shown.error)}`);
+        for (let n = 0; n < 5; n++) {
+          await sleep(1000);
+          const read = await call("pane.read", { session, paneId: reader, lines: 20 });
+          if (read.error) continue;
+          const exit = new RegExp(`EXIT-${tag}=(\\d+)`).exec(herdrValue(read).output ?? "")?.[1];
+          if (exit === undefined) continue;
+          await call("pane.run", { session, paneId: reader, command: `rm -f ${file}.exit` }).catch(() => {});
+          return { ok: exit === "0", pane, text: `exit ${exit} in ${cwd}` };
+        }
+      }
+      return fail("exit file not read back through the root pane");
+    } finally {
+      await call("workspace.close", { session, workspaceId }).catch(() => {});
+    }
+  } catch (e) {
+    return fail(e.message);
+  }
+}
+
 // How far the fork is from upstream, and whether upstream changed the parts our patch touches.
 function upstream() {
   const cfg = config();
-  const dir = cfg.agenvo?.checkout ? cfg.agenvo.checkout.replace(/^~(?=\/)/, homedir()) : join(homedir(), "Projects/agenvo");
+  const dir = expandHome(cfg.agenvo?.checkout ?? "~/Projects/_forks/agenvo");
   const git = (...a) => execFileSync("git", ["-C", dir, ...a], { encoding: "utf8" }).trim();
+  if (!cfg.agenvo?.remote || !cfg.agenvo?.branch) throw new Error("fleet config: agenvo.remote and agenvo.branch are required for upstream");
+  // Compare the configured fork branch, not whatever the checkout has checked out (it may sit on main).
+  const head = forkRef(git("remote", "-v"), cfg.agenvo.remote, cfg.agenvo.branch);
+  git("fetch", "-q", head.split("/")[0]);
   git("fetch", "-q", "origin", "--tags");
-  const head = git("rev-parse", "--abbrev-ref", "HEAD");
   const latestTag = git("tag", "--list", "v*", "--sort=-v:refname").split("\n").find((t) => !t.includes("-rc")) ?? "";
-  const behind = git("rev-list", "--count", "HEAD..origin/main");
-  const ours = git("rev-list", "--count", "origin/main..HEAD");
-  const base = git("merge-base", "HEAD", "origin/main");
+  const behind = git("rev-list", "--count", `${head}..origin/main`);
+  const ours = git("rev-list", "--count", `origin/main..${head}`);
+  const base = git("merge-base", head, "origin/main");
   const touched = git("log", "--oneline", `${base}..origin/main`, "--", "packages/protocol/src/index.ts", "packages/relay/src/releases.ts");
   const upstreamKinds = /"dsh"|"zcode"|external|plugin/i.test(git("show", "origin/main:packages/protocol/src/index.ts").match(/kind: z\.enum\(\[[^\]]*\]/s)?.[0] ?? "");
   console.log(`fork ${head}: ${ours} own commits, ${behind} upstream commits not merged; latest upstream release ${latestTag || "-"}`);
@@ -288,7 +376,7 @@ function upstream() {
   if (!opt["try-merge"] || !latestTag) return;
   let merged = true;
   try {
-    git("merge-base", "--is-ancestor", latestTag, "HEAD");
+    git("merge-base", "--is-ancestor", latestTag, head);
   } catch {
     merged = false;
   }
@@ -297,7 +385,7 @@ function upstream() {
   const wt = join(homedir(), "Projects/.worktrees/agenvo", `upstream-${latestTag}`);
   const branch = `xw/upstream-${latestTag}`;
   if (existsSync(wt)) return console.log(`rehearsal already exists: ${wt} (branch ${branch}); review or remove it with git worktree remove`);
-  git("worktree", "add", "-q", "-b", branch, wt, "HEAD");
+  git("worktree", "add", "-q", "-b", branch, wt, head);
   const inWt = (cmd, args) => execFileSync(cmd, args, { cwd: wt, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
   try {
     inWt("git", ["-c", "user.name=agent-fleet", "-c", "user.email=agent-fleet@localhost", "merge", "--no-edit", latestTag]);

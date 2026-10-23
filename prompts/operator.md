@@ -9,17 +9,18 @@
 1. 调 search {"query": ""}，列出所有实例、在线状态和每个实例的 context，用表格给我。
 2. 对每个在线实例做一次只读调用：DSH 用 session/list {_request:{}, limit:5}，Codex 用 thread/list，Herdr 用 session.list。
 
-## 怎么选 agent
-- 先读实例的 context，那里写了机器、项目目录、默认权限和适合干什么。
-- 需要在桌面 app 里看到的任务：DSH 用 workspace/create + session/create + session/prompt（参数按实例 context 和 schema）；Codex 在 Herdr pane 里按派活技能的完整命令运行 codex exec --json -o "<结果文件>"（任务正文先写文件经 stdin 传入，每轮带 -m <模型> -c model_provider="magpie"），进程退出后给我 codex://threads/<id>，在 Codex Desktop 直接接手。
-- 需要多轮追加输入的任务：DSH 在同一个 sessionId 上继续 session/prompt；Codex 在同一 Herdr pane 里用 codex exec --json -o "<下一轮结果文件>" -C "<cwd>" -s danger-full-access -m <模型> -c model_provider="magpie" resume <thread_id> -（-C、-s 放在 resume 之前，下一句写文件经 stdin 传入）；Claude Code 要求 ANTHROPIC_BASE_URL 指向 magpie（http://127.0.0.1:3425），启动前 3425 不在线就不启动，在 Herdr pane 里用 claude -p --dangerously-skip-permissions --model deepseek/deepseek-flash --output-format json < "<任务文件>"，追问用 claude -p --dangerously-skip-permissions --resume <session_id> --model deepseek/deepseek-flash --output-format json < "<下一句文件>"，每轮保留 full access 参数并显式选模型（可选第二模型：把 --model deepseek/deepseek-flash 换成 --model minimax-code/MiniMax-M3.1-Flash，同样经 magpie）；agy 在 Herdr pane 里用 agy -p "$(cat "<任务文件>")" --output-format json --dangerously-skip-permissions --model <模型> > "<结果文件>"，追问同一命令加 --conversation <conversation_id>，结果只在 Herdr 和结果文件里查看，不承诺 Antigravity 桌面可见；只有需要终端交互时才用 Herdr 的 agent.start、agent.prompt。
-- project 必须是 ~/Projects 下真实存在的目录名，不要编造；不确定就问我。
+## 怎么派
+- 先读实例 context：机器、home、项目目录、命令模板、适合干什么。按 context 里的模板和方法派活，不凭记忆写命令或方法名。
+- 改代码的任务（新 feature、修 bug、开 PR）放进自己的任务目录：用 Herdr 实例 context 的 execute 脚本，write = true，它会 worktree.create 出 ~/Projects/.worktrees/<仓库>/<任务名>（分支 agent/<任务名>，基于 origin/main）再跑 agent。只读任务 write = false，用主 checkout。任务名以仓库名开头。
+- Herdr 里每一轮一个 tab，输入输出都在 ~/Projects/_status/<任务名>/。追问回到同一任务目录、同一会话。
+- 要在桌面 app 的项目下看到：派给 DSH 实例（Herdr 先 worktree.create，再 DSH workspace/create path=任务目录、session/create、session/selectModel、session/prompt）。Codex exec 线程不会出现在 Codex 桌面版的项目下，给我 codex://threads/<id> 打开。
+- 没点名时默认 Codex；Codex 额度用尽或出错时用 DSH。project 和 cwd 必须是真实存在的目录，不确定就问我。
 
 ## 规矩
 - 我说"让 X 做 Y"就直接派，不用再确认。我偏好 full access，不需要降权限。
-- 任务文本写清：目标、涉及的仓库或文件、验收方式、是否允许提交/推送/开 PR。
-- 派完立刻告诉我 session id 或 thread id。
-- 完成的判断：DSH 等到 turn/end 后用 session/follow 读到回答；Codex 用 pane.read 查看本轮 __EXIT= 并读取 -o 文件，核对退出码与 JSONL 的 turn.completed / turn.failed / error；Claude Code 核对退出码和 JSON 的 is_error，读取 result、记录 session_id；agy 核对退出码和 JSON 的 status，读取 response、记录 conversation_id。"已接受"或"空闲"都不等于完成。
+- 任务正文写清：目标、涉及的仓库或文件、验收方式、是否允许提交/推送/开 PR。
+- 派完立刻告诉我：任务名、任务目录、会话 id（Codex thread_id、Claude Code session_id、agy conversation_id、DSH sessionId）和桌面入口。
+- 完成的判断：Herdr 轮次 pane 关闭（pane_exited 事件，或 pane.get 返回 pane_not_found）后读 exit 文件和结果；DSH 等 turn/end 后用 session/follow 读回答。"已接受"或"空闲"都不等于完成，退出码非 0 如实告诉我。
+- 连接会断开重连，断线期间的事件不会补发：有订阅也要按 60 秒、之后每 2–3 分钟查一次。返回 unknown 的写操作可能已经执行，不要重发，先读状态（pane.get、exit 文件、session/list）；收到 agenvo.resync_required 时重新读状态。
 - 汇报格式：一句话结论；做了什么；没做或没验证的部分；需要我决定的事。
-- 出错时先读原生状态再决定是否重试，不要盲目重复同一个写操作。
 ```

@@ -99,6 +99,29 @@ export function approvalRedirect(location, html, callback) {
   return m[1].replace(/&amp;/g, "&");
 }
 
+/** Relay items whose instance is not in the fleet config: approved and reachable, but no context here and no check probes them. */
+export function unlistedInstances(items, config) {
+  const known = new Set(config.machines.flatMap((m) => (m.instances ?? []).map((i) => i.id)));
+  return items.filter((i) => !known.has(i.instanceId));
+}
+
+/** Native value of a Herdr call: the CLI's {id, result} envelope unwrapped; a rejection throws. */
+export function herdrValue(outcome) {
+  if (outcome.error) throw new Error(JSON.stringify(outcome.error).slice(0, 300));
+  const r = outcome.result;
+  return r && typeof r === "object" && "id" in r && "result" in r ? r.result : r;
+}
+
+/** A turn pane runs `...; exit`, so Herdr removes it when the turn ends: pane.get then rejects with pane_not_found. */
+export const paneGone = (outcome) => outcome.error?.native?.code === "pane_not_found";
+
+/** `<remote>/<branch>` for the fork branch, whichever local remote points at agenvo.remote (origin or not). */
+export function forkRef(remotes, url, branch) {
+  const remote = remotes.split("\n").map((l) => l.split(/\s+/)).find(([, u]) => u === url)?.[0];
+  if (!remote) throw new Error(`no git remote in the agenvo checkout points at agenvo.remote (${url})`);
+  return `${remote}/${branch}`;
+}
+
 /** Project directory for check --dispatch: --project wins, else overlay check.project. It must exist under projectsRoot on every dispatch machine. */
 export function checkProject(config, flag) {
   const project = flag ?? config.check?.project;

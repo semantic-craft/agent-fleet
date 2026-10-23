@@ -1,6 +1,6 @@
 # ADR-0002：只为 DSH/ZCode 维护一个最小 agenvo fork
 
-状态：已采纳（2026-10-19）
+状态：已采纳（2026-10-19）。ZCode 部分不再派活（agent-fleet #34），`apps/dispatch` 与 `zcode` kind 仍在 fork 里，按 [landscape](../landscape.md) 的说明等用户决定是否移除。
 
 ## 背景
 上游 Agenvo 没有 DSH 桌面版和 ZCode 桌面版的 connector；用户又要求任务出现在这两个桌面 app 里。
