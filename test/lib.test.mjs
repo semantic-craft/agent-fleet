@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { approvalRedirect, checkProject, contextPlan, loadConfig, localMachine, render, writeJson0600 } from "../scripts/lib.mjs";
+import { approvalRedirect, checkProject, contextPlan, forkRef, herdrValue, loadConfig, localMachine, paneGone, render, unlistedInstances, writeJson0600 } from "../scripts/lib.mjs";
 
 const dir = mkdtempSync(join(tmpdir(), "fleet-"));
 const write = (obj) => {
@@ -66,4 +66,37 @@ test("check --dispatch project: --project wins, else overlay check.project, else
   assert.equal(checkProject(c), c.check.project);
   assert.equal(checkProject(c, "other"), "other");
   assert.throws(() => checkProject({ machines: [] }), /check\.project/);
+});
+
+test("relay instances missing from the fleet config are reported, configured ones are not", () => {
+  const c = { machines: [{ name: "m", instances: [{ id: "codex-m", connector: "codex" }] }, { name: "n" }] };
+  const items = [{ instanceId: "codex-m", online: true }, { instanceId: "zcode-m", online: true, kind: "zcode" }];
+  assert.deepEqual(unlistedInstances(items, c).map((i) => i.instanceId), ["zcode-m"]);
+  assert.deepEqual(unlistedInstances([], c), []);
+});
+
+test("herdrValue unwraps the CLI envelope, passes connector-built results through, and throws native rejections", () => {
+  assert.deepEqual(herdrValue({ execution: "accepted", result: { id: "cli:tab:create", result: { root_pane: { pane_id: "w1:p2" } }, session: "default" } }), { root_pane: { pane_id: "w1:p2" } });
+  assert.deepEqual(herdrValue({ execution: "accepted", result: { items: [{ session: "default" }] } }), { items: [{ session: "default" }] });
+  assert.deepEqual(herdrValue({ execution: "accepted", result: { output: "text\n", session: "default" } }), { output: "text\n", session: "default" });
+  assert.throws(() => herdrValue({ execution: "rejected", error: { code: "native_error" } }), /native_error/);
+});
+
+test("paneGone is true only for a native pane_not_found rejection", () => {
+  assert.equal(paneGone({ execution: "rejected", error: { code: "native_error", message: "Herdr rejected the request", native: { code: "pane_not_found", message: "pane w1:p2 not found" } } }), true);
+  assert.equal(paneGone({ execution: "rejected", error: { code: "native_error", native: { code: "workspace_not_found" } } }), false);
+  assert.equal(paneGone({ execution: "accepted", result: { id: "cli:pane:get", result: { pane: { pane_id: "w1:p2" } } } }), false);
+  assert.equal(paneGone({ execution: "unknown", error: { code: "execution_unknown" } }), false);
+});
+
+test("forkRef finds the configured fork remote whatever it is called", () => {
+  const remotes = [
+    "origin\thttps://github.com/Xuanwo/agenvo.git (fetch)",
+    "origin\thttps://github.com/Xuanwo/agenvo.git (push)",
+    "xw\tgit@github.com:OWNER/agenvo.git (fetch)",
+    "xw\tgit@github.com:OWNER/agenvo.git (push)",
+  ].join("\n");
+  assert.equal(forkRef(remotes, "git@github.com:OWNER/agenvo.git", "xw/dispatch-connectors"), "xw/xw/dispatch-connectors");
+  assert.equal(forkRef("origin\tgit@github.com:OWNER/agenvo.git (fetch)", "git@github.com:OWNER/agenvo.git", "b"), "origin/b");
+  assert.throws(() => forkRef(remotes, "git@github.com:OTHER/agenvo.git", "b"), /agenvo\.remote/);
 });

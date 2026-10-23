@@ -5,7 +5,7 @@
     "adminSecretFile": "~/.config/agenvo/admin-secret"
   },
   "agenvo": {
-    "checkout": "~/Projects/agenvo",
+    "checkout": "~/Projects/_forks/agenvo",
     "remote": "git@github.com:OWNER/agenvo.git",
     "branch": "xw/dispatch-connectors"
   },
@@ -16,7 +16,9 @@
   "machines": [
     {
       "name": "laptop",
-      "hostnames": ["laptop.local"],
+      "hostnames": [
+        "laptop.local"
+      ],
       "ssh": null,
       "projectsRoot": "~/Projects",
       "services": [
@@ -28,18 +30,18 @@
         {
           "id": "codex-laptop",
           "connector": "codex",
-          "context": "# Codex @ laptop\n- 只用 thread/list（sourceKinds 含 exec、modelProviders: []）和 thread/read 读历史；派活走 Herdr 的 codex exec。\n- 项目在 ~/Projects/<project>；默认 danger-full-access。"
+          "context": "# Codex @ laptop\n- 只读历史：thread/list（sourceKinds 含 exec、modelProviders: []）和 thread/read；派活走 Herdr 的 codex exec，不用 thread/start、turn/start。\n- exec 线程不会出现在 Codex 桌面版的项目下，用 codex://threads/<id> 打开。"
         },
         {
           "id": "herdr-laptop",
           "connector": "herdr",
-          "context": "# Herdr @ laptop\n- Codex 用 workspace.create + pane.run 运行 codex exec --json -o \"<结果文件>\" -C \"<cwd>\" -s danger-full-access -m <模型> -c model_provider=\"magpie\" - < \"<任务文件>\"；追问 codex exec --json -o \"<下一轮结果文件>\" -C \"<cwd>\" -s danger-full-access -m <模型> -c model_provider=\"magpie\" resume <thread_id> - < \"<下一句文件>\"，进程退出后通过 codex://threads/<id> 桌面接手。\n- Claude Code 要求 ANTHROPIC_BASE_URL 指向 magpie（http://127.0.0.1:3425），启动前 3425 不在线就不启动；用 pane.run 运行 claude -p --dangerously-skip-permissions --model deepseek/deepseek-flash --output-format json < \"<任务文件>\"，追问用 claude -p --dangerously-skip-permissions --resume <session_id> --model deepseek/deepseek-flash --output-format json < \"<下一句文件>\"，每轮保留 full access 参数并显式选模型（可选第二模型：把 --model deepseek/deepseek-flash 换成 --model minimax-code/MiniMax-M3.1-Flash，同样经 magpie）。\n- agy 用 pane.run 运行 agy -p \"$(cat \"<任务文件>\")\" --output-format json --dangerously-skip-permissions --model <模型> > \"<结果文件>\"，从 JSON 取 conversation_id 和 response；追问加 --conversation <conversation_id>；结果在 Herdr pane 和结果文件里查看，桌面版目前调不出 CLI 会话。需要终端交互时用 agent.start（args 带 --dangerously-skip-permissions）和 agent.prompt。"
+          "context": "# Herdr @ laptop\n- 终端工作区，headless 服务常驻。所有方法的 session 用 session.list 返回的名字（名字错了得到 runtime_unavailable）。home 是 <home>，仓库在 <home>/Projects/<repo>。\n- 任务目录：改代码的任务用 worktree.create 建 <home>/Projects/.worktrees/<repo>/<任务名>（分支 agent/<任务名>，base origin/main）；只读任务用 workspace.create，cwd 为主 checkout。任务名以仓库名开头；PR 合并后 worktree.remove。\n- 一轮一个 tab：tab.create 新开 tab，pane.run 跑「正文解码进 ~/Projects/_status/<任务名>/brief-N.md → agent → echo $? > exit-N; exit」。这一轮结束时 tab 关闭：事件 pane_exited，或 pane.get 返回 pane_not_found。不要用 agent.get 判断结束（CLI 退出后返回 agent_not_found）。\n- 派出与追问用这个 execute 脚本（改前两行；追问 n 加 1、填回第 1 轮返回的 workspaceId 与 cwd、agent 加续接参数）：\nconst h={deviceId:\"<deviceId>\",instanceId:\"herdr-laptop\"},session=\"<session.list 的名字>\",home=\"<home>\";const repo=\"<仓库>\",task=\"<仓库>-<任务>\",write=true,n=1,workspaceId=\"\",cwd0=\"\";const brief=\"<完整任务正文>\";const agent=(D)=>`codex exec --json -o \"${D}/result-${n}.md\" -C \"$PWD\" -s danger-full-access -m <模型> -c model_provider=\"magpie\" - < \"${D}/brief-${n}.md\" > \"${D}/events-${n}.jsonl\" 2> \"${D}/stderr-${n}.log\"`;const b64=(s)=>{const u=unescape(encodeURIComponent(s)),t=\"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/\";let o=\"\";for(let i=0;i<u.length;i+=3){const x=(u.charCodeAt(i)<<16)|((u.charCodeAt(i+1)||0)<<8)|(u.charCodeAt(i+2)||0);o+=t[(x>>18)&63]+t[(x>>12)&63]+(i+1<u.length?t[(x>>6)&63]:\"=\")+(i+2<u.length?t[x&63]:\"=\");}return o;};const v=(r)=>{if(r.error)throw new Error(JSON.stringify(r.error));return r.result?.result??r.result;};let cwd=cwd0,wid=workspaceId,ws;if(n===1){cwd=write?`${home}/Projects/.worktrees/${repo}/${task}`:`${home}/Projects/${repo}`;ws=v(await call(h,write?\"worktree.create\":\"workspace.create\",write?{session,cwd:`${home}/Projects/${repo}`,branch:`agent/${task}`,base:\"origin/main\",path:cwd,label:`${repo} · ${task}`}:{session,cwd,label:`${repo} · ${task}`}));wid=ws.workspace.workspace_id;}const tab=v(await call(h,\"tab.create\",{session,workspaceId:wid,cwd,label:`${task}-${n}`}));const fresh=n===1&&write?\"git fetch -q origin && git merge -q --ff-only origin/main && \":\"\";const run=await call(h,\"pane.run\",{session,paneId:tab.root_pane.pane_id,command:`D=\"$HOME/Projects/_status/${task}\"; mkdir -p \"$D\" && printf %s '${b64(brief)}' | base64 -d > \"$D/brief-${n}.md\" && ${fresh}${agent(\"$D\")}; echo $? > \"$D/exit-${n}\"; exit`});return {n,cwd,workspaceId:wid,readerPane:ws?.root_pane.pane_id,turnPane:tab.root_pane.pane_id,run:run.execution,error:run.error};\n- agent 命令：Codex 见脚本，追问在 model_provider=\"magpie\" 后加 resume <thread_id>。Claude Code：if nc -z 127.0.0.1 3425 2>/dev/null; then claude -p --dangerously-skip-permissions --model deepseek/deepseek-flash --output-format json < \"${D}/brief-${n}.md\" > \"${D}/result-${n}.json\" 2> \"${D}/stderr-${n}.log\"; else echo \"magpie 127.0.0.1:3425 不在线\" > \"${D}/stderr-${n}.log\"; (exit 97); fi，追问加 --resume <session_id>（可选第二模型 minimax-code/MiniMax-M3.1-Flash，同样经 magpie）。agy：agy -p \"$(cat \"${D}/brief-${n}.md\")\" --output-format json --dangerously-skip-permissions --model <模型> > \"${D}/result-${n}.json\" 2> \"${D}/stderr-${n}.log\"，追问加 --conversation <conversation_id>，桌面版看不到这类会话。dsh headless：dsh --profile headless --json - < \"${D}/brief-${n}.md\" > \"${D}/events-${n}.jsonl\" 2> \"${D}/stderr-${n}.log\"，追问加 --session-id <sessionId>。\n- 读结果：在读取 pane（workspace 第一个 pane）pane.run `clear; D=\"$HOME/Projects/_status/<任务名>\"; echo \"EXIT-N=$(cat \"$D/exit-N\")\"; head -c 300 \"$D/events-N.jsonl\" \"$D/result-N.json\" 2>/dev/null | head -2; head -c 4000 \"$D/result-N.md\" 2>/dev/null`，下一次 execute 再 pane.read。Codex thread_id 在 events-1.jsonl 第一行，给用户 codex://threads/<thread_id>。\n- 中断：pane.send-keys [\"ctrl+c\"]，再 pane.run `echo 130 > \"$HOME/Projects/_status/<任务名>/exit-N\"; exit`。pane.run 返回 unknown 时可能已经执行：不要重发，先 pane.get 并读 exit 文件。"
         },
         {
           "id": "dsh-laptop",
           "connector": "dsh",
           "endpoint": "unix://~/.local/state/agent-fleet-dsh/native.sock",
-          "context": "# DSH desktop @ laptop\n- DSH 原生会话接口：session/list 列出（含手动开的会话），session/follow、session/page 读输出，workspace/create + session/create 新建，session/prompt 追加输入，session/cancel 中断。\n- 权限：session/create 和 session/prompt 可带 permission（read-only、workspace-write、danger-full-access）；create 不带时为 danger-full-access，prompt 不带时保持会话当前权限。等 runtime.changed 的 turn/end 再读结果。"
+          "context": "# DSH desktop @ laptop\n- DSH 原生会话接口：session/list 列出（含手动开的会话），session/follow、session/page 读输出，workspace/create + session/create 新建，session/prompt 追加输入，session/cancel 中断。\n- 改代码的任务先用同机 Herdr 实例 worktree.create 建任务目录，再 workspace/create {request:{path:<任务目录>}}，会话出现在桌面左栏以任务名命名的项目下。\n- 权限：session/create 和 session/prompt 可带 permission（read-only、workspace-write、danger-full-access）；create 不带时为 danger-full-access，prompt 不带时保持会话当前权限。等 runtime.changed 的 turn/end 再读结果；session/follow 用 maxMessages: 1。"
         }
       ]
     }

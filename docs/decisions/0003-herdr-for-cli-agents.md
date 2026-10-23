@@ -16,7 +16,9 @@ Herdr 以 headless 服务常驻（launchd 运行 `herdr server`）；用户需�
 
 ## 约定
 
-- Codex 用 `workspace.create` + `pane.run`，追问用 `codex exec resume`（`-C`、`-s` 放在 `resume` 之前，每轮重复 `-s danger-full-access`、`-m` 与 `-c model_provider="magpie"`）；Codex connector 仅列出线程和读取历史。
+- 改代码的任务用 Herdr 原生 `worktree.create` 建 `~/Projects/.worktrees/<repo>/<任务名>`，只读任务用主 checkout；主 checkout 不用来开发。
+- 每一轮在任务 workspace 里新开一个 tab，命令以 `echo $? > exit-N; exit` 结尾，tab 关闭（`pane_exited`、`pane.get` 返回 `pane_not_found`）就是这一轮结束；输入输出放 `~/Projects/_status/<任务名>/`。CLI 退出后 Herdr 立即释放该 pane 的 agent，所以不用 agent 状态判断结束（2026-10-23 实测）。
+- Codex 每轮用 `codex exec`，追问用 `codex exec resume`（`-C`、`-s` 放在 `resume` 之前，每轮重复 `-s danger-full-access`、`-m` 与 `-c model_provider="magpie"`）；Codex connector 仅列出线程和读取历史。
 - Claude Code 按派活技能中的完整无头示例新建与续接，每轮显式传 `--model deepseek/deepseek-flash`（可选第二模型 `--model minimax-code/MiniMax-M3.1-Flash`，同样经 magpie），`ANTHROPIC_BASE_URL` 须指向 magpie。不使用交互式 `agent.start kind claude`。
 - full access 参数由调用方传入：Codex 新建与续接每轮都用 `-s danger-full-access`；Claude Code 新建与 `--resume` 每轮都用 `--dangerously-skip-permissions`；agy 无头命令每轮都用 `--dangerously-skip-permissions`，交互式 `agent.start` 在 `args` 里传同一参数。实例 `context` 记录实际配置，connector 不强制。
 - 新建、跟进、续接、中断与桌面接手的完整步骤见[派活技能](../../skills/delegate-via-agenvo/SKILL.md)。

@@ -9,116 +9,108 @@ description: Hand work to another coding agent (DeepSeek Harness/DSH, Codex, Cla
 
 ## 步骤
 
-1. **发现**：调用 `search {"query": ""}`，列出实例和在线状态，读每个实例的 `context`。它写了这台机器、项目目录、默认权限，以及这个实例适合做什么。
-2. **找方法**：用共同术语搜索，例如 `search {"query": "dsh create work context"}`、`"dsh submit input"`、`"dsh read output"`、`"dsh interrupt"`、`"dsh list"`。选定方法后，带上 `includeSchema: true` 再搜一次，拿到参数 schema。不要凭记忆写方法名，不同 connector 的方法名不一样。
-3. **派活**：用 `execute` 调 `call({deviceId, instanceId}, method, params)`。
-   - 对方没有你的上下文。任务文本要写全：目标、仓库和路径、已知事实、约束、验收方式，以及是否允许提交、推送或开 PR。
-   - `project` 或 `cwd` 必须是对方机器上真实存在的目录。
-   - 新建会话后先显式选模型，再提交输入：DSH 用 `session/selectModel {request: {sessionId, provider, model, reasoningEffort}}`，返回的 `selected` 就是这个会话之后各轮使用的模型。每个会话各选一次，实例的全局默认保持原样。
-   - 派出后立刻记下会话 id（session、thread 或 conversation），连同桌面版里的查看入口一起告诉用户：
-     - DSH 实例：经 `workspace/create` 和带 workspaceId 的 `session/create` 新建的会话在桌面左栏对应项目下，报项目名和 sessionId。
-     - DSH headless：拿到 sessionId 立刻登记到桌面项目，报项目 title 和 sessionId（见「DSH headless 经 Herdr，在桌面项目下可见」）。
-     - Codex：报 thread_id，并给出 `codex://threads/<thread_id>`（见「Codex：官方 exec 经 Herdr 派活」）。
-     - Claude Code：报 `session_id`、cwd 和 Herdr pane。
-     - agy：报 `conversation_id`、cwd 和结果文件路径；Antigravity 桌面版看不到这类会话（见「选哪个 agent」），在 Herdr 里看或用 `agy --conversation <id>` 续接。
-     - 登记或链接没拿到时，如实报告，不说用户能在桌面版里看到。
-4. **跟进**：结果不会自动回来，要自己去读。
-   - 按固定节奏读：派出约 60 秒后读第一次，之后每 2–3 分钟读一次；约 10 分钟仍未完成就停止等待，把会话 id 和当前状态报告给用户。每次读取单独一次 `execute`，在调用之间等待。
-   - 先用便宜的状态判断是否完成，再读输出：DSH 读 `session/projections` 的 `turnOutline`，最后一项的 `response` 非空即本轮已结束；然后用 read output 类的方法（DSH `session/follow`）取结果。
-   - 需要追问或纠偏时，用 submit input 发到**同一个**会话，不要另开新会话。
-   - 方向错了就 interrupt，说明原因后重新交代。
-5. **验收**：输入"已接受"、agent"空闲"、轮次结束，都不等于任务完成。读到实际结果、对照第 3 步写下的验收方式核对之后，才算完成。最后给用户的汇报要写清：结论、对方做了什么、哪些没做或没验证、需要用户决定的事。
+1. **发现**：调用 `search {"query": ""}`，列出实例和在线状态，读每个实例的 `context`。它写了这台机器、home 与项目目录、默认权限，以及这个实例适合做什么。
+2. **找方法**：用共同术语搜索，例如 `"dsh create work context"`、`"herdr worktree"`、`"dsh read output"`；选定后带 `includeSchema: true` 再搜一次拿参数 schema。不要凭记忆写方法名。
+3. **派活**：任务目录按「任务目录」选；Herdr 里的 agent 每轮按「一轮一个 tab」跑；DSH 实例按 schema 调原生方法。
+   - 对方没有你的上下文。任务正文写全：目标、仓库和路径、已知事实、约束、验收方式，以及是否允许提交、推送或开 PR。
+   - 每个会话显式选模型：DSH 用 `session/selectModel {request: {sessionId, provider, model, reasoningEffort}}`；CLI 每轮在命令里带模型参数。实例和用户的全局默认保持原样。
+   - 派出后立刻告诉用户：任务名、任务目录、会话 id 和桌面查看入口——DSH 报项目名与 sessionId；Codex 报 thread_id 与 `codex://threads/<thread_id>`；Claude Code 报 `session_id`；agy 报 `conversation_id`；Herdr 里的任务另报 workspace 与轮次 pane。没拿到登记结果或链接时如实说，不说用户能在桌面里看到。
+4. **跟进**：结果不会自己回来。
+   - 有事件订阅就等事件（Herdr `pane_exited`、DSH `turn/end`）；没有就按节奏查：派出约 60 秒后第一次，之后每 2–3 分钟一次，约 10 分钟仍未结束就停下，把会话 id 和当前状态报告给用户。每次查询单独一次 `execute`。
+   - 事件不保证送达：connector 与 relay 之间的连接会断开重连（2026-10-23 在 relay 日志里 5 分钟见到 16 次 1006），断线期间的事件不会补发。所以有订阅也要保留轮询；收到 `agenvo.resync_required` 时重新读状态，不重新派活。
+   - 追问或纠偏发到**同一个**会话；方向错了就中断，说明原因后重新交代。
+5. **验收**：输入"已接受"、agent"空闲"、轮次结束，都不等于任务完成。读到实际结果、对照第 3 步的验收方式核对后才算完成。汇报写清：结论、对方做了什么、哪些没做或没验证、需要用户决定的事。
+
+出错时先读原生状态再决定是否重试。返回 `unknown` 的写操作可能已经执行（实测两种情况都有），不要直接重发。
 
 ## 选哪个 agent
 
-- 用户点名了就用点名的。
-- 没点名时默认用 Codex，经 Herdr pane 运行 `codex exec`。Codex 不可用（额度用尽、离线、报错）时改用 DSH：DSH 能力和 Codex 同级，能新建、追问、中断。
-- 要在桌面 app 里看得见、能手动接手：Codex 用下述线程链接；也可选 DSH 实例。
-- 要在 Antigravity 桌面版里看得见：目前做不到。桌面版（2.25.0）的 `@conversation` 只搜桌面自己的全文索引，`agy -p` 派出的 CLI 会话进不了这个索引（桌面日志报 `not found in any store`，2026-10-22 实测）。加 `--new-project` 只会在桌面侧栏生成一个空项目（显示 No conversations yet），会话本身仍不可见、`@conversation` 搜不到（2026-10-22 用户实测），所以派活不要加 `--new-project`。需要桌面可见时不要选 agy；agy 会话在 Herdr 终端里看，或用 `agy --conversation <id>` 续接。
-- 要长时间运行、不怕笔记本合盖：选第二台 Mac 上的实例。
-- Codex、Claude Code 和 agy 无头命令，以及 `dsh headless`，选 Herdr 实例。Codex、Claude Code 与 agy 无头命令按下文用 `pane.run`；要在终端里交互操作 agy 时用 `agent.start`、`agent.prompt`。读实例 `context` 里的首次信任目录处理；`dsh headless` 按下节「DSH headless 经 Herdr，在桌面项目下可见」执行。
-- 默认是 full access。用户没有要求时，不要降低权限，也不要替用户回答对方 agent 提出的业务决定问题。
+- 用户点名了就用点名的。没点名时默认 Codex（Herdr 里的 `codex exec`）；Codex 不可用（额度用尽、离线、报错）时用 DSH，DSH 与 Codex 同级，能新建、追问、中断。
+- 要在桌面 app 的**项目下**看到：用 DSH 实例。Codex 桌面版只把桌面自己建的线程（source `vscode`）归进项目，`codex exec` 线程不进任何项目（2026-10-23 核对 `~/.codex/.codex-global-state.json`：10 月 512 个 exec 线程 0 个归入项目），只能用 `codex://threads/<id>` 打开，打开后能接着发消息。
+- Antigravity 桌面版（2.25.0）调不出 `agy -p` 的会话，`--new-project` 只生成空项目；需要桌面可见时不选 agy。
+- 要长时间运行、不怕笔记本合盖：选常开那台 Mac 上的实例。
+- 默认 full access。用户没有要求时不要降权限，也不要替用户回答对方 agent 提出的业务决定问题。
 
-出错时，先读原生状态再决定是否重试。返回 `unknown` 的写操作不要直接重发。
+## 任务目录
 
-## DSH headless 经 Herdr，在桌面项目下可见
+- **改代码的任务**（新 feature、修 bug、开 PR）不进 `~/Projects/<repo>` 主 checkout：主 checkout 要停在默认分支，几个任务同时改一个仓库会互相踩。用 Herdr 原生 `worktree.create` 一步建好任务目录和它的终端工作区：路径 `<home>/Projects/.worktrees/<repo>/<任务名>`，分支 `agent/<任务名>`，基于 `origin/main`。第一轮命令先 `git fetch` 并快进到 `origin/main`（模板已含）。
+- **只读任务**（读代码、评审、回答问题）用 `workspace.create`，cwd 为主 checkout；它可能不在 main，回报里写明读的是哪个分支。
+- 任务名以仓库名开头（如 `koe-unset-keys`），桌面里看到的项目名、Herdr workspace 名都由它来。
+- 同一任务的追问回到同一个任务目录和同一个会话。PR 合并后 `worktree.remove {session, workspaceId}`（分支保留，`reap` 也会回收遗漏的 worktree）。
+- DSH 实例做改代码的任务：先用同机 Herdr 实例 `worktree.create`，再对 DSH 实例 `workspace/create {request: {path: <worktree 路径>}}`，会话出现在桌面左栏以任务名命名的项目下。
+- `codex exec --worktree` 会放进 `~/.codex/worktrees`，不在约定目录、Herdr 也看不到，不用。
 
-用户明确要 CLI 通道时，在目标机器的 Herdr workspace（cwd 为项目绝对路径）用 `pane.run` 启动，桌面 Host 与 DSH 实例仍须在线。
+## 一轮一个 tab（Herdr 里的 Codex、Claude Code、agy、dsh headless）
 
-1. 命令带 `--json`，例如 `dsh --profile headless --json "<任务>"; echo __EXIT=$?`。任务正文长时先写文件，经 stdin 的 `-` 传入：
+每一轮在任务 workspace 里新开一个 tab 运行，命令以 `echo $? > "$D/exit-<轮次>"; exit` 结尾：这一轮结束时 tab 关闭，Herdr 发 `pane_exited`。workspace 的第一个 pane（读取 pane）留着，用来读文件。每轮的输入输出都在 `~/Projects/_status/<任务名>/`：`brief-N.md`、`result-N.*`、`events-N.jsonl`、`stderr-N.log`、`exit-N`。
 
-   ```sh
-   dsh --profile headless --json - < "/tmp/<任务名>.txt"; echo __EXIT=$?
-   ```
+**派出与追问**：一次 `execute`，改上半部分即可。追问时 `n` 加 1，填上第 1 轮返回的 `workspaceId` 和 `cwd`，`agent` 换成续接参数（见下表）。Agenvo 的 `execute` 运行在 QuickJS 里，没有 `btoa`/`Buffer`，所以正文用下面的 `b64` 编码后经 shell 解码写文件，不经 shell 引号展开。`pane.run` 的命令上限 48000 字符，正文超过约 30 KB 时拆开或精简。
 
-2. 立即读取第一行 session 事件（`{"type":"session","sessionId":"<id>","cwd":"<cwd>"}`），记录 sessionId 和 cwd。
-3. 拿到 sessionId 立刻经同机 DSH 实例调用一次 connector 方法 `workspace/attachSession {path: <cwd>, sessionId}`，对应插件路由 `/bridge/workspace/attachSession`。CLI 运行中调用安全：登记不拿会话写锁。核对返回 `ok:true`，把返回的项目 title 和 sessionId 告诉用户：「DSH 桌面左栏项目『<title>』下」。失败时报告错误，不能声称已在项目下可见。
-4. 项目路径已存在时不改名，直接归入。新项目默认用 `basename(realpath)`；与已有项目 title 重名时用 `"<basename> · <短父路径>"`。短父路径取 realpath 的父目录，去掉开头 `/private`，把 home 前缀换成 `~`，再去掉开头 `/`。
-   例如 `/private/tmp/turing-koe-p1/koe` 重名时为 `koe · tmp/turing-koe-p1`，`$HOME/work/koe` 为 `koe · ~/work`；调用者也可显式给 title，仅用于新项目。
-5. 按前述节奏读输出，核对 `__EXIT=` 与业务结果；CLI 追问沿用 `--session-id <sessionId>`，每轮保留 `--profile headless --json`。
-6. **只在最后一轮 CLI 已退出、确定不再用 `--session-id` 追问后**，经 DSH 实例用 `session/rename {request:{sessionId, title:"[CLI] <任务名>"}}` 改名。rename 会让桌面 Host 拿住该会话写锁，之后 CLI 续写报 `already owned by an active write handle`（2026-10-22 隔离实测，等 45 秒仍未释放）。改名后的追问走桌面或 DSH 实例的 `session/prompt`。
-
-反向接管不可行：桌面/Host 先建的会话，CLI `--session-id` 报 `runs under agent preset "standard", which the one-shot runner does not compose`。需要 CLI 通道时从 headless 新建，再登记到项目。
-
-## Codex：官方 exec 经 Herdr 派活
-
-1. 在目标机器的 Herdr 实例（ID 从实例 context 获取）先调 `session.list`，再用它返回的名字调 `workspace.create {session: "<session 名>", cwd: "<项目绝对路径>"}`，取得 root pane。`cwd` 取实例 context 中 `~/Projects/<project>` 展开的绝对路径；其他机器使用其实际实例与路径。
-2. 在 root pane 用 `pane.run` 运行以下命令。先确保 `~/Projects/_status` 存在；任务名和每轮输出路径唯一，避免把上轮文件当作本轮完成。任务正文一律先写入文件，再用 `-` 从 stdin 传入，避免 shell 展开正文；`-o`、`-C` 和所有输出路径都加引号。每轮都显式带 `-m <模型>` 和 `-c model_provider="magpie"`，请求经本机 magpie：
-
-   ```sh
-   codex exec --json -o "$HOME/Projects/_status/<任务名>.md" -C "<cwd>" -s danger-full-access -m <模型> -c model_provider="magpie" - < "/tmp/<任务名>.txt" > "/tmp/<任务名>.jsonl"; echo __EXIT=$?
-   ```
-
-3. 启动后立即读 JSONL 第一行：`type: "thread.started"` 对应的 `thread_id` 就是线程 id，立刻记下并告诉用户，同时给出 `codex://threads/<thread_id>`。这次读 id 不代替结果轮询。
-4. 派出约 60 秒后第一次检查结果，之后每 2–3 分钟检查。用 `pane.read` 看到本轮 `__EXIT=` 行，或本轮 `-o` 文件已写出，就读取结果；`-o` 保存最后一条助手消息，过程和错误看 JSONL 的 `turn.completed`、`turn.failed`、`error`。文件写出不替代退出码与失败事件核对，业务验收仍按上面的步骤执行。
-5. 追问在同一 pane 用原 thread id，下一句同样先写入文件，任务文件和输出都用新一轮文件名。`resume` 子命令不接受 `-C`、`-s`，二者放在 `resume` 之前；每轮都重复 `-s danger-full-access`、`-m <模型>` 和 `-c model_provider="magpie"`：
-
-   ```sh
-   codex exec --json -o "$HOME/Projects/_status/<任务名>-2.md" -C "<cwd>" -s danger-full-access -m <模型> -c model_provider="magpie" resume <thread_id> - < "/tmp/<任务名>-2.txt" > "/tmp/<任务名>-2.jsonl"; echo __EXIT=$?
-   ```
-
-6. 中断用 `pane.send-keys` 发送 `["ctrl+c"]`。进程退出后 writer 已交还，用户在 Codex 桌面版打开 `codex://threads/<thread_id>`，已观察到完整历史、正常输入框，且没有 “This is open in another app” 占用横幅。exec 线程不一定出现在侧栏列表里，必须把链接告诉用户。
-
-目标机器的 Codex 实例只用 `thread/list`（`sourceKinds` 含 `exec`，`modelProviders: []`）与 `thread/read` 读取历史。不要用它的 `thread/start` / `turn/start` 派活：常驻共享 server 会继续占着 writer。线程 source 是 `exec`，`--thread-source vscode` 不改变它。
-
-## Claude Code：经 magpie 无头运行并显式选模型
-
-前提：目标机器上 Claude Code 的 `ANTHROPIC_BASE_URL`（`~/.claude/settings.json` 的 `env` 或环境变量）指向本机 magpie `http://127.0.0.1:3425`。下面的命令启动前先检查 3425，不在线就不启动 Claude Code，直接以 `__EXIT=97` 结束。
-
-与 Codex 一样先创建 Herdr workspace、取得 root pane，任务正文先写入文件，再用 `pane.run` 从 stdin 传入：
-
-```sh
-if nc -z 127.0.0.1 3425 2>/dev/null; then claude -p --dangerously-skip-permissions --model deepseek/deepseek-flash --output-format json < "/tmp/<任务名>.txt" > "/tmp/<任务名>.json"; echo __EXIT=$?; else echo "magpie 127.0.0.1:3425 不在线"; echo __EXIT=97; fi
+```js
+// ---- 改这里 ----
+const h = { deviceId: "<search 的 deviceId>", instanceId: "<Herdr 实例>" };
+const session = "<session.list 的名字>", home = "<实例 context 里的 home>";
+const repo = "<仓库>", task = "<仓库>-<任务>", write = true, n = 1, workspaceId = "", cwd0 = "";
+const brief = "<完整任务正文>";
+const agent = (D) => `codex exec --json -o "${D}/result-${n}.md" -C "$PWD" -s danger-full-access -m <模型> -c model_provider="magpie" - < "${D}/brief-${n}.md" > "${D}/events-${n}.jsonl" 2> "${D}/stderr-${n}.log"`;
+// ---- 以下照抄 ----
+const b64 = (s) => { const u = unescape(encodeURIComponent(s)), t = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"; let o = ""; for (let i = 0; i < u.length; i += 3) { const x = (u.charCodeAt(i) << 16) | ((u.charCodeAt(i + 1) || 0) << 8) | (u.charCodeAt(i + 2) || 0); o += t[(x >> 18) & 63] + t[(x >> 12) & 63] + (i + 1 < u.length ? t[(x >> 6) & 63] : "=") + (i + 2 < u.length ? t[x & 63] : "="); } return o; };
+const v = (r) => { if (r.error) throw new Error(JSON.stringify(r.error)); return r.result?.result ?? r.result; };
+let cwd = cwd0, wid = workspaceId, ws;
+if (n === 1) {
+  cwd = write ? `${home}/Projects/.worktrees/${repo}/${task}` : `${home}/Projects/${repo}`;
+  ws = v(await call(h, write ? "worktree.create" : "workspace.create", write
+    ? { session, cwd: `${home}/Projects/${repo}`, branch: `agent/${task}`, base: "origin/main", path: cwd, label: `${repo} · ${task}` }
+    : { session, cwd, label: `${repo} · ${task}` }));
+  wid = ws.workspace.workspace_id;
+}
+const tab = v(await call(h, "tab.create", { session, workspaceId: wid, cwd, label: `${task}-${n}` }));
+const fresh = n === 1 && write ? "git fetch -q origin && git merge -q --ff-only origin/main && " : "";
+const run = await call(h, "pane.run", { session, paneId: tab.root_pane.pane_id,
+  command: `D="$HOME/Projects/_status/${task}"; mkdir -p "$D" && printf %s '${b64(brief)}' | base64 -d > "$D/brief-${n}.md" && ${fresh}${agent("$D")}; echo $? > "$D/exit-${n}"; exit` });
+return { n, cwd, workspaceId: wid, readerPane: ws?.root_pane.pane_id, turnPane: tab.root_pane.pane_id, run: run.execution, error: run.error };
 ```
 
-新建与 `--resume` 每轮都保留 `--dangerously-skip-permissions`（默认 full access），并显式传 `--model`。Claude Code 只用两个模型，都经 magpie：首选 `deepseek/deepseek-flash`（即上下示例）；可选第二模型 `minimax-code/MiniMax-M3.1-Flash`，用时把示例里的 `--model deepseek/deepseek-flash` 换成 `--model minimax-code/MiniMax-M3.1-Flash`，续接沿用新建时的模型。新建与续接分别使用本节上方和下方的完整无头命令，不使用交互式 `agent.start kind claude`。
+`agent` 按目标换成下面一行（第 2 轮起加续接参数）：
 
-按同样的 60 秒、之后每 2–3 分钟节奏用 `pane.read` 跟进，看到 `__EXIT=` 后读取 JSON：结果在 `result`，会话 id 在 `session_id`，同时核对 `is_error` 和退出码。拿到会话 id 后记下并告诉用户，追问续接同一会话：
+| agent | `agent = (D) => ...` 的命令 | 第 2 轮起加 |
+| --- | --- | --- |
+| Codex | 见上 | `-c model_provider="magpie"` 后加 ` resume <thread_id>` |
+| Claude Code | `if nc -z 127.0.0.1 3425 2>/dev/null; then claude -p --dangerously-skip-permissions --model deepseek/deepseek-flash --output-format json < "${D}/brief-${n}.md" > "${D}/result-${n}.json" 2> "${D}/stderr-${n}.log"; else echo "magpie 127.0.0.1:3425 不在线" > "${D}/stderr-${n}.log"; (exit 97); fi` | `--resume <session_id>`，沿用新建时的 `--model` |
+| agy | `agy -p "$(cat "${D}/brief-${n}.md")" --output-format json --dangerously-skip-permissions --model <agy models 的 slug> > "${D}/result-${n}.json" 2> "${D}/stderr-${n}.log"` | `--conversation <conversation_id>` |
+| dsh headless | `dsh --profile headless --json - < "${D}/brief-${n}.md" > "${D}/events-${n}.jsonl" 2> "${D}/stderr-${n}.log"` | `--session-id <sessionId>` |
 
-```sh
-if nc -z 127.0.0.1 3425 2>/dev/null; then claude -p --dangerously-skip-permissions --resume <session_id> --model deepseek/deepseek-flash --output-format json < "/tmp/<任务名>-2.txt" > "/tmp/<任务名>-2.json"; echo __EXIT=$?; else echo "magpie 127.0.0.1:3425 不在线"; echo __EXIT=97; fi
+Claude Code 的模型只用 `deepseek/deepseek-flash`（首选）或 `minimax-code/MiniMax-M3.1-Flash`，都经本机 magpie（`ANTHROPIC_BASE_URL` 指向 `http://127.0.0.1:3425`）；不用交互式 `agent.start kind claude`。agy 只在需要终端里逐步操作、处理信任提示时用 `agent.start`/`agent.prompt`。
+
+**等这一轮结束**：
+- 推送：订阅 `runtime.changed {deviceId, instanceId: <Herdr 实例>, nativeTypes: ["pane_exited"]}`，整个实例一条常驻订阅即可；事件的 `threadId` 是轮次 pane id，按它对应任务。
+- 轮询：`pane.get {session, paneId: <轮次 pane>}` 返回 `pane_not_found` 就是这一轮结束了。
+- 不要用 `agent.get` 判断结束：CLI 退出后 Herdr 立即释放该 pane 的 agent，返回 `agent_not_found`。运行中它有用：Codex 轮次的 `agent_session.value` 就是 thread_id。
+
+**读结果**：两次 `execute`（`execute` 里不能等待）。先在读取 pane 打印，再 `pane.read {session, paneId: <读取 pane>, lines: 80}`：
+
+```js
+const D = `$HOME/Projects/_status/${task}`;
+await call(h, "pane.run", { session, paneId: readerPane,
+  command: `clear; D="${D}"; echo "EXIT-${n}=$(cat "$D/exit-${n}" 2>/dev/null)"; head -c 300 "$D/events-${n}.jsonl" "$D/result-${n}.json" 2>/dev/null | head -2; head -c 4000 "$D/result-${n}.md" 2>/dev/null` });
 ```
 
-中断同样用 `pane.send-keys ["ctrl+c"]`。
+第一行是退出码；Codex 的 thread_id 在 `events-1.jsonl` 第一行（`thread.started`），Claude Code 的 `session_id` 与 `is_error`、agy 的 `conversation_id` 与 `status` 在 `result-N.json`，dsh 的 sessionId 在 `events-1.jsonl` 第一行。退出码非 0 或结果缺失时读 `stderr-N.log` 与 events，如实报告。
 
-## Antigravity：agy 无头经 Herdr，结果在终端查看
+**中断**：`pane.send-keys {session, paneId: <轮次 pane>, keys: ["ctrl+c"]}`。zsh 会放弃这一行剩下的命令，tab 留在提示符；下一次 `execute` 用 `pane.run` 发 `echo 130 > "$HOME/Projects/_status/<任务名>/exit-<轮次>"; exit` 收尾。
 
-Antigravity 桌面版没有公开的派活接口，派活一律在 Herdr pane 里运行官方 CLI `agy`。CLI 会话存放在 `~/.gemini/antigravity-cli/conversations/`；桌面版（2.25.0）的 `@conversation` 只查 `~/.gemini/antigravity/conversation_summaries.db` 的 `conversations_fts`，搜不到 CLI 会话（2026-10-22 实测）。派活不加 `--new-project`，该参数只在桌面侧栏生成空项目。
+## DSH headless：登记到桌面项目
 
-1. 与 Codex 一样先创建 Herdr workspace、取得 root pane，任务正文先写入文件。用 `pane.run` 运行下面的命令，每轮显式传 `--model`（名称用 `agy models` 列出的 slug，例如 `gemini-4-argon-high`），并保留 `--dangerously-skip-permissions`：
+dsh headless 只在用户明确要 CLI 通道时用，桌面 Host 须在线。第一轮跑起来后，在读取 pane 里从 `events-1.jsonl` 第一行取 sessionId，经本机插件 socket 登记到桌面项目（不拿会话写锁，CLI 运行中调用安全）：
 
-   ```sh
-   agy -p "$(cat "/tmp/<任务名>.txt")" --output-format json --dangerously-skip-permissions --model <模型> > "/tmp/<任务名>.json" 2> "/tmp/<任务名>.err"; echo __EXIT=$?
-   ```
+```sh
+sid=$(head -1 "$HOME/Projects/_status/<任务名>/events-1.jsonl" | sed -n 's/.*"sessionId":"\([^"]*\)".*/\1/p'); curl -s --unix-socket "$HOME/.local/state/agent-fleet-dsh/native.sock" -H 'content-type: application/json' -d "{\"args\":{\"path\":\"<任务目录>\",\"sessionId\":\"$sid\"}}" http://dsh/bridge/workspace/attachSession
+```
 
-2. 按同样的 60 秒、之后每 2–3 分钟节奏用 `pane.read` 跟进，看到 `__EXIT=` 后读 JSON：`status` 为 `SUCCESS` 或 `ERROR`，结果在 `response`，会话 id 在 `conversation_id`，失败原因在 `error` 和 `.err` 文件。记下 `conversation_id` 并告诉用户。
-3. 追问续接同一会话，下一句同样先写文件：
+返回 `ok:true` 后告诉用户「DSH 桌面左栏项目『<title>』下」和 sessionId；失败如实报告。已有项目直接归入、不改名；新项目用目录名，与已有项目重名时加 ` · <短父路径>`。connector 方法 `workspace/attachSession` 要等 semantic-craft/agenvo#7 合并并 `release agenvo` 后才有。
 
-   ```sh
-   agy -p "$(cat "/tmp/<任务名>-2.txt")" --conversation <conversation_id> --output-format json --dangerously-skip-permissions --model <模型> > "/tmp/<任务名>-2.json" 2> "/tmp/<任务名>-2.err"; echo __EXIT=$?
-   ```
+最后一轮 CLI 退出、不再用 `--session-id` 追问后，才可经 DSH 实例 `session/rename {request:{sessionId, title:"[CLI] <任务名>"}}`：改名会让桌面 Host 拿住写锁，之后 CLI 续写报 `already owned by an active write handle`，追问改走 DSH 实例的 `session/prompt`。桌面先建的会话不能反过来用 CLI 续写。
 
-4. 查看：把 `conversation_id`、cwd 和结果文件路径告诉用户；用户在终端执行 `herdr` 查看，或用 `agy --conversation <id>` 续接。桌面版目前调不出 CLI 会话，不要让用户去桌面里找。
-5. 中断用 `pane.send-keys` 发送 `["ctrl+c"]`。
+## Codex 实例
 
-`agent.start kind agy` 的交互式用法只在需要终端里逐步操作、处理信任提示时使用；派活和拿结果用上面的无头命令。
+Codex 实例只用来读历史：`thread/list`（`sourceKinds` 含 `exec`、`modelProviders: []`）与 `thread/read`。不要用它的 `thread/start`、`turn/start` 派活：常驻共享 app-server 会一直占着 writer，桌面版打开时显示 “This is open in another app”。

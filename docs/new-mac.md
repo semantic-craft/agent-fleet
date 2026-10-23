@@ -26,19 +26,15 @@
 
 ## Codex 派活验收
 
-通过 Agenvo 调用 Herdr 实例的 `workspace.create`（`session` 取 `session.list` 返回值，`cwd` 为真实项目绝对路径），取得 root pane，再用 `pane.run` 执行。先确保 `~/Projects/_status` 存在，为本次验收选唯一文件名，把任务正文写入文件后经 stdin 传入：
+经 Agenvo 对这台机器的 Herdr 实例跑一次[派活技能](../skills/delegate-via-agenvo/SKILL.md#一轮一个-tabherdr-里的-codexclaude-codeagydsh-headless)里的 execute 脚本：`write = true`，仓库取 overlay 的 `check.project`，任务名形如 `<仓库>-acceptance-<时间>`，正文「只读验收：不要修改任何文件，只回复 OK。」。
 
-```sh
-printf '只回复 OK\n' > "/tmp/<验收名>.txt"; codex exec --json -o "$HOME/Projects/_status/<验收名>.md" -C "<项目绝对路径>" -s danger-full-access -m <模型> -c model_provider="magpie" - < "/tmp/<验收名>.txt" > "/tmp/<验收名>.jsonl"; echo __EXIT=$?
-```
+1. 返回的任务目录在 `~/Projects/.worktrees/<仓库>/<任务名>`，`pane.get` 轮次 pane 最终返回 `pane_not_found`。
+2. 读取 pane 打印 `EXIT-1=0`，`result-1.md` 为 `OK`，`events-1.jsonl` 第一行是 `thread.started`，记下 `thread_id`。
+3. 同一脚本 `n = 2`、填回 `workspaceId` 与 `cwd`、`agent` 加 ` resume <thread_id>` 再跑一轮，确认 `EXIT-2=0`、同一 `thread_id`。
+4. 在 Codex Desktop 打开 `codex://threads/<thread_id>`：完整两轮历史、正常输入框、没有 “This is open in another app” 横幅。exec 线程不进桌面版的项目列表，不以侧栏作为标准。
+5. `worktree.remove` 删掉验收 worktree，`git branch -D agent/<任务名>`，删掉 `~/Projects/_status/<任务名>/`。
 
-从 JSONL 的 `thread.started` 记录取得 `thread_id`；用 `pane.read` 确认 `__EXIT=0`，并确认 `-o` 文件内容为 `OK`。随后在同一 pane 续接一次（`-C`、`-s` 放在 `resume` 之前，每轮重复 `-s`、`-m`、`-c model_provider="magpie"`）：
-
-```sh
-codex exec --json -o "$HOME/Projects/_status/<验收名>-2.md" -C "<项目绝对路径>" -s danger-full-access -m <模型> -c model_provider="magpie" resume <thread_id> - < "/tmp/<验收名>.txt" > "/tmp/<验收名>-2.jsonl"; echo __EXIT=$?
-```
-
-再次确认 `__EXIT=0` 和本轮结果 `OK`，记录同一线程的两轮结果。进程退出后在 Codex Desktop 打开 `codex://threads/<thread_id>`，检查完整历史、正常输入框和没有 “This is open in another app” 占用横幅；不要求线程出现在侧栏。
+`node scripts/fleet.mjs check --dispatch --instance <herdr 实例>` 不调模型，只验同一套 tab、退出与回读机制，可作为每次改动后的快速回归。
 
 ## 机器角色
 

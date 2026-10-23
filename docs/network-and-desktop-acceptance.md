@@ -17,11 +17,13 @@ Agenvo connector 主动通过 WSS `/connect` 连接 relay；客户端的 HTTPS `
 
 ### 重连可观察性
 
-检查时四份 `status.json` 均为 `online`、`lastError=""`、版本 `0.2.0`；它们是最近状态，不是连接历史。四个运行进程的 stdout/stderr 均指向 `/dev/null`，launchd 未配置日志文件。现有三个 Surge 日志没有 relay 名称记录。因此没有可复核的实际断连次数、重连耗时或事件投递历史，不能声称从未断线。
+connector 的 stdout/stderr 仍指向 `/dev/null`，本机没有连接历史；`status.json` 只是最近状态。relay 一侧可以只读观察：在 agenvo checkout 里运行 `npx wrangler tail --config wrangler.local.json --format json`，Durable Object 会为每次断开记一条 `Connector <deviceId> disconnected with code <code>`。查看时不改任何配置。
 
-源码有 30 秒心跳、超过 90 秒未收到 pong 时断开，以及带抖动的指数重连等待；401/403/426 和指定关闭码进入需处理状态。这是实现行为，不是本次恢复实测。未来若要长期监测，最小改进是另行批准并配置有轮转、脱敏策略的 connector stderr 留存；未为日志留存改 launchd，也未主动断网；下述获准的 ZCode 迁移仅重载接收端和 dispatch connector。
+2026-10-23 17:10–17:15 的样本：relay 记到 16 次 `1006`（未收到关闭帧），覆盖两台 Mac 的全部 connector（主力 Mac 的 codex、dsh、herdr、dispatch，第二台 Mac 的 dsh），每个 connector 约 1–3 分钟一次。同期在主力 Mac 上每 15 秒用 `lsof` 记录各 connector 到 relay 的 TCP 连接（都经同一个 `198.18.*:443`）：herdr 换了 2 次本地端口，codex 1 次，dsh 一次没换。relay 记到的主力 Mac dsh 断开（6 次）多于本机实际重连，原因未查明：可能是网络路径上的中间层，也可能有别处的进程用同一设备身份连接。`/api/admin/state` 只给出每台设备当前的 `epoch` 与 `versionObservedAt`，几分钟内全部更新过，说明 relay 侧确实在频繁重建连接。
 
-最小建议是暂不调整网络。当前本机 Surge 暂停，修改它的 relay 规则未必影响现有路径；先在实际接管流量的网关或获准的路由诊断中核实 WSS 出口，只有出现连接或重连问题才讨论针对 relay 主机的规则。ZCode 同机回环迁移已另行获得明确批准并完成，见下节。不要为主动事件唤醒开 Mac 入站端口。
+影响：断线时进行中的调用返回 `execution_unknown`，之后几秒返回 `device_offline`；同日经 relay 实测，同样的 `pane.run` 既出现过返回 `unknown` 但命令已执行，也出现过 `unknown` 且命令没送达。断线期间的事件不补发。派活技能因此要求：`unknown` 的写操作先读原生状态再决定，订阅事件也保留轮询。源码行为不变：30 秒心跳、超过 90 秒未收到 pong 时断开、带抖动的指数重连。
+
+重连问题已经出现（见上），下一步由用户决定：先在实际接管流量的网关（第二台 Mac 上的 Surge）或获准的路由诊断中核实 relay 主机的 WSS 出口，再讨论针对 relay 主机的规则（例如固定出口或直连）。本仓库不替用户改网关配置。ZCode 同机回环迁移已另行获得明确批准并完成，见下节。不要为主动事件唤醒开 Mac 入站端口。
 
 只读结构检查（不输出主机、规则值、URL 或认证信息）：
 

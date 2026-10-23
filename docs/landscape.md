@@ -12,6 +12,8 @@
 
 属于本架构的 launchd 任务：`io.agenvo.connector.*`（各 connector）、`dev.xw.*`、`fleet.mjs launchd` 按 `templates/launchd/` 生成的任务（标签前缀取 `LABEL_PREFIX`，默认 `dev.fleet`）。旧 Codex worker `io.agent-fleet.codex-runtime` 已退役（2026-10-22）：主力 Mac 上用 `launchctl bootout` 卸载，plist 移到 `~/Library/LaunchAgents/_retired/io.agent-fleet.codex-runtime.plist.retired-20261022`；stateDir `~/.local/state/agent-fleet-codex/`（含 `service.lock`、`runtime.json`、`native.sock`）、配置 `~/.config/agent-fleet/codex-runtime.json`、发布目录和日志原样保留，锁文件不删。退役依据：没有调用方（agenvo 的 codex 实例连 `dev.xw.codex-app-server`，Codex 派活走 Herdr 里的 `codex exec`）；旧进程和它的 worker 均已退出，没有进程持有锁或 socket；卸载时没有重启其他 connector。
 
+ZCode 不再派活（#34 起仓库里没有它的接收端代码），但主力 Mac 上 `dev.semantic-craft.zcode-dispatch` 接收端（从 `~/.local/share/agent-fleet/releases/zcode/` 运行）和 dispatch connector 仍在运行，relay 上 `zcode` 实例仍已批准、助手 `search` 仍能看到它，overlay 已不列它（`fleet.mjs check` 会打 WARNING），部署的 `desktop-agents-autostart` 仍会打开 ZCode。是否按 [maintenance](maintenance.md) 的"移除组件"停掉并在 relay 撤销，由用户决定。
+
 移动或删除任何目录前，先查 launchd（`~/Library/LaunchAgents`）、`~/.config`、各 app 的配置以及其他仓库对它的引用。没有引用不等于没人用：当天还有提交的仓库，说明有其他 agent 正在维护它。
 
 | 目录 | 是什么 | 状态 |
@@ -26,4 +28,6 @@
 - 每个仓库在 `~/Projects/<仓库名>` 只有一份克隆：目录名与 GitHub 仓库名一致，工作区干净，停在默认分支（通常是 `main`），跟踪 `origin`，用 `git pull --ff-only` 跟上远端。
 - 别人的代码按关系分放：上游是别人的 fork 或封装放 `~/Projects/_forks/<仓库名>`，只读参考克隆放 `~/Projects/_ref/<仓库名>`。
 - 开发在临时 worktree 里做，例如 `git worktree add ~/Projects/.worktrees/<仓库名>/<分支> -b <分支> origin/main`。分支合并后，`git worktree remove <路径>`（含 submodule 的 worktree 要加 `--force`，先确认 submodule 也干净）再 `git worktree prune`，用 `git branch -d <分支>` 删本地分支，`git fetch --prune` 清掉远端已删的跟踪分支。squash 合并的分支 `git branch -d` 认不出已合并，先用 `gh pr list --head <分支> --state merged --json number,headRefOid` 核对 PR 已合并，且 `headRefOid` 与 `git rev-parse <分支>` 一致，再决定是否删除。
-- `~/Projects` 只放 git 仓库和 `_forks/`、`_ref/`、`.worktrees/`、`_status/`（派活结果文件）这几个容器；其他产物、验收证据、交接材料等非仓库内容放在 `~/Projects` 之外。仓库在机器之间经 git 远端同步。
+- `~/Projects` 只放 git 仓库和 `_forks/`、`_ref/`、`.worktrees/`、`_status/` 这几个容器，外加 `~/Projects/README.md` 定的 `_artifacts/`（本机报告与验收证据）和 `_shared-work/`（跨机同步的非 Git 产物）。仓库在机器之间经 git 远端同步。
+- `_status/` 只放经 Agenvo 派出的任务：一个任务一个目录 `_status/<任务名>/`，放这个任务各轮的 `brief-N.md`、`result-N.*`、`events-N.jsonl`、`stderr-N.log`、`exit-N`（见[派活技能](../skills/delegate-via-agenvo/SKILL.md)）。调研报告、截图等放 `_artifacts/<项目>/<任务>/`，不属于任何项目的放 `~/agent-tasks/`。
+- 派出去改代码的任务在 `.worktrees/<仓库>/<任务名>/`（Herdr `worktree.create`），不在主 checkout 里开发，也不另做 `/tmp` 克隆。
