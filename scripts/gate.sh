@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # 合并门禁（只读）：gate.sh <owner/repo> <pr> <sha>
 # 离线正文检查：gate.sh --check-body <文件>
+# PR 正文引用 lessons 条目标题时须用描述式，勿粘贴含墓碑字面的标题。
 # 盒上 /workspace/status/gate.sh 是从本文件拷贝的副本，改动先改本文件再拷贝
 # 只用 gh api graphql 读取；不合并、不写入、不打印 token。
 set -uo pipefail
