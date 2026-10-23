@@ -17,7 +17,7 @@ description: Hand work to another coding agent (DeepSeek Harness/DSH, Codex, Cla
    - 派出后立刻告诉用户：任务名、任务目录、会话 id 和桌面查看入口——DSH 报项目名与 sessionId；Codex 报 thread_id 与 `codex://threads/<thread_id>`；Claude Code 报 `session_id`；agy 报 `conversation_id`；Herdr 里的任务另报 workspace 与轮次 pane。没拿到登记结果或链接时如实说，不说用户能在桌面里看到。
 4. **跟进**：结果不会自己回来。
    - 有事件订阅就等事件（Herdr `pane_exited`、DSH `turn/end`）；没有就按节奏查：派出约 60 秒后第一次，之后每 2–3 分钟一次，约 10 分钟仍未结束就停下，把会话 id 和当前状态报告给用户。每次查询单独一次 `execute`。
-   - 事件不保证送达：connector 与 relay 之间的连接会断开重连（2026-10-23 在 relay 日志里 5 分钟见到 16 次 1006），断线期间的事件不会补发。所以有订阅也要保留轮询；收到 `agenvo.resync_required` 时重新读状态，不重新派活。
+   - 事件不保证送达：connector 与 relay 之间的连接会断开重连（2026-10-23 实测：relay 主机走机场线路时 31.5 分钟断 30 次，网关规则改走直连后 31.6 分钟断 1 次），断线期间的事件不会补发。所以有订阅也要保留轮询；收到 `agenvo.resync_required` 时重新读状态，不重新派活。
    - 追问或纠偏发到**同一个**会话；方向错了就中断，说明原因后重新交代。
 5. **验收**：输入"已接受"、agent"空闲"、轮次结束，都不等于任务完成。读到实际结果、对照第 3 步的验收方式核对后才算完成。汇报写清：结论、对方做了什么、哪些没做或没验证、需要用户决定的事。
 

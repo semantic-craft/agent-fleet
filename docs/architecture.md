@@ -34,7 +34,7 @@ Codex、Claude Code、agy 与 dsh headless 都在 Herdr 里跑，派活方式相
 
 Codex 进程退出后交还 writer，用户通过 `codex://threads/<thread_id>` 在桌面版继续；Codex 桌面版只把桌面自己建的线程归进项目，exec 线程不出现在项目下。Codex connector 只用 `thread/list`（`sourceKinds` 含 `exec`、`modelProviders: []`）和 `thread/read` 读取历史。要在桌面项目下看到任务，派给 DSH：`agenvo-dsh` 调 DSH 桌面版自己的 `workspace/create`、`session/create`、`session/prompt`、`session/follow` 等，能列出并续写用户手动开的会话，事件是原生的 `turn/start`、`turn/end`。完整命令与 execute 脚本见[派活技能](../skills/delegate-via-agenvo/SKILL.md)。
 
-connector 与 relay 之间是会断开重连的长连接（2026-10-23 的 relay 日志 5 分钟内记到 16 次 1006，见[网络与桌面验收](network-and-desktop-acceptance.md#重连可观察性)）。断线时进行中的调用返回 `unknown`、事件不补发，所以派活方以原生状态和 `_status/<任务名>/` 里的文件为准，事件只用来提早醒来。
+connector 与 relay 之间是会断开重连的长连接（2026-10-23 实测：relay 主机走机场线路时 31.5 分钟断 30 次，网关规则改走直连后 31.6 分钟断 1 次，见[网络与桌面验收](network-and-desktop-acceptance.md#重连可观察性)）。断线时进行中的调用返回 `unknown`、事件不补发，所以派活方以原生状态和 `_status/<任务名>/` 里的文件为准，事件只用来提早醒来。
 
 ## 信任边界
 

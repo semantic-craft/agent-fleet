@@ -36,7 +36,7 @@ connector 的 stdout/stderr 仍指向 `/dev/null`，本机没有连接历史。�
 
 影响：出口失效到下一次心跳之间（最多 30 秒），relay 仍把调用写进孤儿连接，命令送不到，10 秒后返回 `execution_unknown`；connector 重连时，旧连接上进行中的调用一律结束为 `execution_unknown`（可能已执行）；新连接 hello 完成前（约 0.1–0.3 秒）返回 `device_offline`；断线期间的事件不补发。派活技能因此要求：`unknown` 的写操作先读原生状态再决定，订阅事件也保留轮询。源码行为不变：30 秒心跳、超过 90 秒未收到 pong 时断开、带抖动的指数重连。
 
-下一步由用户决定：在 network-profiles 仓库的 Atlas profile 里给 relay 主机加一条规则，不让它走机场线路（首选 `DIRECT`，不理想再试自建美国机的 `Atlas-US`），用该仓库的部署脚本下发，再按上面三处来源复测 30 分钟，对比本次基线（31.5 分钟 30 次）。本仓库不替用户改网关配置。ZCode 同机回环迁移已另行获得明确批准并完成，见下节。不要为主动事件唤醒开 Mac 入站端口。诊断报告与复测脚本在 `~/Projects/_artifacts/agent-fleet/relay-1006-diagnosis/`。
+处理：2026-10-23 用户批准后，network-profiles 的 Atlas profile 给 relay 主机加了 `DIRECT` 规则（`[Rule]` 第一条），18:51 经该仓库的部署脚本下发。部署时 Surge 重载让 5 个 connector 同时断开一次，2 秒内全部重连到直连。按上面三处来源复测 18:51–19:23（31.6 分钟）：本机断线 1 次，与心跳无关（基线 31.5 分钟 30 次）；6 次 `epoch` 变化里 5 次是那次重载，全部对得上本机重连。直连落在 Cloudflare 欧洲接入点，复用连接往返约 225–295 ms，比机场线路慢，但长连接稳定。直连将来变差时，按同样方法试自建美国机的 `Atlas-US`，只看本机重连与 `epoch`，不看 tail。本仓库不替用户改网关配置。ZCode 同机回环迁移已另行获得明确批准并完成，见下节。不要为主动事件唤醒开 Mac 入站端口。诊断报告与复测脚本在 `~/Projects/_artifacts/agent-fleet/relay-1006-diagnosis/`。
 
 只读结构检查（不输出主机、规则值、URL 或认证信息）：
 
