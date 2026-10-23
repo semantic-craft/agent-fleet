@@ -12,7 +12,7 @@
 
 属于本架构的 launchd 任务：`io.agenvo.connector.*`（各 connector）、`dev.xw.*`、`fleet.mjs launchd` 按 `templates/launchd/` 生成的任务（标签前缀取 `LABEL_PREFIX`，默认 `dev.fleet`）。旧 Codex worker `io.agent-fleet.codex-runtime` 已退役（2026-10-22）：主力 Mac 上用 `launchctl bootout` 卸载，plist 移到 `~/Library/LaunchAgents/_retired/io.agent-fleet.codex-runtime.plist.retired-20261022`；stateDir `~/.local/state/agent-fleet-codex/`（含 `service.lock`、`runtime.json`、`native.sock`）、配置 `~/.config/agent-fleet/codex-runtime.json`、发布目录和日志原样保留，锁文件不删。退役依据：没有调用方（agenvo 的 codex 实例连 `dev.xw.codex-app-server`，Codex 派活走 Herdr 里的 `codex exec`）；旧进程和它的 worker 均已退出，没有进程持有锁或 socket；卸载时没有重启其他 connector。
 
-ZCode 不再派活（#34 起仓库里没有它的接收端代码），但主力 Mac 上 `dev.semantic-craft.zcode-dispatch` 接收端（从 `~/.local/share/agent-fleet/releases/zcode/` 运行）和 dispatch connector 仍在运行，relay 上 `zcode` 实例仍已批准、助手 `search` 仍能看到它，overlay 已不列它（`fleet.mjs check` 会打 WARNING），部署的 `desktop-agents-autostart` 仍会打开 ZCode。是否按 [maintenance](maintenance.md) 的"移除组件"停掉并在 relay 撤销，由用户决定。
+ZCode 不再派活（#34 起仓库里没有它的接收端代码），但主力 Mac 上 `dev.semantic-craft.zcode-dispatch` 接收端（从 `~/.local/share/agent-fleet/releases/zcode/` 运行）和 dispatch connector 仍在运行，relay 上 `zcode` 实例仍已批准、助手 `search` 仍能看到它，overlay 已不列它（`fleet.mjs check` 会打 WARNING），部署的 `desktop-agents-autostart` 仍会打开 ZCode。状态：**移除待定**——用户 2026-10-23 决定暂时保留；要移除时按 [maintenance](maintenance.md) 的"移除组件"停掉并在 relay 撤销，在那之前不要停它的服务或撤销实例。
 
 移动或删除任何目录前，先查 launchd（`~/Library/LaunchAgents`）、`~/.config`、各 app 的配置以及其他仓库对它的引用。没有引用不等于没人用：当天还有提交的仓库，说明有其他 agent 正在维护它。
 
