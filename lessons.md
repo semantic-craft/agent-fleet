@@ -267,8 +267,8 @@
 
 **`unknown` 不重发：先读原生状态（`pane.get`、exit 文件、`worktree.list`、`session/list`）再决定；订阅事件也保留轮询。**
 
-- 起因与后果：2026-10-23 relay 日志 5 分钟内记到 16 次 connector 断开（1006），两台 Mac 的全部 connector 都有。断线时进行中的调用返回 `execution_unknown`，之后几秒返回 `device_offline`；同日实测同样的 `pane.run`，一次返回 `unknown` 但命令已执行，一次 `unknown` 且命令没送达。断线期间的事件不补发。
-- 修复与证据：技能、operator 与 dot-watcher 写明 unknown 与 `agenvo.resync_required` 的处理；`check --dispatch` 的 Herdr 一项容忍连续 3 次查询失败；证据与观察方法见[网络与桌面验收](docs/network-and-desktop-acceptance.md#重连可观察性)。断开的根因是 relay 主机走了机场线路，出口到 Cloudflare 的路由不稳，不是同一设备身份另有连接；relay 的 `1006` 多半是更早断掉的孤儿连接被清理，不代表当时断线（2026-10-23 17:49–18:21 实测）。
+- 起因与后果：2026-10-23 两台 Mac 的全部 connector 频繁断线重连（17:49–18:21 实测 31.5 分钟 30 次；relay 日志里的 `1006` 是滞后的孤儿连接清理，不能当断线计数）。断线时进行中的调用返回 `execution_unknown`，之后几秒返回 `device_offline`；同日实测同样的 `pane.run`，一次返回 `unknown` 但命令已执行，一次 `unknown` 且命令没送达。断线期间的事件不补发。
+- 修复与证据：技能、operator 与 dot-watcher 写明 unknown 与 `agenvo.resync_required` 的处理；`check --dispatch` 的 Herdr 一项容忍连续 3 次查询失败；证据与观察方法见[网络与桌面验收](docs/network-and-desktop-acceptance.md#重连可观察性)。断开的根因是 relay 主机走了机场线路，出口到 Cloudflare 的路由不稳，不是同一设备身份另有连接；relay 的 `1006` 多半是更早断掉的孤儿连接被清理，不代表当时断线（2026-10-23 17:49–18:21 实测）。用户批准后网关规则让 relay 主机直连，18:51–19:23 复测 31.6 分钟断 1 次（基线 31.5 分钟 30 次）。
 - 正确做法：派活脚本返回 `unknown` 时，按任务名查 worktree、轮次 pane 和 `_status/<任务名>/`，确认没执行才重派。
 - 验证点：按[网络与桌面验收](docs/network-and-desktop-acceptance.md#重连可观察性)数本机 `status.json` 的重连次数和 `/api/admin/state` 的 `epoch` 变化，不数 tail 里的 `1006`；网关规则调整后取 30 分钟样本，对比 2026-10-23 基线（31.5 分钟 30 次）。
 - 复发记录：Seen 1x (2026-10-23)。
