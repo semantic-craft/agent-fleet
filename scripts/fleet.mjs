@@ -351,6 +351,7 @@ function upstream() {
   const cfg = config();
   const dir = expandHome(cfg.agenvo?.checkout ?? "~/Projects/_forks/agenvo");
   const git = (...a) => execFileSync("git", ["-C", dir, ...a], { encoding: "utf8" }).trim();
+  if (!cfg.agenvo?.remote || !cfg.agenvo?.branch) throw new Error("fleet config: agenvo.remote and agenvo.branch are required for upstream");
   // Compare the configured fork branch, not whatever the checkout has checked out (it may sit on main).
   const head = forkRef(git("remote", "-v"), cfg.agenvo.remote, cfg.agenvo.branch);
   git("fetch", "-q", head.split("/")[0]);
