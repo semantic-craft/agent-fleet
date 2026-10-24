@@ -6,6 +6,10 @@ export const ROUTE_PROFILES = Object.freeze({
     status: 'verified-marker-only', evidence, expected: selection('ptc'),
     scope: 'Exact marker, read-only, zero observed tool events; no tool execution or general workload claim.',
   }),
+  'sol-high-ptc-marker-v1': Object.freeze({
+    status: 'verified-marker-only', evidence, expected: selection('ptc', 'high'),
+    scope: 'Exact marker, read-only, zero observed tool events; no tool execution or general workload claim.',
+  }),
   'sol-high-standard-v1': Object.freeze({
     status: 'known-failure', evidence, expected: selection('standard', 'high'),
     scope: 'Empty max-tokens result in a fresh standard/high marker session; not a universal model limitation. Revalidate after upgrades.',

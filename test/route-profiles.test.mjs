@@ -70,3 +70,18 @@ test('external preparation enforces profile without submitting or changing the s
   const blocked = fixture(); const rejected = await blocked.runner.prepareExternalRun(task(), context({ routeProfile: 'sol-low-standard-v1' }));
   assert.equal(rejected.dispatchAllowed, false); assert.equal(rejected.descriptor, undefined); assert.deepEqual(blocked.calls, []);
 });
+
+for (const tool of [false, true]) test(`high PTC profile validates matching high header and zero tool events (${tool})`, async () => {
+  const high = ROUTE_PROFILES['sol-high-ptc-marker-v1'].expected;
+  assert.equal(high.reasoningEffort, 'high'); assert.equal(high.preset, 'ptc');
+  const selection = { ...model, reasoningEffort: 'high' };
+  const f = fixture({ selected: selection, header: selection, tool });
+  const result = await f.runner.run(task(), context({ expected: high, routeProfile: 'sol-high-ptc-marker-v1' }));
+  assert.equal(result.status, tool ? 'failed' : 'success');
+  assert.equal(result.evidence.toolEvents, tool ? 1 : 0);
+});
+test('high PTC profile rejects low runtime before sending and never selects a model', async () => {
+  const f = fixture();
+  const result = await f.runner.run(task(), context({ expected: ROUTE_PROFILES['sol-high-ptc-marker-v1'].expected, routeProfile: 'sol-high-ptc-marker-v1' }));
+  assert.equal(result.code, 'model_drift'); assert.deepEqual(f.calls, ['session/projections']);
+});
