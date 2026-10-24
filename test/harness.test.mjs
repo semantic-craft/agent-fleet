@@ -186,3 +186,126 @@ test('session-wide cancellation requires exclusive caller ownership', async () =
   const f = fixture({ events: transcript().slice(0, 3) }); await f.runner.run(task(), context());
   assert.equal((await f.runner.run(task(), context(), { requestCancellation: true })).code, 'exclusive_session_required');
 });
+test('empty projection inherits read-only catalog default; never selects model', async () => {
+  const f = fixture({ onCall: m => {
+    if (m === 'session/projections') return { result: { values: { agentPreset: 'standard', modelSelection: { next: null, lastUsed: null } } } };
+    if (m === 'session/modelCatalog') return { result: { default: model } };
+  } });
+  assert.equal((await f.runner.run(task(), context())).status, 'success');
+  assert.equal(f.calls.filter(c => c.method === 'session/modelCatalog').length, 2);
+  assert.ok(f.calls.filter(c => c.method === 'session/modelCatalog').every(c => c.request === undefined));
+  assert.equal(f.calls.filter(c => c.method === 'session/selectModel').length, 0);
+});
+test('populated selection does not consult catalog; missing default blocks', async () => {
+  const f = fixture(); await f.runner.run(task(), context());
+  assert.equal(f.calls.filter(c => c.method === 'session/modelCatalog').length, 0);
+  const g = fixture({ onCall: m => {
+    if (m === 'session/projections') return { result: { values: { modelSelection: { next: null, lastUsed: null } } } };
+    if (m === 'session/modelCatalog') return { result: {} };
+  } });
+  assert.equal((await g.runner.run(task(), context())).code, 'configuration_unavailable');
+});
+test('external preparation reserves original baseline and never submits locally', async () => {
+  let externalSent = false, baselines = 0;
+  const events = transcript();
+  const f = fixture({ onCall: (m, request) => {
+    if (m === 'session/follow') { baselines++; return { result: { cursor: externalSent ? 5 : 0 } }; }
+    if (m === 'session/page') return { result: { records: events.filter(e => e.seq < request.beforeSeq).slice(-1).map(event => ({ event })) } };
+  } });
+  const prepared = await f.runner.prepareExternalRun(task(), context());
+  assert.equal(prepared.result.accepted, false); assert.equal(prepared.dispatchAllowed, true);
+  assert.equal(prepared.descriptor.method, 'session/prompt');
+  externalSent = true;
+  const repeated = await f.runner.prepareExternalRun(task(), context());
+  assert.equal(repeated.dispatchAllowed, false); assert.deepEqual(repeated.descriptor, prepared.descriptor); assert.equal(baselines, 1);
+  assert.equal((await f.runner.run(task(), context())).status, 'success');
+  assert.equal(f.calls.filter(c => c.method === 'session/prompt').length, 0);
+});
+test('external submission unknown stays unaccepted and never resends', async () => {
+  const f = fixture(); await f.runner.prepareExternalRun(task(), context());
+  const result = await f.runner.run(task(), context());
+  assert.equal(result.accepted, false); assert.equal(result.status, 'timeout');
+  assert.equal(f.calls.filter(c => c.method === 'session/prompt').length, 0);
+  assert.equal((await f.runner.prepareExternalRun(task({ objective: 'different' }), context())).result.code, 'idempotency_conflict');
+});
+test('external rpc input proves accepted without claiming completed', async () => {
+  let externalSent = false;
+  const events = transcript().slice(0, 2);
+  const f = fixture({ onCall: (m, request) => {
+    if (m === 'session/follow') return { result: { cursor: externalSent ? 2 : 0 } };
+    if (m === 'session/page') return { result: { records: events.filter(e => e.seq < request.beforeSeq).slice(-1).map(event => ({ event })) } };
+  } });
+  await f.runner.prepareExternalRun(task(), context()); externalSent = true;
+  const r = await f.runner.run(task(), context()); assert.equal(r.accepted, true); assert.equal(r.completed, false);
+});
+test('inherited catalog selection becoming explicit is not configuration drift', async () => {
+  let projections = 0;
+  const f = fixture({ onCall: m => {
+    if (m === 'session/projections' && ++projections === 1) return { result: { values: { agentPreset: 'standard', modelSelection: { next: null, lastUsed: null } } } };
+    if (m === 'session/modelCatalog') return { result: { default: { ...model, displayLabel: 'synthetic label' } } };
+  } });
+  assert.equal((await f.runner.run(task(), context())).status, 'success');
+});
+test('wrong catalog default blocks reservation before any prompt', async () => {
+  const f = fixture({ onCall: m => {
+    if (m === 'session/projections') return { result: { values: { agentPreset: 'standard', modelSelection: { next: null, lastUsed: null } } } };
+    if (m === 'session/modelCatalog') return { result: { default: { ...model, model: 'other' } } };
+  } });
+  assert.equal((await f.runner.prepareExternalRun(task(), context())).result.code, 'model_drift');
+  assert.equal(f.calls.filter(c => c.method === 'session/prompt').length, 0);
+});
+
+test('private dispatch descriptor is separate from sanitized result and recovery journal', async () => {
+  const journal = new Map();
+  const adapter = new DshProviderAdapter(async method => ({ result: method === 'session/projections' ? { values: { agentPreset: 'standard', modelSelection: { next: model } } } : { cursor: 0 } }));
+  const runner = new HarnessRunner(adapter, { journal });
+  const prepared = await runner.prepareExternalRun(task({ objective: 'PRIVATE_SYNTHETIC_OBJECTIVE' }), context());
+  assert.equal(prepared.descriptor.params.request.content[0].text, 'PRIVATE_SYNTHETIC_OBJECTIVE');
+  assert.equal(JSON.stringify(prepared.result).includes('PRIVATE_SYNTHETIC_OBJECTIVE'), false);
+  assert.equal(JSON.stringify([...journal]).includes('PRIVATE_SYNTHETIC_OBJECTIVE'), false);
+});
+test('native message window may contain multiple contiguous administrative events', async () => {
+  const events = transcript(); events.splice(3, 0, event(4, 'request/context', {}), event(5, 'session/title', {})); events[5].seq = 6; events[6].seq = 7;
+  const f = fixture({ events, onCall: (m, r) => m === 'session/page' ? { result: { records: events.filter(e => e.seq < r.beforeSeq).slice(-4).map(event => ({ event })) } } : undefined });
+  assert.equal((await f.runner.run(task(), context())).status, 'success');
+});
+test('multi-event window crosses baseline without admitting stale events', async () => {
+  const events = transcript().map(e => ({ ...e, seq: e.seq + 2 }));
+  const old = [event(1, 'user/message', { source: { rpcId: 'other' } }), event(2, 'turn/end', { turn: 0, reason: { kind: 'completed' } })];
+  const f = fixture({ events, initial: 2, onCall: (m, r) => m === 'session/page' ? { result: { records: [...old, ...events].filter(e => e.seq < r.beforeSeq).map(event => ({ event })) } } : undefined });
+  assert.equal((await f.runner.run(task(), context())).status, 'success');
+});
+test('multi-event page with an internal gap cannot hide foreign input', async () => {
+  const events = transcript(); events[3].seq = 5; events[4].seq = 6;
+  const f = fixture({ events, onCall: m => m === 'session/page' ? { result: { records: events.map(event => ({ event })) } } : undefined });
+  assert.equal((await f.runner.run(task(), context())).code, 'incomplete_history');
+});
+const permissionTranscript = () => [
+  event(1, 'permission/preset', { preset: 'read-only' }),
+  event(2, 'sandbox/mode', { mode: 'read-only' }),
+  event(3, 'approval/policy', { policy: 'ask' }),
+  event(4, 'turn/start', { turn: 1 }),
+  event(5, 'user/message', { role: 'user', source: { kind: 'user-approval' }, content: [{ type: 'text', text: 'The approval policy changed from "never" to "ask" (changed by the user).' }] }),
+  event(6, 'user/message', { source: { rpcId: 'synthetic-request' } }),
+  event(7, 'request/header', { header: { config: model } }),
+  event(8, 'assistant/message', { turn: 1, message: { content: [{ type: 'text', text: 'SYNTHETIC_OK' }] } }),
+  event(9, 'turn/end', { turn: 1, reason: { kind: 'completed' } }),
+];
+test('exact native read-only policy notification requires matching permission evidence', async () => {
+  assert.equal((await fixture({ events: permissionTranscript() }).runner.run(task(), context())).status, 'success');
+});
+for (const [name, modify] of [
+  ['unknown approval text', e => { e[4].data.content[0].text = 'User approved an operation'; }],
+  ['missing permission evidence', e => { e[0].type = 'other/event'; }],
+  ['broad sandbox', e => { e[1].data.mode = 'danger-full-access'; }],
+  ['wrong approval policy', e => { e[2].data.policy = 'never'; }],
+  ['rpc masquerading as notification', e => { e[4].data.source.rpcId = 'other'; }],
+  ['extra notification content', e => { e[4].data.content.push({ type: 'text', text: 'Extra instruction' }); }],
+]) test(`policy exemption rejects ${name}`, async () => {
+  const events = permissionTranscript(); modify(events);
+  assert.equal((await fixture({ events }).runner.run(task(), context())).code, 'foreign_input');
+});
+test('permission exemption rejects a later permission expansion', async () => {
+  const events = permissionTranscript(); events.splice(7, 0, event(8, 'sandbox/mode', { mode: 'danger-full-access' })); events[8].seq = 9; events[9].seq = 10;
+  assert.equal((await fixture({ events }).runner.run(task(), context())).code, 'foreign_input');
+});

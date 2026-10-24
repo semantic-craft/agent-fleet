@@ -4,7 +4,7 @@ const clone = x => JSON.parse(JSON.stringify(x));
 const freeze = x => { if (x && typeof x === 'object') { Object.values(x).forEach(freeze); Object.freeze(x); } return x; };
 const digest = x => createHash('sha256').update(JSON.stringify(x)).digest('hex');
 const fault = code => Object.assign(new Error(code), { code });
-export const HARNESS_VERSION = 'bounded-dsh-v1';
+export const HARNESS_VERSION = 'bounded-dsh-v2';
 export class TaskSpec {
   constructor({ objective, acceptance, sideEffects = 'read-only', budget = {}, requiredCapabilities = [] }) {
     if (typeof objective !== 'string' || !objective.trim()) throw fault('objective_required');
@@ -31,7 +31,7 @@ export class DshProviderAdapter extends ProviderAdapter {
   #call;
   constructor(call) { super(); this.#call = call; }
   async invoke(method, request) {
-    const envelope = await this.#call(method, { request });
+    const envelope = await this.#call(method, method === 'session/modelCatalog' ? {} : { request });
     if (envelope?.error) {
       // Never expose remote errors: they may contain headers or private prompt content.
       const status = envelope.error.status ?? envelope.error.statusCode;
@@ -60,6 +60,21 @@ export function selectHarness({ task, context, specialist = false, baseResult })
   return { harness: specialist ? new ReadOnlyVerificationHarness() : new BaseHarness() };
 }
 const systemSources = new Set(['agent-instructions', 'runtime-context', 'skill-catalog', 'time-context']);
+// Verified against native user-approval.setPolicy: only the precise read-only transition.
+function readOnlyPolicyNotice(event, events, own) {
+  const data = event.data;
+  if (event.type !== 'user/message' || event.seq >= own.seq || data?.role !== 'user' || data?.source?.kind !== 'user-approval' || Object.keys(data.source).length !== 1) return false;
+  const content = data.content;
+  if (!Array.isArray(content) || content.length !== 1 || Object.keys(content[0]).length !== 2 || content[0].type !== 'text' || content[0].text !== 'The approval policy changed from "never" to "ask" (changed by the user).') return false;
+  const changes = events.filter(e => ['permission/preset', 'sandbox/mode', 'approval/policy'].includes(e.type));
+  const tail = changes.slice(-3);
+  if (tail.length !== 3) return false;
+  const [preset, sandbox, approval] = tail;
+  return preset.type === 'permission/preset' && preset.data?.preset === 'read-only'
+    && sandbox.type === 'sandbox/mode' && sandbox.data?.mode === 'read-only' && sandbox.seq === preset.seq + 1
+    && approval.type === 'approval/policy' && approval.data?.policy === 'ask' && approval.seq === sandbox.seq + 1 && approval.seq < event.seq
+    && events.filter(e => e.type === 'user/message' && e.data?.source?.kind === 'user-approval').length === 1;
+}
 function correlate(events, context) {
   const own = events.find(e => e.type === 'user/message' && e.data?.source?.rpcId === context.requestId);
   if (!own) return null;
@@ -71,7 +86,7 @@ function correlate(events, context) {
   const end = events.find(e => e.seq > header.seq && e.type === 'turn/end' && e.data?.turn === turn);
   if (!end) return null;
   const range = events.filter(e => e.seq >= start.seq && e.seq <= end.seq);
-  if (range.some(e => e.type === 'user/message' && e.seq !== own.seq && !systemSources.has(e.data?.source?.kind))) throw fault('foreign_input');
+  if (range.some(e => e.type === 'user/message' && e.seq !== own.seq && !systemSources.has(e.data?.source?.kind) && !readOnlyPolicyNotice(e, events.filter(x => x.seq <= end.seq), own))) throw fault('foreign_input');
   if (range.some(e => e.type === 'turn/start' && e.seq !== start.seq)) throw fault('ambiguous_turn');
   const headers = range.filter(e => e.type === 'request/header');
   for (const h of headers) {
@@ -94,7 +109,12 @@ export class HarnessRunner {
     if (!journalOwners.has(journal)) journalOwners.set(journal, new Set());
     this.#active = journalOwners.get(journal);
   }
-  async run(task, context, { harness = new BaseHarness(), signal, requestCancellation = false, exclusiveSession = false } = {}) {
+  async run(task, context, options = {}) { return this.#execute(task, context, options, false); }
+  async prepareExternalRun(task, context, options = {}) {
+    const prepared = await this.#execute(task, context, options, true);
+    return prepared.result ? prepared : freeze({ result: prepared, dispatchAllowed: false });
+  }
+  async #execute(task, context, { harness = new BaseHarness(), signal, requestCancellation = false, exclusiveSession = false } = {}, prepareExternal = false) {
     const key = `${context.sessionId}:${context.requestId}`;
     const fingerprint = digest({ task, context, policy: harness.constructor.name });
     const result = (status, code, extra = {}) => new RunResult({ status, code, requestId: context.requestId, sessionId: context.sessionId, harnessVersion: context.harnessVersion, lessonsVersion: context.lessonsVersion, phase: context.phase, accepted: entry?.accepted === true, completed: false, ...extra });
@@ -140,10 +160,16 @@ export class HarnessRunner {
         const projection = await invoke('session/projections', { sessionId: context.sessionId });
         const values = projection?.values;
         if (!values) throw fault('configuration_unavailable');
-        const selection = values.modelSelection?.next ?? values.modelSelection?.lastUsed;
+        let selection = values.modelSelection?.next ?? values.modelSelection?.lastUsed;
+        if (values.modelSelection?.next === null && values.modelSelection?.lastUsed === null) {
+          const catalog = await invoke('session/modelCatalog', {});
+          selection = catalog?.default;
+          if (!selection) throw fault('configuration_unavailable');
+        }
         for (const k of ['provider', 'model', 'reasoningEffort']) if (context.expected[k] !== undefined && selection?.[k] !== context.expected[k]) throw fault('model_drift');
         if (context.expected.preset !== undefined && values.agentPreset !== context.expected.preset) throw fault('preset_drift');
-        const fingerprint = digest({ preset: values.agentPreset ?? null, selection: selection ?? null });
+        const normalized = selection ? Object.fromEntries(['provider', 'model', 'reasoningEffort'].map(k => [k, selection[k] ?? null])) : null;
+        const fingerprint = digest({ preset: values.agentPreset ?? null, selection: normalized });
         if (entry?.configuration && entry.configuration !== fingerprint) throw fault('configuration_drift');
         if (context.expected.configurationFingerprint && context.expected.configurationFingerprint !== fingerprint) throw fault('configuration_drift');
         return fingerprint;
@@ -154,6 +180,16 @@ export class HarnessRunner {
         if (!Number.isSafeInteger(first.cursor)) throw fault('invalid_cursor');
         entry = { fingerprint, base: first.cursor, attempted: false, accepted: false, configuration };
         this.#journal.set(key, entry);
+      }
+      if (prepareExternal) {
+        if (requestCancellation || (entry.attempted && !entry.external)) return result('blocked', 'already_submitted_locally');
+        const dispatchAllowed = !entry.attempted;
+        guard();
+        entry.attempted = true;
+        entry.external = true;
+        this.#journal.set(key, entry);
+        return freeze({ result: result('prepared', 'external_submission_reserved'), dispatchAllowed,
+          descriptor: { method: 'session/prompt', params: { request: { requestId: context.requestId, sessionId: context.sessionId, mode: 'queue', content: [{ type: 'text', text: policy.objective }] } } } });
       }
       if (!entry.attempted) {
         guard(); entry.attempted = true; this.#journal.set(key, entry);
@@ -170,19 +206,23 @@ export class HarnessRunner {
         for (let page = 0; before > entry.base + 1; page++) {
           if (page >= task.budget.maxPages) throw fault('page_budget');
           const data = await invoke('session/page', { address, beforeSeq: before, throughSeq: snap.cursor, maxMessages: 1 });
-          const batch = (data.records ?? []).map(r => r.event);
-          if (batch.length !== 1 || !Number.isSafeInteger(batch[0].seq) || batch[0].seq !== before - 1) throw fault('incomplete_history');
-          const e = batch[0]; if (e.seq <= entry.base) break;
-          events.push(e); before = e.seq;
+          // maxMessages limits message windows, not administrative events within a window.
+          const batch = (data.records ?? []).map(r => r.event).sort((a, b) => a.seq - b.seq);
+          if (!batch.length || batch.some(e => !Number.isSafeInteger(e.seq)) || batch.at(-1).seq !== before - 1 || batch.some((e, i) => i > 0 && e.seq !== batch[i - 1].seq + 1)) throw fault('incomplete_history');
+          events.push(...batch.filter(e => e.seq > entry.base).reverse());
+          before = batch[0].seq;
         }
         events.reverse();
+        if (events.some(e => e.type === 'user/message' && e.data?.source?.rpcId === context.requestId)) {
+          entry.accepted = true; this.#journal.set(key, entry);
+        }
         const evidence = correlate(events, context);
         if (!evidence && requestCancellation) {
           const own = events.find(e => e.type === 'user/message' && e.data?.source?.rpcId === context.requestId);
           const header = own && events.find(e => e.seq > own.seq && e.type === 'request/header');
           const start = header && events.filter(e => e.seq < header.seq && e.type === 'turn/start').at(-1);
           if (!own || !header || !start || !Number.isSafeInteger(start.data?.turn)) return result('blocked', 'queued_cancellation_unsupported');
-          if (events.some(e => e.seq >= start.seq && e.seq !== own.seq && e.type === 'user/message' && !systemSources.has(e.data?.source?.kind)) || events.some(e => e.seq > start.seq && e.type === 'turn/start')) return result('blocked', 'cancellation_identity_ambiguous');
+          if (events.some(e => e.seq >= start.seq && e.seq !== own.seq && e.type === 'user/message' && !systemSources.has(e.data?.source?.kind) && !readOnlyPolicyNotice(e, events, own)) || events.some(e => e.seq > start.seq && e.type === 'turn/start')) return result('blocked', 'cancellation_identity_ambiguous');
           if (!entry.cancelAttempted) {
             entry.cancelAttempted = true; this.#journal.set(key, entry);
             try { await invoke('session/cancel', { sessionId: context.sessionId }, false); }
