@@ -335,3 +335,36 @@ test('legacy Map reservation is blocked rather than mistaken for a fresh v3 requ
   const runner = new HarnessRunner(new DshProviderAdapter(async () => { calls++; throw Error('must not call'); }), { journal });
   assert.equal((await runner.run(task(), ctx)).code, 'journal_version_mismatch'); assert.equal(calls, 0);
 });
+
+test('adapter separates distinct Agenvo envelope IDs from the same nested native request ID', async () => {
+  const forwarded = [];
+  const envelopeIds = ['synthetic-envelope-one', 'synthetic-envelope-two'];
+  const adapter = new DshProviderAdapter(async (method, params) => {
+    forwarded.push({ method, params });
+    return { execution: 'accepted', requestId: envelopeIds[forwarded.length - 1], result: { admission: 'queued' } };
+  });
+  // Forwarding contract only: this fake has no dispatch side effects. The runner,
+  // not the adapter or an envelope ID, owns the no-resend decision tested below.
+  for (const envelope of envelopeIds) {
+    assert.deepEqual(await adapter.invoke('session/prompt', { sessionId: 'synthetic-session', requestId: 'stable-native-request' }), { admission: 'queued' });
+    assert.notEqual(envelope, 'stable-native-request');
+  }
+  assert.deepEqual(forwarded.map(x => x.params.request.requestId), ['stable-native-request', 'stable-native-request']);
+});
+
+for (const shape of ['overlap', 'duplicate', 'conflicting-duplicate']) test(`invalid ${shape} history page fails closed`, async () => {
+  const events = transcript(); let pages = 0;
+  const f = fixture({ onCall: (method, request) => {
+    if (method !== 'session/page') return;
+    pages++;
+    const last = events.filter(e => e.seq < request.beforeSeq).at(-1);
+    const records = shape === 'overlap'
+      ? (pages === 1 ? [last] : [last, events.find(e => e.seq === request.beforeSeq)])
+      : [last, shape === 'duplicate' ? last : { ...last, data: { turn: 999 } }];
+    return { result: { records: records.map(event => ({ event })) } };
+  } });
+  const r = await f.runner.run(task(), context());
+  assert.equal(r.code, 'incomplete_history'); assert.equal(r.status, 'blocked');
+  assert.equal(f.calls.filter(c => c.method === 'session/prompt').length, 1);
+  assert.equal(f.calls.filter(c => c.method === 'session/cancel').length, 0);
+});

@@ -159,3 +159,60 @@ test('headerless second-turn cancellation reports unsupported proof, not queued 
   const r = await run({ ...second, mode: 'cancel' }); assert.equal(r.code, 'headerless_cancellation_unsupported'); assert.equal(r.status, 'blocked');
   assert.equal(methods(env).filter(m => m === 'session/cancel').length, 0);
 });
+
+test('new connection and envelope IDs recover unknown native admission read-only after restart', async t => {
+  const env = setup(t);
+  const first = await run({ ...env, mode: 'unknown', connection: 'relay-connection-before' });
+  assert.equal(first.code, 'submission_outcome_unknown'); assert.equal(first.requestId, 'synthetic-request');
+  const before = readFileSync(env.trace, 'utf8').trim().split('\n').map(x => JSON.parse(x)).filter(x => x.method);
+  const sent = before.find(x => x.method === 'session/prompt');
+  assert.equal(sent.nestedNativeRequestId, 'synthetic-request'); assert.match(sent.envelopeRequestId, /^relay-connection-before-/);
+  const recovered = await run({ ...env, connection: 'relay-connection-after' });
+  assert.equal(recovered.status, 'success'); assert.equal(recovered.requestId, 'synthetic-request');
+  const all = readFileSync(env.trace, 'utf8').trim().split('\n').map(x => JSON.parse(x)).filter(x => x.method);
+  const recovery = all.slice(before.length);
+  assert.ok(recovery.length > 0);
+  assert.ok(recovery.every(x => ['session/projections', 'session/follow', 'session/page'].includes(x.method)));
+  assert.ok(recovery.every(x => x.envelopeRequestId.startsWith('relay-connection-after-')));
+  assert.equal(all.filter(x => x.method === 'session/prompt').length, 1);
+  const state = readFileSync(docPath(env), 'utf8');
+  assert.equal(Object.values(JSON.parse(state).runs)[0].requestId, 'synthetic-request');
+  assert.equal(state.includes('relay-connection-'), false);
+});
+
+for (const outcome of ['cancelled', 'naturally-completed']) test(`cancel attempt quarantines session after ${outcome}, across processes`, async t => {
+  const env = setup(t); await run({ ...env, mode: 'running' });
+  if (outcome === 'naturally-completed') {
+    assert.equal((await run({ ...env, mode: 'cancel-delayed-unknown' })).code, 'cancellation_outcome_unknown');
+    // The remote turn completes normally while the unfenced cancel may still be in flight.
+    const events = JSON.parse(readFileSync(env.backend, 'utf8')); let seq = events.at(-1).seq;
+    events.push({ seq: ++seq, type: 'assistant/message', data: { turn: 1, message: { content: [{ type: 'text', text: 'PRIVATE_ANSWER_TEXT' }] } } },
+      { seq: ++seq, type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } });
+    writeFileSync(env.backend, JSON.stringify(events));
+    assert.equal((await run(env)).status, 'success');
+  } else assert.equal((await run({ ...env, mode: 'cancel' })).status, 'cancelled');
+  const before = methods(env).length;
+  const blocked = await run({ ...env, requestId: 'new-native-request' });
+  assert.equal(blocked.status, 'blocked'); assert.equal(blocked.code, 'journal_session_cancelled_owner');
+  assert.equal(methods(env).length, before);
+  if (outcome === 'naturally-completed') {
+    // Simulate arrival of the delayed session-scoped cancel, not a cancel bound to A.
+    const events = JSON.parse(readFileSync(env.backend, 'utf8'));
+    assert.equal(events.filter(e => e.type === 'turn/start').length, 1);
+    assert.ok(!events.some(e => e.data?.source?.rpcId === 'new-native-request'));
+    writeFileSync(env.trace, readFileSync(env.trace, 'utf8') + JSON.stringify({ lateSessionCancelArrived: true, activeTurn: null }) + '\n');
+  }
+  assert.equal((await run(env)).status, outcome === 'cancelled' ? 'cancelled' : 'success');
+  assert.equal(methods(env).filter(m => m === 'session/cancel').length, 1);
+  assert.equal(methods(env).filter(m => m === 'session/prompt').length, 1);
+});
+
+for (const stage of ['accepted', 'final']) test(`post-admission ${stage} fsync failure recovers in a new process without resubmitting`, async t => {
+  const env = setup(t); const failed = await run({ ...env, mode: `fail-save-${stage}` });
+  assert.equal(failed.status, 'blocked'); assert.equal(failed.code, 'journal_write_failed');
+  const before = methods(env).length;
+  assert.equal((await run({ ...env, requestId: 'different' })).code, 'journal_session_pending');
+  assert.equal(methods(env).length, before);
+  assert.equal((await run(env)).status, 'success');
+  assert.equal(methods(env).filter(m => m === 'session/prompt').length, 1);
+});

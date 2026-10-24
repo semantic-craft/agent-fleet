@@ -59,3 +59,11 @@ test('thrown creation error is sanitized, and missing root makes no call', async
   assert.deepEqual(r, { ok: false, sessionId: undefined, text: 'check_failed' });
   const g = fake(); assert.equal((await dshTurn(g.call, {})).ok, false); assert.equal(g.calls.length, 0);
 });
+
+test('separate dshTurn smoke checks create fresh native requests, not resumable CLI runs', async () => {
+  const a = fake(), b = fake();
+  assert.equal((await dshTurn(a.call, { sessionId: 'synthetic-existing' })).ok, true);
+  assert.equal((await dshTurn(b.call, { sessionId: 'synthetic-existing' })).ok, true);
+  const ids = [a, b].map(f => f.calls.find(x => x.method === 'session/prompt').params.request.requestId);
+  assert.ok(ids.every(id => /^fleet-check-[a-f0-9]{24}$/.test(id))); assert.notEqual(ids[0], ids[1]);
+});
