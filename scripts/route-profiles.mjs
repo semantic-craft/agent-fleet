@@ -1,10 +1,14 @@
 /** Explicit, versioned acceptance records. These never select a runtime model or preset. */
-const selection = preset => Object.freeze({ provider: 'magpie-responses', model: 'codex/gpt-6.1-sol', reasoningEffort: 'low', preset });
+const selection = (preset, reasoningEffort = 'low') => Object.freeze({ provider: 'magpie-responses', model: 'codex/gpt-6.1-sol', reasoningEffort, preset });
 const evidence = Object.freeze({ validatedOn: '2026-10-24', dsh: '0.2.1-rc.3', piAi: '1.1.0', magpieSource: 'exact-deployed-source-unproven', freshness: 'Snapshot, not a live health probe; revalidate after upgrades.' });
 export const ROUTE_PROFILES = Object.freeze({
   'sol-low-ptc-marker-v1': Object.freeze({
     status: 'verified-marker-only', evidence, expected: selection('ptc'),
     scope: 'Exact marker, read-only, zero observed tool events; no tool execution or general workload claim.',
+  }),
+  'sol-high-standard-v1': Object.freeze({
+    status: 'known-failure', evidence, expected: selection('standard', 'high'),
+    scope: 'Empty max-tokens result in a fresh standard/high marker session; not a universal model limitation. Revalidate after upgrades.',
   }),
   'sol-low-standard-v1': Object.freeze({
     status: 'known-failure', evidence, expected: selection('standard'),

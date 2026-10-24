@@ -357,7 +357,10 @@ are not runtime health discovery, a model benchmark, or a setting change:
 | Profile | Evidence and allowed scope |
 | --- | --- |
 | `sol-low-ptc-marker-v1` | Cloud prompt/follow round trip with Sol/low/PTC returned the exact marker, with one `run_code` declaration and zero tool executions. Only an exact-text, read-only marker check is admitted. Tool execution and general workloads remain unverified. |
+| `sol-high-standard-v1` | A fresh standard/high marker request with 345 tool declarations and zero tool executions also ended with empty max-tokens output. Explicit use blocks before transport; raising effort did not resolve this observed failure. |
 | `sol-low-standard-v1` | On the tested deployment, standard-mode requests ended with empty max-tokens output. Explicit use of this profile is blocked before transport; this is not a universal limitation of Sol or standard mode. |
+
+The high test used a fresh session, so history and context differ from prior low tests; it does not isolate a unique root cause. No high/PTC route was tested.
 
 The evidence was recorded on 2026-10-24 with DSH 0.2.1-rc.3 and pi-ai 1.1.0.
 The exact deployed Magpie source tree was not proven. Revalidate after upgrades

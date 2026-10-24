@@ -28,14 +28,14 @@ function fixture({ preset = 'ptc', selected = model, header = model, tool = fals
   return { calls, runner: new HarnessRunner(new DshProviderAdapter(call), { sleep: async () => {} }) };
 }
 test('profile records and selection are frozen', () => {
-  assert.ok(Object.isFrozen(ROUTE_PROFILES)); assert.ok(Object.isFrozen(ROUTE_PROFILES[id])); assert.ok(Object.isFrozen(expected));
+  assert.ok(Object.isFrozen(ROUTE_PROFILES)); assert.ok(Object.isFrozen(ROUTE_PROFILES[id])); assert.ok(Object.isFrozen(expected)); assert.equal(ROUTE_PROFILES['sol-high-standard-v1'].expected.reasoningEffort, 'high');
 });
 test('explicit marker profile uses existing runner and verifies matching runtime evidence', async () => {
   const f = fixture(); const result = await f.runner.run(task(), context());
   assert.equal(result.status, 'success'); assert.equal(result.evidence.toolEvents, 0);
   assert.ok(f.calls.every(m => ['session/projections', 'session/follow', 'session/page', 'session/prompt'].includes(m)));
 });
-for (const [profile, code] of [['sol-low-standard-v1', 'route_profile_known_failure'], ['unknown-v1', 'route_profile_unknown']]) test(`${profile} blocks with zero transport`, async () => {
+for (const [profile, code] of [['sol-low-standard-v1', 'route_profile_known_failure'], ['sol-high-standard-v1', 'route_profile_known_failure'], ['unknown-v1', 'route_profile_unknown']]) test(`${profile} blocks with zero transport`, async () => {
   const f = fixture(); const result = await f.runner.run(task(), context({ routeProfile: profile }));
   assert.equal(result.code, code); assert.equal(result.status, 'blocked'); assert.deepEqual(f.calls, []);
 });
@@ -52,7 +52,7 @@ for (const [opts, code] of [[{ preset: 'standard' }, 'preset_drift'], [{ selecte
   const f = fixture(opts); assert.equal((await f.runner.run(task(), context())).code, code); assert.deepEqual(f.calls, ['session/projections']);
 });
 test('profile still checks actual request header', async () => {
-  const f = fixture({ header: { ...model, reasoningEffort: 'high' } }); assert.equal((await f.runner.run(task(), context())).code, 'model_drift');
+  const f = fixture({ header: { ...model, reasoningEffort: 'high' } }); assert.equal((await f.runner.run(task(), context())).code, 'model_drift'); assert.equal(f.calls.filter(m => m === 'session/prompt').length, 1);
 });
 test('observed tool execution fails marker profile even with the correct marker', async () => {
   const f = fixture({ tool: true }); const result = await f.runner.run(task(), context());
