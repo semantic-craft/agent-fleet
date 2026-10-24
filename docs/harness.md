@@ -411,3 +411,80 @@ native execution restrictions before sending. PTC's `run_code` declaration does
 not establish sandbox safety. If a tool event is observed, even a correct marker
 is `failed / terminal_not_verified`; this cannot undo an already executed tool.
 The profile must not be used as authorization for real work or write operations.
+
+## DSH → Magpie → MiniMax model single-fixture read profile
+
+`minimax-low-standard-read-fixture-v1` records a bounded cloud Agenvo → DSH →
+Magpie → MiniMax model acceptance: low effort, standard preset, native read-only
+permission, exactly one `read` call (`file_path` supplied by the caller,
+`offset: 1`, `limit: 1`), one successful matching tool result, and the exact
+single-line answer. The observed run inherited its prior request header. This
+is a single-file fixture contract, **not general MiniMax tool-workload support**.
+The task runs in DSH, not in the MiniMax Code desktop app. MiniMax desktop-visible
+dispatch has not been implemented or verified by this profile.
+The snapshot has the same dated runtime provenance limitations as the other
+profiles. No service upgrade or model-setting change is part of selecting it.
+
+Use an already selected, already read-only session and the existing authorized
+transport. The factory constructs a request; it never opens the fixture itself:
+
+```js
+import { ROUTE_PROFILES } from './scripts/route-profiles.mjs';
+import {
+  createReadOnlyFixtureTask, RunContext, HarnessRunner, DshProviderAdapter,
+  ReadOnlyVerificationHarness,
+} from './scripts/harness.mjs';
+
+const routeProfile = 'minimax-low-standard-read-fixture-v1';
+const task = createReadOnlyFixtureTask({
+  filePath: callerSuppliedFixturePath, expectedLine: callerKnownFirstLine,
+});
+const context = new RunContext({
+  requestId: stableNativeRequestId, sessionId: existingReadOnlySessionId,
+  lessonsVersion: 'reviewed-single-fixture-v1', routeProfile,
+  expected: ROUTE_PROFILES[routeProfile].expected,
+});
+const runner = new HarnessRunner(new DshProviderAdapter(existingCall), { journal });
+const result = await runner.run(task, context, {
+  harness: new ReadOnlyVerificationHarness(),
+});
+```
+
+The caller supplies `journal` (retain a FileJournal for restart recovery), the
+fixture path and its known single-line content. They must be authorized to send
+that path/content to the selected runtime. The factory forbids other tools,
+shell, other files, network, writes, delegation, escalation, retry after a
+rejected read, and progress commentary in its instruction. These instructions
+are not an execution sandbox. The runner checks
+`projections.values.permissions.currentValue === 'read-only'` before submission
+and again before verifying a terminal; missing or different permissions block.
+It never selects a model, preset, or permission, and never writes global defaults.
+If native model selection is needed, its possible global-default effect requires
+separate explicit authorization. A terminal failure is not retried automatically.
+
+Verification requires all of the following, inside the exclusively correlated
+turn: exactly two tool events in order (`tool/call`, `tool/result`); tool name
+`read`; the exact three parsed argument keys/values; matching nonempty call ID,
+turn and step; result role `tool`, matching source kind/call ID and toolCallId,
+and explicit `isError: false`. The result must contain one text block with just
+one numbered line, equal to `1: ` plus the expected answer; the final assistant
+text must also match exactly. Extra tool events, wrong arguments, error/foreign
+results or extra numbered lines fail verification even if the final answer is
+correct. This validates the observed read-result shape; it does not independently
+prove the filesystem contents or protect against a compromised runtime.
+
+`TaskSpec.toolContract` is optional. Existing tasks without it keep their old
+fingerprint shape. For fixture tasks, the path and expected answer participate
+in the existing task/context hash; changing either blocks resuming the same native
+request. Raw tool arguments/results are inspected only in memory. The temporary
+verification boolean is removed before finalization; no new FileJournal fields,
+paths, arguments, answers or call IDs are persisted. A recovered unknown admission
+reads the original native turn and checks the same contract without resubmitting.
+The existing external preparation flow accepts the same specialist/options.
+
+Sol high/PTC remains marker-only. A separate tool trial requested workspace-write
+contrary to its bounded instruction; the approval was cancelled and the turn
+aborted, with no tool executed. That does not validate tool execution. The
+cancel-attempted session stays quarantined by the existing durable policy; a
+new session is required for later work. Neither that failed trial nor the MiniMax
+fixture result upgrades Sol's tool capability claim.

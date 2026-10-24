@@ -291,3 +291,12 @@
 - 修复与证据：`scripts/route-profiles.mjs`、`test/route-profiles.test.mjs`，复用既有HarnessRunner检查配置、指纹与终态；profile只记录有限验收，不替代原生权限或全局模型选择授权。
 - 验证点：known-failure零transport；preset/model投影预检不匹配不派活，实际请求header漂移不得误报验收成功；工具事件导致标记profile失败；重试不得切换profile。
 - 复发记录：Seen 1x (2026-10-24)。
+
+### 工具验收不能只数tool事件或看最终答案
+
+**有界读取须核对工具名、精确参数、调用与结果关联、成功标志和实际结果行，并检查原生只读权限。**
+
+- 起因与后果：标记成功或toolEvents大于零都不能证明模型按约定读取了指定fixture；其他工具/错误结果仍可能产生正确猜测答案。
+- 修复与证据：MiniMax single-fixture profile复用HarnessRunner与ReadOnlyVerificationHarness；回归覆盖参数篡改、额外工具、错误结果、错callId、继承header、权限漂移和持久恢复。
+- 验证点：路径/参数/正文只在内存匹配并参与指纹，不写FileJournal；零自动切模/切权限；后验不等于执行前强制限制。
+- 复发记录：Seen 1x (2026-10-24)。
