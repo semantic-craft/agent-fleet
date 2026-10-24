@@ -293,3 +293,57 @@ request blocking, pre-rename interruption, fsync-before-mutation ordering, helpe
 loss, lock/root inode replacement, corruption/version rejection, unknown cancel
 recovery, inherited-header restart and catalog effort `off`. No live request,
 CLI OAuth grant, service install or shared-checkout receipt change was involved.
+
+## Native request identity versus transport correlation
+
+There are two distinct `requestId` fields. Agenvo's dispatch result envelope has
+its own transport correlation ID; the DSH prompt parameter is
+`params.request.requestId`. Only the latter is `RunContext.requestId`, the durable
+`(sessionId, requestId)` key and the expected `user/message.source.rpcId` in native
+history. `DshProviderAdapter` unwraps `envelope.result`; it neither adopts the
+outer ID nor substitutes it into the nested prompt. A new connection or dispatch
+may have a different envelope ID without changing the native run identity.
+
+Connection-local relay deduplication is not a durable admission guarantee. After
+unknown admission, reconstruct the same task/context/journal and observe the old
+native request. Never interpret a new transport ID, a reconnect, or an accepted
+envelope as permission to submit again. The independent-process reconnect test
+uses fresh envelope IDs on the second transport and asserts that only projections,
+follow and page are called; the total prompt count remains one and no envelope ID
+is persisted in the journal. The separate adapter test demonstrates forwarding
+identity only; it does not claim that calling the adapter directly twice deduplicates.
+
+`dsh-check.mjs` is intentionally a smoke-check wrapper: every `dshTurn` invocation
+creates a fresh random native request and an in-memory runner. Re-running the CLI
+is a new check, not recovery of a previous unknown run. Callers needing reconnect
+or crash recovery must use the durable runner/preparation flow with the original
+stable pair, rather than invoke the smoke-check wrapper again. This audit and its
+regressions change no relay or production dispatch behavior.
+
+### Cancellation quarantines the session
+
+Native `session/cancel` has no turn-specific fence. A timeout or even a later terminal event cannot prove that a delayed cancellation will not affect the next turn. Therefore any durable `cancelAttempted` record permanently blocks **different native request IDs in that session**, including after the owner naturally completes or is cancelled (`journal_session_cancelled_owner`). The original request may still be read and recovered; no cancellation is replayed. Use a new native session for subsequent work.
+
+This protection coordinates callers using the same journal; it is not a remote fence and cannot control other clients. Do not delete records or switch journal directories to reuse a quarantined session. There is no automatic reset or migration. Existing records already carry `cancelAttempted`, so no new persistent field is required.
+
+Transport source boundary: the Agenvo relay review pinned revision
+[`a89415e557c415faf5626354f8e87233eb69d877`](https://github.com/Xuanwo/agenvo/blob/a89415e557c415faf5626354f8e87233eb69d877/packages/relay/src/core.ts#L438) found
+per-dispatch envelope UUIDs, a 10-second dispatch confirmation window, and
+connection-local deduplication without event replay. These transport properties
+are not a durable execution identity or an exactly-once guarantee. Only the
+nested native request ID is held stable by this harness. The offline reconnect
+regression changes the envelope IDs and connection identity while retaining the
+native ID and journal; recovery reads the existing turn without another prompt.
+
+Companion sources at the same revision are
+[connector main](https://github.com/Xuanwo/agenvo/blob/a89415e557c415faf5626354f8e87233eb69d877/packages/connector/src/main.ts)
+and [event semantics](https://github.com/Xuanwo/agenvo/blob/a89415e557c415faf5626354f8e87233eb69d877/docs/events.md).
+
+Validation of this increment: 138 local tests and the private guard pass with a
+temporary HOME and no live overlay. This includes isolated-process reconnect,
+post-admission accepted/final file-fsync failure, persistent cancellation
+quarantine, and overlapping/duplicate/conflicting history page regressions.
+It does not exercise a real reconnect or cancel, directory-fsync failure after
+rename, cancel ACK with no terminal, or an old observer's deferred reply arriving
+during a second observer's recovery. No service, credential, relay, or model
+configuration changed.

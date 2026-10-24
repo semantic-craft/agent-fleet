@@ -148,6 +148,9 @@ export class FileJournal {
     for (const [key, entry] of Object.entries(doc.runs)) {
       validateEntry(entry);
       if (key !== hash(entry.requestId) || entry.sessionId !== doc.sessionId) throw fail('journal_corrupt');
+      // Native cancellation has no turn fence: a delayed cancel can hit a later run.
+      // Keep this session quarantined even after the cancelled owner reaches a terminal.
+      if (entry.cancelAttempted && entry.requestId !== this.#held.context.requestId) throw fail('journal_session_cancelled_owner');
       if (entry.attempted && !entry.final) pending.push(entry.requestId);
     }
     if (pending.length > 1) throw fail('journal_corrupt');

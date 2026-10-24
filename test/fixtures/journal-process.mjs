@@ -12,8 +12,17 @@ const emit = value => process.stdout.write(JSON.stringify(value) + '\n');
 let helper;
 const originalSpawn = childProcess.spawn;
 childProcess.spawn = (...args) => { helper = originalSpawn(...args); return helper; };
+const failingFds = new Set();
+const originalWrite = fs.writeFileSync;
+fs.writeFileSync = (target, data, ...rest) => {
+  if (typeof target === 'number' && typeof data === 'string' && mode.startsWith('fail-save-')) {
+    let doc; try { doc = JSON.parse(data); } catch {}
+    if (Object.values(doc?.runs ?? {}).some(e => mode === 'fail-save-final' ? e.final : e.accepted)) failingFds.add(target);
+  }
+  return originalWrite(target, data, ...rest);
+};
 const originalSync = fs.fsyncSync;
-fs.fsyncSync = fd => { originalSync(fd); log({ fsync: fs.fstatSync(fd).isDirectory() ? 'directory' : 'file' }); };
+fs.fsyncSync = fd => { if (failingFds.has(fd)) throw Error('SYNTHETIC_FSYNC_FAILURE'); originalSync(fd); log({ fsync: fs.fstatSync(fd).isDirectory() ? 'directory' : 'file' }); };
 const originalRename = fs.renameSync;
 fs.renameSync = (from, to) => {
   if (mode === 'crash-before-rename') {
@@ -51,8 +60,7 @@ const journal = new Journal(directory, options.python ? { python: options.python
 const read = () => fs.existsSync(backend) ? JSON.parse(fs.readFileSync(backend)) : [];
 const save = events => { const fd = fs.openSync(backend, 'w', 0o600); fs.writeFileSync(fd, JSON.stringify(events)); originalSync(fd); fs.closeSync(fd); };
 const event = (seq, type, data) => ({ seq, type, data });
-const call = async (method, { request }) => {
-  log({ method, requestId });
+const nativeCall = async (method, { request }) => {
   if (method === 'session/projections') {
     if (mode === 'hold') { emit({ phase: 'held' }); await new Promise(() => {}); }
     if (mode === 'lose-helper') { helper.kill('SIGKILL'); await once(helper, 'exit'); }
@@ -75,11 +83,18 @@ const call = async (method, { request }) => {
   }
   if (method === 'session/cancel') {
     const events = read(); const turn = events.filter(e => e.type === 'turn/start').at(-1).data.turn;
+    if (mode === 'cancel-delayed-unknown') throw Error('PRIVATE_CANCEL_ERROR');
     events.push(event(events.at(-1).seq + 1, 'turn/end', { turn, reason: { kind: 'cancelled' } })); save(events);
     if (mode === 'cancel-unknown') throw Error('PRIVATE_CANCEL_ERROR');
     return { result: {} };
   }
   throw Error('unexpected fake endpoint');
+};
+let envelopeCounter = 0;
+const call = async (method, params) => {
+  const envelopeRequestId = `${options.connection ?? 'synthetic-connection'}-dispatch-${++envelopeCounter}`;
+  log({ method, requestId, envelopeRequestId, nestedNativeRequestId: params.request?.requestId });
+  return { ...await nativeCall(method, params), requestId: envelopeRequestId };
 };
 const runner = new HarnessRunner(new DshProviderAdapter(call), { journal, sleep: async () => {} });
 let result;
