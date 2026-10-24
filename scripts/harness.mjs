@@ -1,20 +1,30 @@
 /** Bounded caller-side policy over native DSH endpoints; no credentials or scheduler. */
 import { createHash } from 'node:crypto';
-import { routeProfileError } from './route-profiles.mjs';
+import { routeProfileError, routeProfileEvidenceMatches } from './route-profiles.mjs';
 const clone = x => JSON.parse(JSON.stringify(x));
 const freeze = x => { if (x && typeof x === 'object') { Object.values(x).forEach(freeze); Object.freeze(x); } return x; };
 const digest = x => createHash('sha256').update(JSON.stringify(x)).digest('hex');
 const fault = code => Object.assign(new Error(code), { code });
 export const HARNESS_VERSION = 'bounded-dsh-v3';
 export class TaskSpec {
-  constructor({ objective, acceptance, sideEffects = 'read-only', budget = {}, requiredCapabilities = [] }) {
+  constructor({ objective, acceptance, sideEffects = 'read-only', budget = {}, requiredCapabilities = [], toolContract }) {
     if (typeof objective !== 'string' || !objective.trim()) throw fault('objective_required');
     if (!['read-only', 'sandbox', 'write'].includes(sideEffects)) throw fault('invalid_side_effects');
     if (!acceptance || !['exact-text', 'nonempty-text'].includes(acceptance.kind) || (acceptance.kind === 'exact-text' && typeof acceptance.text !== 'string')) throw fault('acceptance_required');
     const limits = { timeoutMs: 600000, maxCalls: 256, maxPages: 128, maxPolls: 60, pollMs: 10000, readRetries: 2, ...budget };
     if (Object.values(limits).some(v => !Number.isSafeInteger(v) || v < 0) || !limits.timeoutMs || !limits.maxCalls) throw fault('invalid_budget');
-    Object.assign(this, clone({ objective, acceptance, sideEffects, budget: limits, requiredCapabilities })); freeze(this);
+    if (toolContract !== undefined && (!toolContract || Object.keys(toolContract).sort().join(',') !== 'filePath,kind' || toolContract.kind !== 'single-read-fixture' || typeof toolContract.filePath !== 'string' || !toolContract.filePath.trim() || acceptance.kind !== 'exact-text' || !acceptance.text.trim() || /[\r\n]/.test(acceptance.text))) throw fault('invalid_tool_contract');
+    Object.assign(this, clone({ objective, acceptance, sideEffects, budget: limits, requiredCapabilities, ...(toolContract === undefined ? {} : { toolContract }) })); freeze(this);
   }
+}
+/** Constructs a bounded request; never reads the caller's fixture or changes permissions. */
+export function createReadOnlyFixtureTask({ filePath, expectedLine, budget = {} }) {
+  if (typeof expectedLine !== 'string' || !expectedLine.trim() || /[\r\n]/.test(expectedLine)) throw fault('invalid_fixture_line');
+  return new TaskSpec({
+    objective: `Use exactly one native read call with arguments ${JSON.stringify({ file_path: filePath, offset: 1, limit: 1 })}. Do not use other tools, shell, files, network, writes, delegation, or permission escalation. If the read is rejected, stop without retrying. Do not send progress commentary. Return only the exact first line without its line-number prefix.`,
+    acceptance: { kind: 'exact-text', text: expectedLine }, sideEffects: 'read-only', budget,
+    toolContract: { kind: 'single-read-fixture', filePath },
+  });
 }
 export class RunContext {
   constructor({ requestId, sessionId, harnessVersion = HARNESS_VERSION, lessonsVersion, phase = 'production', expected = {}, routeProfile }) {
@@ -83,7 +93,20 @@ function eventBatch(data, before) {
   if (!batch.length || batch.some(e => !Number.isSafeInteger(e.seq)) || batch.at(-1).seq !== before - 1 || batch.some((e, i) => i > 0 && e.seq !== batch[i - 1].seq + 1)) throw fault('incomplete_history');
   return batch;
 }
-function correlate(events, context, snapshot, selectedModel) {
+function matchesToolContract(range, turn, contract, acceptance, inputSeq) {
+  if (!contract) return true;
+  const tools = range.filter(e => e.type.startsWith('tool/'));
+  if (tools.length !== 2 || tools[0].seq <= inputSeq || tools[0].type !== 'tool/call' || tools[1].type !== 'tool/result') return false;
+  const call = tools[0].data; const result = tools[1].data; const message = result?.message;
+  if (call?.name !== 'read' || call.turn !== turn || result?.turn !== turn || !Number.isSafeInteger(call.step) || call.step < 0 || result.step !== call.step || typeof call.callId !== 'string' || !call.callId || message?.role !== 'tool' || message.isError !== false || message.toolCallId !== call.callId || message.source?.kind !== 'tool' || message.source.callId !== call.callId) return false;
+  if (!Array.isArray(message.content) || message.content.length !== 1 || message.content[0]?.type !== 'text' || typeof message.content[0].text !== 'string') return false;
+  const numbered = message.content[0].text.split('\n').filter(line => /^\s*\d+:/.test(line));
+  if (numbered.length !== 1 || numbered[0] !== `1: ${acceptance.text}`) return false;
+  let args; try { if (typeof call.arguments !== 'string') return false; args = JSON.parse(call.arguments); } catch { return false; }
+  return args !== null && !Array.isArray(args) && typeof args === 'object' && Object.keys(args).sort().join(',') === 'file_path,limit,offset'
+    && args.file_path === contract.filePath && args.offset === 1 && args.limit === 1;
+}
+function correlate(events, context, snapshot, selectedModel, toolContract, acceptance) {
   const own = events.find(e => e.type === 'user/message' && e.data?.source?.rpcId === context.requestId);
   if (!own) return null;
   const start = events.filter(e => e.seq < own.seq && e.type === 'turn/start').at(-1);
@@ -110,7 +133,7 @@ function correlate(events, context, snapshot, selectedModel) {
   if (range.some(e => e.type === 'request/context' && ((e.data?.provider !== undefined && e.data.provider !== used.config.provider) || (e.data?.model !== undefined && e.data.model !== used.config.model)))) throw fault('model_drift');
   const text = range.filter(e => e.type === 'assistant/message' && e.data?.turn === turn)
     .flatMap(e => e.data?.message?.content ?? []).filter(c => c.type === 'text').map(c => c.text).join('\n');
-  return { turn, inputSeq: own.seq, endSeq: end.seq, reason: end.data?.reason?.kind, text,
+  return { toolContractMatched: matchesToolContract(range, turn, toolContract, acceptance, own.seq), turn, inputSeq: own.seq, endSeq: end.seq, reason: end.data?.reason?.kind, text,
     toolEvents: range.filter(e => e.type.startsWith('tool/')).length, headers: headers.length,
     headerInherited: headers.length === 0, headerOriginSeq: used.originSeq, models: effective.map(h => h.config) };
 }
@@ -200,9 +223,10 @@ export class HarnessRunner {
         }
         for (const k of ['provider', 'model', 'reasoningEffort']) if (context.expected[k] !== undefined && selection?.[k] !== context.expected[k]) throw fault('model_drift');
         if (context.expected.preset !== undefined && values.agentPreset !== context.expected.preset) throw fault('preset_drift');
+        if (context.expected.permission !== undefined && values.permissions?.currentValue !== context.expected.permission) throw fault('permission_drift');
         const normalized = selection ? modelFields(selection) : null;
         selectedModel = normalized;
-        const fingerprint = digest({ preset: values.agentPreset ?? null, selection: normalized });
+        const fingerprint = digest({ preset: values.agentPreset ?? null, selection: normalized, ...(context.expected.permission === undefined ? {} : { permission: values.permissions.currentValue }) });
         if (entry?.configuration && entry.configuration !== fingerprint) throw fault('configuration_drift');
         if (context.expected.configurationFingerprint && context.expected.configurationFingerprint !== fingerprint) throw fault('configuration_drift');
         return fingerprint;
@@ -263,7 +287,7 @@ export class HarnessRunner {
         if (events.some(e => e.type === 'user/message' && e.data?.source?.rpcId === context.requestId)) {
           entry.accepted = true; this.#journal.set(key, entry);
         }
-        const evidence = correlate(events, context, entry.headerSnapshot, selectedModel);
+        const evidence = correlate(events, context, entry.headerSnapshot, selectedModel, task.toolContract, task.acceptance);
         if (!evidence && requestCancellation) {
           const own = events.find(e => e.type === 'user/message' && e.data?.source?.rpcId === context.requestId);
           const header = own && events.find(e => e.seq > own.seq && e.type === 'request/header');
@@ -280,8 +304,8 @@ export class HarnessRunner {
         if (evidence) {
           await inspectConfiguration();
           entry.accepted = true;
-          const { text, ...safe } = evidence;
-          const successful = evidence.reason === 'completed' && harness.verify(task, evidence) && (context.routeProfile === undefined || evidence.toolEvents === 0);
+          const { text, toolContractMatched, ...safe } = evidence;
+          const successful = evidence.reason === 'completed' && harness.verify(task, evidence) && toolContractMatched && routeProfileEvidenceMatches(context.routeProfile, evidence);
           guard();
           const status = successful ? 'success' : evidence.reason === 'cancelled' ? 'cancelled' : 'failed';
           const final = result(status, successful ? 'verified' : 'terminal_not_verified', { completed: evidence.reason === 'completed', evidence: { ...safe, outputHash: digest(text), outputLength: text.length } });
@@ -291,7 +315,7 @@ export class HarnessRunner {
       }
       return result('timeout', 'poll_budget');
     } catch (e) {
-      const code = e.code?.startsWith('journal_') ? e.code : ['observation_aborted', 'deadline', 'call_budget', 'page_budget', 'model_drift', 'foreign_input', 'ambiguous_turn', 'missing_turn_identity', 'header_provenance_missing', 'header_history_budget', 'unreviewed_policy', 'unsupported_capability', 'configuration_unavailable', 'configuration_drift', 'preset_drift', 'verification_requires_read_only', 'invalid_cursor', 'cursor_regression', 'incomplete_history'].includes(e.code) ? e.code : 'read_unavailable';
+      const code = e.code?.startsWith('journal_') ? e.code : ['observation_aborted', 'deadline', 'call_budget', 'page_budget', 'model_drift', 'foreign_input', 'ambiguous_turn', 'missing_turn_identity', 'header_provenance_missing', 'header_history_budget', 'unreviewed_policy', 'unsupported_capability', 'configuration_unavailable', 'configuration_drift', 'preset_drift', 'permission_drift', 'verification_requires_read_only', 'invalid_cursor', 'cursor_regression', 'incomplete_history'].includes(e.code) ? e.code : 'read_unavailable';
       return result(code === 'deadline' ? 'timeout' : code === 'observation_aborted' || code === 'read_unavailable' ? 'unknown' : 'blocked', code);
     } finally { this.#active.delete(key); }
   }
