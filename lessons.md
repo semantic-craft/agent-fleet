@@ -282,3 +282,12 @@
 - 正确做法：未知写结果保留原 request ID 和恢复 journal；只有匹配的原生 cancelled 才算取消，队列里的输入不能靠 cancel 声称移除。详见 [harness 契约](docs/harness.md)。
 - 验证点：离线测试不替代真实云端与只读工具闭环；默认内存 journal 不承诺跨进程恢复。禁止把 PTC 兼容路线当标准模式修复。
 - 复发记录：Seen 1x (2026-10-24)。
+
+### 兼容路线的标记成功不能扩大成通用执行能力
+
+**将模型/preset的验收范围写进显式版本化profile，并检查已有会话，不自动切换。**
+
+- 起因与后果：同一模型的PTC标记往返成功，而standard在已测部署出现空max-tokens；把二者统称“模型已打通”会掩盖差异。
+- 修复与证据：`scripts/route-profiles.mjs`、`test/route-profiles.test.mjs`，复用既有HarnessRunner检查配置、指纹与终态；profile只记录有限验收，不替代原生权限或全局模型选择授权。
+- 验证点：known-failure零transport；实际preset/model/header不匹配不派活；工具事件导致标记profile失败；重试不得切换profile。
+- 复发记录：Seen 1x (2026-10-24)。

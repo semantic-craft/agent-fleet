@@ -1,5 +1,6 @@
 /** Bounded caller-side policy over native DSH endpoints; no credentials or scheduler. */
 import { createHash } from 'node:crypto';
+import { routeProfileError } from './route-profiles.mjs';
 const clone = x => JSON.parse(JSON.stringify(x));
 const freeze = x => { if (x && typeof x === 'object') { Object.values(x).forEach(freeze); Object.freeze(x); } return x; };
 const digest = x => createHash('sha256').update(JSON.stringify(x)).digest('hex');
@@ -16,9 +17,10 @@ export class TaskSpec {
   }
 }
 export class RunContext {
-  constructor({ requestId, sessionId, harnessVersion = HARNESS_VERSION, lessonsVersion, phase = 'production', expected = {} }) {
+  constructor({ requestId, sessionId, harnessVersion = HARNESS_VERSION, lessonsVersion, phase = 'production', expected = {}, routeProfile }) {
     if (!requestId || !sessionId || !lessonsVersion || harnessVersion !== HARNESS_VERSION || !['discovery', 'heldout', 'production'].includes(phase)) throw fault('invalid_frozen_context');
-    Object.assign(this, clone({ requestId, sessionId, harnessVersion, lessonsVersion, phase, expected })); freeze(this);
+    if (routeProfile !== undefined && typeof routeProfile !== 'string') throw fault('invalid_route_profile');
+    Object.assign(this, clone({ requestId, sessionId, harnessVersion, lessonsVersion, phase, expected, ...(routeProfile === undefined ? {} : { routeProfile }) })); freeze(this);
   }
 }
 export class RunResult {
@@ -183,6 +185,8 @@ export class HarnessRunner {
       if (!(task instanceof TaskSpec) || !(context instanceof RunContext) || ![BaseHarness.prototype, ReadOnlyVerificationHarness.prototype].includes(Object.getPrototypeOf(harness))) throw fault('unreviewed_policy');
       if (task.requiredCapabilities.some(c => !this.#adapter.capabilities.includes(c))) throw fault('unsupported_capability');
       const policy = harness.policy(task);
+      const profileError = routeProfileError(context.routeProfile, task, context.expected, policy.requireTool);
+      if (profileError) return result('blocked', profileError);
       let selectedModel;
       const inspectConfiguration = async () => {
         const projection = await invoke('session/projections', { sessionId: context.sessionId });
@@ -277,7 +281,7 @@ export class HarnessRunner {
           await inspectConfiguration();
           entry.accepted = true;
           const { text, ...safe } = evidence;
-          const successful = evidence.reason === 'completed' && harness.verify(task, evidence);
+          const successful = evidence.reason === 'completed' && harness.verify(task, evidence) && (context.routeProfile === undefined || evidence.toolEvents === 0);
           guard();
           const status = successful ? 'success' : evidence.reason === 'cancelled' ? 'cancelled' : 'failed';
           const final = result(status, successful ? 'verified' : 'terminal_not_verified', { completed: evidence.reason === 'completed', evidence: { ...safe, outputHash: digest(text), outputLength: text.length } });

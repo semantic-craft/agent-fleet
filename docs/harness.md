@@ -347,3 +347,63 @@ It does not exercise a real reconnect or cancel, directory-fsync failure after
 rename, cancel ACK with no terminal, or an old observer's deferred reply arriving
 during a second observer's recovery. No service, credential, relay, or model
 configuration changed.
+
+## Explicit route acceptance profiles
+
+`scripts/route-profiles.mjs` contains frozen, versioned evidence snapshots. These
+are caller policies, separate from provider routing and harness strategy. They
+are not runtime health discovery, a model benchmark, or a setting change:
+
+| Profile | Evidence and allowed scope |
+| --- | --- |
+| `sol-low-ptc-marker-v1` | Cloud prompt/follow round trip with Sol/low/PTC returned the exact marker, with one `run_code` declaration and zero tool executions. Only an exact-text, read-only marker check is admitted. Tool execution and general workloads remain unverified. |
+| `sol-low-standard-v1` | On the tested deployment, standard-mode requests ended with empty max-tokens output. Explicit use of this profile is blocked before transport; this is not a universal limitation of Sol or standard mode. |
+
+The evidence was recorded on 2026-10-24 with DSH 0.2.1-rc.3 and pi-ai 1.1.0.
+The exact deployed Magpie source tree was not proven. Revalidate after upgrades
+and introduce a new profile version when evidence or acceptance changes; do not
+silently rewrite the meaning of an existing reservation. Profile ID is part of
+the existing context fingerprint. A reserved native request cannot drop or switch
+profiles to resume under different acceptance rules. Existing callers without a
+profile retain their previous behavior; the new profiles do not globally ban Sol
+standard requests or automatically select a fallback.
+
+For a routine compatibility marker check, start with an **existing session that
+the user has explicitly selected** and the existing authorized `call` transport:
+
+```js
+import { ROUTE_PROFILES } from './scripts/route-profiles.mjs';
+import { TaskSpec, RunContext, DshProviderAdapter, HarnessRunner } from './scripts/harness.mjs';
+
+// The caller supplies existingCall, existingSessionId, stableNativeRequestId,
+// marker, and a retained journal (FileJournal for process restart recovery).
+const routeProfile = 'sol-low-ptc-marker-v1'; // explicit compatibility choice
+const task = new TaskSpec({
+  objective: `Reply only with ${marker}. Do not use tools.`,
+  acceptance: { kind: 'exact-text', text: marker },
+  sideEffects: 'read-only',
+});
+const context = new RunContext({
+  sessionId: existingSessionId, requestId: stableNativeRequestId,
+  lessonsVersion: 'reviewed-marker-check-v1', routeProfile,
+  expected: ROUTE_PROFILES[routeProfile].expected,
+});
+const runner = new HarnessRunner(new DshProviderAdapter(existingCall), { journal });
+const result = await runner.run(task, context);
+```
+
+This copies only **expectations**, not settings. The runner reads native
+projections and checks the actual request header. If the session is not already
+Sol/low/PTC, it blocks without a prompt. It never calls `session/selectModel` or
+changes preset/defaults; native model selection can also save the global default,
+so the caller must handle that separately under explicit authorization. For cloud
+external submission, use the existing `prepareExternalRun` flow with the same
+profile and context; its dispatch guard still applies.
+
+Zero tool events is a **postcondition**, not a tool execution prevention mechanism.
+A prompt saying not to use tools and `sideEffects: read-only` are not enforceable
+native permissions. The caller must have authorization and suitable trusted
+native execution restrictions before sending. PTC's `run_code` declaration does
+not establish sandbox safety. If a tool event is observed, even a correct marker
+is `failed / terminal_not_verified`; this cannot undo an already executed tool.
+The profile must not be used as authorization for real work or write operations.
