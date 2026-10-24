@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // agent-fleet CLI: doctor | contexts [--apply] | launchd NAME | check [--dispatch] [--project P] [--instance ID --session SID] | release agenvo|dsh [--sha SHA] [--rollback] [--connector codex]
-import { TaskSpec, RunContext, DshProviderAdapter, HarnessRunner } from "./harness.mjs";
+import { dshTurn } from "./dsh-check.mjs";
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -225,28 +225,6 @@ async function check() {
       console.error("WARNING: could not revoke the test grant:", e.message);
     }
   }
-}
-
-const READ_ONLY = "只读验收：用一句话说明这个目录是什么项目，不要修改任何文件。";
-
-/** One read-only DSH turn through native endpoints; `ok` only when the turn after our input ends completed. */
-async function dshTurn(call, { root, project, sessionId }) {
-  const fail = (text) => ({ ok: false, sessionId, text: String(text).slice(0, 200) });
-  if (!sessionId) {
-    if (!root) return fail("no projectsRoot for this machine in fleet.json");
-    const ws = await call("workspace/create", { request: { path: `${root}/${project}` } });
-    if (ws.error) return fail(JSON.stringify(ws.error));
-    const created = await call("session/create", { request: { workspaceId: ws.result.workspace.workspaceId } });
-    sessionId = created.nativeIds?.sessionId;
-    if (!sessionId) return fail(JSON.stringify(created.error ?? created));
-  }
-  const runner = new HarnessRunner(new DshProviderAdapter(call));
-  const result = await runner.run(
-    new TaskSpec({ objective: READ_ONLY, acceptance: { kind: "nonempty-text" } }),
-    new RunContext({ requestId: `fleet-check-${randomBytes(12).toString("hex")}`, sessionId, lessonsVersion: "fleet-check-v1" }),
-  );
-  return { ok: result.status === "success", sessionId, text: `${result.status}: ${result.code}` };
-
 }
 
 /**

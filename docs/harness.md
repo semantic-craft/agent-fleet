@@ -60,10 +60,10 @@ in one process share a journal ownership guard. Preserve the journal on crashes;
 never reconstruct a new request ID to hide an unknown write outcome. The library
 does not create a second task ledger or claim cross-process locking.
 
-For final delivery, use existing `scripts/receipt.py` with a project-local JSON
-payload containing the sanitized RunResult and a stable result revision key;
-acknowledge only after actual delivery. That immutable result receipt is separate
-from mutable transport recovery state. Overlay loading and project selection
+For final delivery, pass the sanitized RunResult to the caller’s existing receipt
+mechanism with a stable result revision key; acknowledge only after actual delivery.
+Immutable result receipts are separate from mutable transport recovery state.
+Overlay loading and project selection
 continue to use `scripts/lib.mjs`; no host values enter this library.
 
 ## Frozen policy selection and evaluation
@@ -89,7 +89,7 @@ actual preset/model and a bounded read-only tool invocation. Do not use
 `fleet.mjs check --dispatch` as an offline test: it creates real requests.
 
 Offline implementation validation (2026-10-24): harness tests 28/28; complete Node
-suite 66/66; existing Python receipt tests 2/2; private guard passed with no overlay.
+suite 66/66 on the development base; private guard passed with no overlay.
 Independent review added and rechecked late-deadline, policy-constructor spoof,
 foreign-input cancellation, and sequence-gap regressions. Python-generated
 bytecode initially tripped the private guard because it embeds source paths;
@@ -157,3 +157,31 @@ reader, retaining its original RPC ID, cursor and journal. It establishes that
 specific route and tool-loop, not standard-preset or other-provider acceptance,
 not push delivery, and not a blanket production rollout of this module. Private
 request identifiers and raw trace evidence remain in the owning task's records.
+
+## Fleet entrypoint integration
+
+`fleet.mjs` directly imports `dshTurn` from `scripts/dsh-check.mjs`; the tested
+wrapper is the actual DSH branch used by `check --dispatch`, not a separate demo.
+Importing the wrapper has no CLI, OAuth, or dispatch side effects. Its injected
+Agenvo-envelope tests cover an existing session and workspace/session creation
+through prompt and matching terminal. Max-token failure, errors, and completed
+turns with empty output all remain unsuccessful. Creation errors are sanitized.
+
+The complete CLI OAuth entrypoint was deliberately not executed: it registers a
+new grant, which is outside this validation's permission scope. These changes are
+local commits in the isolated worktree, not deployed or applied to the primary
+checkout. The frozen v2 harness module and existing in-flight reservations are
+unchanged by this extraction.
+
+Wrapper validation: 11/11 injected-envelope integration tests; complete Node suite
+96/96 and private guard passed with a temporary HOME and no live overlay. This
+exercises the exported production wrapper, not the full CLI authentication flow.
+
+The wrapper extraction was independently reviewed by a non-implementing agent,
+which reran all 11 wrapper tests successfully. A separate authorized cloud run
+also verified Argon medium with the standard preset: a harmless text task under
+read-only permissions completed with zero tool executions and matching harness
+readback. That run used an independently installed parallel build, not a gateway
+switch performed by this wrapper work. It included tool declarations; exact
+13-schema wire comparison remains a separate evidence check. This does not imply
+the isolated worktree changes have been deployed.
