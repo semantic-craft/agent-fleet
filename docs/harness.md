@@ -185,3 +185,111 @@ readback. That run used an independently installed parallel build, not a gateway
 switch performed by this wrapper work. It included tool declarations; exact
 13-schema wire comparison remains a separate evidence check. This does not imply
 the isolated worktree changes have been deployed.
+
+## Optional durable recovery (v3)
+
+`FileJournal` in `scripts/file-journal.mjs` is an optional local recovery adapter.
+The default remains a process-local Map. Audit found no mutable runstore on main;
+the separate result/delivery receipt implementation is immutable, so it is not
+used as a transport journal and was not imported into this change.
+
+```js
+import { FileJournal } from './scripts/file-journal.mjs';
+import { HarnessRunner, DshProviderAdapter, TaskSpec, RunContext } from './scripts/harness.mjs';
+
+// Caller explicitly supplies an already-existing, owner-only directory and an
+// already-authorized transport. There is no default global storage or login.
+const journal = new FileJournal(existingPrivateDirectory);
+const runner = new HarnessRunner(new DshProviderAdapter(existingCall), { journal });
+const task = new TaskSpec({
+  objective: originalTaskText,
+  acceptance: { kind: 'exact-text', text: expectedAnswer },
+  sideEffects: 'read-only',
+});
+const context = new RunContext({
+  sessionId, requestId: stableRequestId, lessonsVersion: 'reviewed-lessons-v1',
+  expected: { provider, model, reasoningEffort, preset },
+});
+async function dispatchOrObserve() {
+  const prepared = await runner.prepareExternalRun(task, context);
+  // Never call run() after failed preparation: an unreserved run may submit.
+  if (prepared.result.status !== 'prepared') return prepared.result;
+  if (prepared.dispatchAllowed) {
+    // Exactly one send. The private descriptor contains the task; do not log it.
+    try { await existingCall(prepared.descriptor.method, prepared.descriptor.params); }
+    catch { /* Unknown admission: retain the original reservation and observe. */ }
+  }
+  // dispatchAllowed=false MUST NOT send again, even after an earlier timeout.
+  // After restart reconstruct the SAME task/context/policy and directory.
+  return runner.run(task, context); // reserved request: readback only
+}
+const result = await dispatchOrObserve(); // log/receipt only this sanitized result
+```
+
+The stable `(sessionId, requestId)` pair is the run identity; there is no extra ID
+registry. One hashed file per explicitly addressed session contains only request
+IDs, review versions, hashes, sequence/provenance metadata and sanitized terminal
+evidence. No directory scan, task body, answer text, reasoning text, credentials,
+or generic payload field is supported. Unknown fields are rejected, not silently
+persisted. Caller-supplied identifiers/model labels must be non-sensitive metadata.
+The file has a 2 MiB bound; no automatic pruning or state migration occurs.
+
+A small Python 3 stdlib helper (`journal-lock.py`, isolated mode, no packages)
+holds a POSIX `fcntl` lock for the session while the runner works. Different
+requests cannot use that same session concurrently. Every read/write verifies
+root and lock inode identity; the helper also verifies identity on a pre-mutation
+handshake. Missing Python, unsupported platform, helper loss, unsafe paths, lock
+contention or ambiguous storage return blocked; there is no unlocked fallback.
+The caller must provide an existing 0700 directory on a local POSIX filesystem;
+record and lock files use 0600. Network filesystems and multi-host locking are
+unsupported. The helper is temporary per runner call, not an installed service.
+
+An update writes a same-directory exclusive temporary file, fsyncs it, renames it
+atomically, then fsyncs the directory. Attempted/cancel-attempted markers must
+complete that sequence before transport mutation. The session file derives
+pending ownership from an attempted run without a confirmed terminal. Thus an OS
+lock released by process death **does not release remote task ownership**: a new
+request in that session is blocked until the old run is observed terminal or an
+operator explicitly resolves it using native evidence. The library exposes no
+clear/forget/reset shortcut. Same-ID recovery observes first and never blindly
+resends. A crash after the durable marker but before sending may leave a request
+that never reached DSH; that ambiguity is intentionally retained, not retried.
+Queued cancellation remains unsupported, and runtime cancellation still requires
+exclusive native-session ownership outside this library's local-process lock.
+
+On crash, a leftover temporary file is ignored; the canonical file is either its
+prior complete state or the renamed complete state. Corrupt/truncated records,
+unknown format versions, or incompatible harness versions block before transport.
+Do not delete, move, replace or restore the directory to bypass a pending run.
+Manual repair must preserve original IDs/baseline and independently establish the
+remote outcome. Local locks cannot enforce ownership against unrelated native
+clients or another directory/host. Filesystem fsync/atomic-rename guarantees are
+required; process-kill tests are not proof against storage hardware failure.
+
+v3 freezes this storage/correlation contract. Existing v2 contexts and reservations
+must continue using their original frozen observer; they are not silently migrated.
+
+## Header inheritance
+
+The inspected DSH `dsh-agent-loop` source (`buildRequest`, lines 1214–1240,
+SHA-256 `cf57e3ecd487ac5c2553455aaa5cef2c6fb41e6bd61be5aa455675d1d7193033`)
+emits a header only on initial/resume, config change or new request series. A
+second turn can therefore have a real terminal without a fresh request/header.
+Preparation now reads bounded, contiguous history to the latest header and stores
+only provider/model/effort plus header origin sequence and baseline coverage.
+Observation may inherit that proven header while requiring continuous events,
+unchanged model/preset projections before and after, and compatible request/context.
+Evidence marks inherited headers explicitly. Missing provenance or an unreadable
+history window is blocked rather than fabricated; a matched max-tokens terminal
+with proven inherited header is failed, not an observation timeout. This does not
+claim a fresh tool-schema snapshot or expanded cancellation support for headerless
+running turns. Such a cancellation returns `headerless_cancellation_unsupported`
+without sending cancel or claiming that the run is merely queued.
+
+v3 offline validation: 128/128 complete repository tests and private guard passed
+with a temporary HOME and no live overlay. This includes 51 harness tests and 20
+durability tests, with independent-process SIGKILL/restart, same-session different
+request blocking, pre-rename interruption, fsync-before-mutation ordering, helper
+loss, lock/root inode replacement, corruption/version rejection, unknown cancel
+recovery, inherited-header restart and catalog effort `off`. No live request,
+CLI OAuth grant, service install or shared-checkout receipt change was involved.
