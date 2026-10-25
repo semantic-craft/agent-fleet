@@ -32,7 +32,7 @@
 
 遵循[Codex Desktop 交接契约](codex-desktop-handoff.md)和[派活技能的 Codex Desktop 步骤](../skills/delegate-via-agenvo/SKILL.md#codex-desktop)。这不是 Herdr CLI 模板验收。
 
-**仅跨 backend 的创建前门槛**：需要迁移原生 writer 时才要求受支持交接及完整 canary；否则 `blocked_native_writer_release`。同 host 执行不要求 writer 交接，须观察实际目标并绑定 thread/turn；Desktop 可见性独立验收。connector 重启不释放独立 native writer。目标仍为 Desktop 可见后 agent `turn/start`，见[交接契约](codex-desktop-handoff.md)。
+**创建前门槛**：确认 connector 暴露 `thread/unsubscribe` 且 watcher 不抢其他 loaded 线程，否则 `blocked_native_writer_release`。同 host 共享 app-server 与 Desktop 自带 backend 也要交还 writer；本次 turn 终态后由同一 connector 退订，再截图核实项目下可见且无横幅。connector 重启不释放独立 native writer。目标仍为 Desktop 可见后 agent `turn/start`，见[交接契约](codex-desktop-handoff.md)。
 1. discovery 固定目标 deviceId/instanceId；确认目标机器上的 cwd 与 brief 可读，核对当前模型/权限和 schema。
 2. `thread/start` 建空线程 → `threadId`；仅需跨 backend 时按已验证路径完成原生 ownership 交接。
 3. 在目标机器打开 `codex://threads/<threadId>?prompt=…`。核对正确 threadId、cwd、brief；Desktop 可见且无占用横幅。

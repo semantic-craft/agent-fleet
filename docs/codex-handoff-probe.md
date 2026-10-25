@@ -1,5 +1,7 @@
 # Codex handoff probe candidate (not deployed)
 
+> 历史隔离 probe 候选，未部署。当前共享 app-server → Desktop 正式流程是[持有订阅的连接调用 thread/unsubscribe](codex-desktop-handoff.md)，同 host 也适用；kickstart 不释放 native writer。本候选不作为该流程前置，其额外隔离门槛仅适用于启动本候选。
+
 Scope: the required external DSH/GrokBot → Agenvo → Codex Desktop route.
 It does not gate dot’s available, authorized native platform task route; that route
 cannot replace external callers’ needs. See [caller routing](caller-routing.md).

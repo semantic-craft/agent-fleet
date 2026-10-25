@@ -13,7 +13,7 @@ export function lintRoutes(read) {
   }
   for (const path of ['README.md','AGENTS.md','prompts/operator.md','lessons.md','docs/codex-desktop-handoff.md','docs/architecture.md','docs/runbook.md','docs/new-mac.md','skills/delegate-via-agenvo/SKILL.md','prompts/acceptance-codex.md']) {
     const text = read(path);
-    if (!text.includes('同 host') || !text.includes('跨 backend')) errors.push(`${path}:execution_topology_missing`);
+    if ((!text.includes('同 host') || !text.includes('跨 backend')) && !text.includes('thread/unsubscribe')) errors.push(`${path}:execution_topology_missing`);
     if (/writer 未验通只阻断这条路线|──待验 writer handoff──|在创建前验证原生 ownership 路径|Desktop 未见可见会话不算执行|→ 按已验证原生 ownership 路径交接→|当前未验证，报告 `blocked_native_writer_release` 并停止，不能先调|在 `thread\/start` 之前，必须已有/.test(text)) errors.push(`${path}:blanket_writer_gate`);
   }
   return errors;
