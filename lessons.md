@@ -317,3 +317,10 @@ dot 原生平台任务通道不受本节阻断；DSH／GrokBot→Agenvo→Codex 
 
 - `session/selectModel` 可能写全局默认；操作窗口需协调所有选择者和新会话创建，漂移不得覆盖。纯前置校验见 `scripts/model-selection.mjs`，回归见 `test/model-selection.test.mjs`；不是服务端CAS。
 - 版本字符串与模型别名不代替行为；unknown/candidate不得晋升已验工具能力。服务重建不重发在途任务。入口见 `docs/migration-and-upgrades.md`。
+
+### 双向派活需要收据，连接重启不等于交接
+
+- 起因与后果：旧默认仍可能从已安装技能或 connector context 进入；accepted、空闲和链接打开均不足以证明 Desktop 与业务成功。
+- 正确做法：以派活技能的 Magpie 四步和轮询为准；connector kickstart 不证明 native writer 释放，DSH 同值选模仍回读全局默认。原生终态、业务结果和收据分别留证。
+- 验证点：`npm test`；真实烟雾逐项报告 UI、模型 header、终态、标记与 receipt。UI 或模型失败就停该路，不换 CLI 冒充。
+- 复发记录：Seen 1x (2026-10-25，本次双向派活验收)。

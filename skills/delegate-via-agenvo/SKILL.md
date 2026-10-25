@@ -19,17 +19,22 @@ description: Hand work to another coding agent (Codex Desktop, DeepSeek Harness/
    - 对方没有你的上下文。任务正文写全：目标、仓库和路径、已知事实、约束、验收方式，以及是否允许提交、推送或开 PR。
    - 核对实际模型：CLI 每轮显式带模型参数。DSH 优先复用已选好且匹配的独占会话；`session/selectModel` 可能持久化全局默认，绝非隔离设置。若运行时明确发现 `session/selectModelForSession` 且实时 catalog 能力为 true，可经[会话级候选入口](../../docs/dsh-session-only.md)显式选择独占会话；applied 非 durable，仍需核对下一请求 header，旧 runtime 不回退。此候选未部署，不能仅据仓库存在就调用。确需使用旧接口时先按[全局副作用保护](../../docs/migration-and-upgrades.md#dsh-模型选择全局副作用保护)取得授权、协调所有选择入口/暂停新会话、快照、受保护恢复并回读；未知结果不重发，漂移不覆盖。不得自动切模型或默认。
    - 派出后立刻告诉用户：任务名、任务目录、会话 id 和桌面查看入口——DSH 报项目名与 sessionId；Codex 报 thread_id 与 `codex://threads/<thread_id>`；Claude Code 报 `session_id`；agy 报 `conversation_id`；Herdr 里的任务另报 workspace 与轮次 pane。没拿到登记结果或链接时如实说，不说用户能在桌面里看到。
-4. **跟进**：结果不会自己回来。
+4. **跟进**：采用 call-now / fetch-later，先记录 threadId／sessionId、turnId／requestId，再退出提交调用；结果不会自己回来。
    - 有事件订阅就等事件（Herdr `pane_exited`、DSH `turn/end`）；没有就按节奏查：派出约 60 秒后第一次，之后每 2–3 分钟一次，约 10 分钟仍未结束就停下，把会话 id 和当前状态报告给用户。每次查询单独一次 `execute`。
    - 事件不保证送达：connector 与 relay 之间的连接会断开重连（2026-10-23 实测：relay 主机走机场线路时 31.5 分钟断 30 次，网关规则改走直连后 31.6 分钟断 1 次），断线期间的事件不会补发。所以有订阅也要保留轮询；收到 `agenvo.resync_required` 时重新读状态，不重新派活。
+   - 先廉价查状态再读输出：Codex `thread/turns/list` 用 `limit: 1, itemsView: "notLoaded"`，关联本次 turnId；completed 后读同一 turn 的完整输出，failed/interrupted 记录失败。DSH `session/list {_request:{}}` 找本 session 的 running；false 只是读结果信号，再 `session/follow`（maxMessages: 1）核对本 requestId 对应的 `turn/end` 与回答。旧 turn 或空闲不算本轮完成。
+   - 有 `events/subscribe` 能力时优先订阅 `runtime.changed` 的 `turn/completed`／`turn/end`，按实例和会话关联；推送只唤醒回读，不证明业务成功。Grok Bot 没有订阅工具就用上述轮询，不临时造 webhook。
    - 追问或纠偏发到**同一个**会话；方向错了就中断，说明原因后重新交代。
 5. **验收**：输入"已接受"、agent"空闲"、轮次结束，都不等于任务完成。读到实际结果、对照第 3 步的验收方式核对后才算完成。汇报写清：结论、对方做了什么、哪些没做或没验证、需要用户决定的事。
+
+6. **收据**：外循环验收后写 `~/Projects/_status/<任务>-receipt.md`，含任务、目标实例、threadId／sessionId、turnId／requestId、实际 provider/model/effort、原生终态、业务结论、证据路径、未验项与时间。先写同目录临时文件再原子替换并回读；失败／超时也写明确的 failed／blocked／pending 收据，不能冒充成功。亚／图灵读收据收口；无收据不算收口完成，空则静默但轮询责任仍在派工方。
 
 出错时先读原生状态再决定是否重试。返回 `unknown` 的写操作可能已经执行（实测两种情况都有），不要直接重发。
 
 ## 选哪个 agent
 
 - dot 有原生平台任务工具且已授权 → Codex 走原生平台任务通道（见调用方路由），不绕经外部交接。
+- Agenvo 路线未点名时默认 Codex Desktop，`model=gpt-6-astra`、`modelProvider=magpie`、effort `medium`，不修改用户全局默认；Magpie 不可用就报告该层失败。
 - DSH／GrokBot 派 Codex → **外部 Codex Desktop**（见下节）；该需求保留，同 host 基线已验，调用方及 Desktop 仍未验，不影响 dot 原生路线。
 - 用户点名 Claude Code／agy／DSH headless（或同类 CLI／pane）→ **Herdr**（承接用户指定的这类模型线，与 按调用方选择的 Codex 路线分开）。
 - 桌面可见且自动开跑 → **DSH** 实例。外部 DSH／GrokBot 经 Agenvo 的 Codex Desktop 走下节四步（同 host 无需交接，跨 backend 才核交接；Desktop 可见后再 `turn/start`）。
@@ -55,14 +60,22 @@ description: Hand work to another coding agent (Codex Desktop, DeepSeek Harness/
 
 按[Codex Desktop 交接契约](../../docs/codex-desktop-handoff.md)执行：
 
-1. 先从宿主实际能力、discovery 与实时 schema 确定目标 deviceId/instanceId 和 backend。同 host 执行无需 writer 交接；仅跨 backend 的创建前门槛缺失时返回 `blocked_native_writer_release`，不创建。connector 重启不释放独立 native writer。
-2. 需要 brief 时写入同一 deviceId 的授权目录并从目标机器回读；纯文本验收不要求文件。`thread/start` → `threadId`，保存目标关联；unknown 只回读，不重建。
-3. 在目标机器通过受支持入口打开同一 thread，独立确认 Desktop 可见。共享路径、历史回读或 loaded 列表不能代替 UI 证据。未确认就保留 Desktop 未验；获准同 host 基线可独立进行，不冒称完整桌面派活。
-4. 完整桌面流程仍在可见后由 agent 对同一 thread `turn/start`，保存 turnId、结果及终态，再同线程续接。跨 backend 时另须原生 ownership 证据；不改成 exec 或用户 Send。未知提交只回读，不重复发送。
+1. **建线程**：从 discovery/schema 固定 deviceId/instanceId/backend；同 host 执行无需 writer 交接，仅跨 backend 的创建前门槛缺失时返回 `blocked_native_writer_release`，不创建。brief 放同一 deviceId 的授权目录并从目标机器回读；纯文本无需文件。`thread/start {cwd, model: "gpt-6-astra", modelProvider: "magpie"}`，保存 threadId 和模型回执，unknown 只回读。
+2. **核对写锁**：brief 的 kickstart 步骤只作用于已发现的目标 connector launchd label：`launchctl kickstart -k gui/<uid>/<connector-label>`。先核对它没有本轮之外的在途调用；不能重启 Desktop/native host。connector 重启不释放独立 native writer，同 host 不需要释放，不能把 kickstart 成功当作跨 backend ownership 证据；需要交接而无原生证据就停止。
+3. **桌面可见**：目标机器打开 `codex://threads/<threadId>?prompt=<URL 编码的正文>`，独立确认同一会话 Desktop 可见。链接只预填，不是提交；共享路径、loaded 或历史不能替代 UI。UI 被拒绝或看不到时停止完整烟雾并保留未验，不换工具绕过拒绝。
+4. **提交并回程**：可见后对同一 thread `turn/start`，显式 `model: "gpt-6-astra", effort: "medium"`，继承已核对的 magpie provider。保存 turnId，按上文轮询至原生终态、读实际回答、写收据；unknown 只回读，不重发。不得静默换 Herdr exec 或直连 ChatGPT 冒充 Desktop 成功。
+
+只读烟雾正文限定只回复唯一 `MAGPIE_CODEX_OK_<标记>`，不调用工具、不改文件。权限以原生回执为准：connector 可能强制 full access，即使请求 read-only 也不能声称沙箱已只读；收据分别记录任务只读和实际权限。
+
+## DSH Desktop Magpie
+
+选 discovery 中目标机器的 DSH 桌面实例（长任务用常开机器），依次 `workspace/create` → `session/create` → 选模 → `session/prompt`；桌面左栏项目和 sessionId 分别核验。只读烟雾 create/prompt 均传 `permission: "read-only"`，只回复 `MAGPIE_DSH_OK_<标记>`，禁止工具与文件写入。
+
+先读实时 `session/modelCatalog`，例如 `provider: "magpie", model: "antigravity/gemini-4-argon", reasoningEffort: "medium"`。按第 3 步的全局副作用保护选模：优先实际可用的 session-only 接口；旧 `session/selectModel` 会保存全局默认。brief 禁止改私人默认时，只能在已核实目标三元组与当前默认完全相同时显式选择同值并回读默认；默认不匹配或不能协调并发选择就 blocked，不先改后还原。`selected` 不证明推理，`session/follow` 须核对实际请求 header、精确标记与本轮 `turn/end`。模型错误停止该烟雾，不自动换 preset/model 重试。
 
 ## 一轮一个 tab（Herdr 里的 Claude Code、agy、dsh headless）
 
-用户点名 Claude Code／agy／DSH headless（或同类 CLI／pane）时走 Herdr；Herdr 承接用户指定的这类模型线，与 按调用方选择的 Codex 路线分开。
+Herdr `codex exec` 仅属遗留／用户明确点名 CLI 的路线，不是 Codex 默认或 Desktop 失败后的自动降级。用户点名 Claude Code／agy／DSH headless（或同类 CLI／pane）时走 Herdr；Herdr 承接用户指定的这类模型线，与 按调用方选择的 Codex 路线分开。
 
 每一轮在任务 workspace 里新开一个 tab 运行，命令以 `echo $? > "$D/exit-<轮次>"; exit` 结尾：这一轮结束时 tab 关闭，Herdr 发 `pane_exited`。workspace 的第一个 pane（读取 pane）留着，用来读文件。每轮的输入输出都在 `~/Projects/_status/<任务名>/`：`brief-N.md`、`result-N.*`、`events-N.jsonl`、`stderr-N.log`、`exit-N`。
 
