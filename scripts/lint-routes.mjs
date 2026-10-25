@@ -4,6 +4,9 @@ import { resolve } from 'node:path';
 import { routeTable } from './caller-routes.mjs';
 export function lintRoutes(read) {
   const errors = [];
+  for (const path of ['docs/caller-routing.md', 'skills/delegate-via-agenvo/SKILL.md']) {
+    if (!read(path).includes('native-thread-selection.md')) errors.push(`${path}:explicit_selection_entry_missing: use docs/native-thread-selection.md`);
+  }
   const canonical = read('docs/caller-routing.md').split('<!-- caller-routes:start -->\n')[1]?.split('\n<!-- caller-routes:end -->')[0];
   if (canonical !== routeTable()) errors.push('caller_route_table_drift');
   for (const path of ['README.md','AGENTS.md','docs/new-mac.md','docs/runbook.md','skills/delegate-via-agenvo/SKILL.md','prompts/operator.md','prompts/acceptance-codex.md']) {

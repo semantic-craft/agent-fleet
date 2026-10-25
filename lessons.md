@@ -1,5 +1,12 @@
 # 项目教训
 
+### 显式模型选择必须落在所请求的会话层级
+
+- 证据：2026-10-25 创建原生独立会话时漏传 model/thinking，默认 Astra/medium；提示词里的 DeepSeek/high 子 agent 不能改变输入框主会话选择。此前本文件已记录 Claude Code 不显式传模型落到默认值的失败，故“显式模型丢失”是跨入口第二个案例；独立会话/子 agent 混淆只确认本次一次。
+- 修复：`scripts/native-thread-selection.mjs` 从唯一 selection 生成原生请求并核对实际轮次；技能与 caller-routing 链到同一契约。没有复制厂商列表、改变全局默认或另建调度服务。
+- 验证点：`node --test test/native-thread-selection.test.mjs` 重放漏参、spawn 替代和错误回读；`npm test` 包含此回归。实际两独立会话记录所选模型/high并执行命令，UI与底层provider另验。
+- 边界：内置工具的调用拦截点不属于本仓；绕过检查器不能强制阻止。自然语言意图与现有写者停止确认仍需协调者判断。
+
 实现、评审或验收前先读相关条目；用户纠正、返工或漏验暴露了可复用的教训后补记。格式见 xw-tooling 的 lessons 模板。
 
 ### Cloudflare 交互走 `cf` CLI

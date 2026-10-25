@@ -9,6 +9,8 @@ description: Hand work to another coding agent (Codex Desktop, DeepSeek Harness/
 
 ## 先选入口
 
+用户要求独立 Codex 会话并点名模型/档位时，先走[原生会话选择契约](../../docs/native-thread-selection.md)的参数生成与回读检查；不要用子 agent 或只在提示词提模型交付。未指定模型时仍遵循宿主默认。该检查不能拦截绕过它的内置工具调用。
+
 先读[调用方路由](../../docs/caller-routing.md)。dot 当前拥有原生平台任务工具且电脑已连接／授权时，Codex 派活优先该通道，不适用下文 Agenvo 的 Desktop 交还要求。DSH→Agenvo→Codex Desktop、GrokBot→Agenvo→Codex Desktop 是需要保留的外部需求，不能用 dot 专属 API 替代；第三方工具缺失时不得假定可用。跨机先做环境发现。下文只描述 Agenvo 路线。
 
 ## 步骤
