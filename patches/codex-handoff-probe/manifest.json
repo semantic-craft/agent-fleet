@@ -1,0 +1,35 @@
+{
+  "format": 1,
+  "deployed": false,
+  "liveValidated": false,
+  "source": {
+    "repository": "https://github.com/semantic-craft/agenvo",
+    "base": "cd10fb92e1da731b307b85f8e94e8db8b6b8808a",
+    "candidate": "c078edd511fef0310adc0f061026bd648256c3e2"
+  },
+  "patch": {
+    "file": "agenvo.patch",
+    "sha256": "a8a2d570024d809d22d9d8006eb95dab901029da4ecef7b03bd287bccb0fdbe7"
+  },
+  "license": {
+    "file": "agenvo-license.txt",
+    "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+  },
+  "notice": {
+    "file": "agenvo-notice.txt",
+    "sha256": "6967c6e4d653a8eb2719f56926203e1e32d618a5a866bcd23ae686ebc9e956d1"
+  },
+  "nativeSchema": {
+    "cliVersion": "0.164.0",
+    "method": "thread/unsubscribe",
+    "generatedParamsSha256": "77c67e0dc0a729af2d4612f30ed63f1297160232e96cd32b7cb9cc3e7fff0233"
+  },
+  "validation": {
+    "focusedTests": 14,
+    "existingCodexTests": 8,
+    "typecheck": true,
+    "codexBuild": true,
+    "fullSuite": false,
+    "nativeSystemDesktop": false
+  }
+}

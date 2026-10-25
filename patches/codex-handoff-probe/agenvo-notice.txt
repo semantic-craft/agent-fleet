@@ -1,0 +1,49 @@
+Agenvo
+Copyright 2026 Agenvo contributors
+
+The selected Codex protocol schemas in
+apps/codex-app-server/src/schema/codex.json are derived from JSON schemas generated
+by OpenAI Codex CLI 0.160.1, licensed under Apache-2.0.
+OpenAI Codex
+Copyright 2025 OpenAI
+https://github.com/openai/codex
+
+Agenvo restricts the available methods and properties and retains only reachable
+schema definitions. See scripts/import-codex-schema.py for the transformation.
+No Codex runtime binary is distributed with Agenvo.
+
+The Lody cloud protocol subset in apps/lody/src is based on public client
+interfaces from LodyAI/Lody, commit 3d4787114477cf305a965da471705c8b883fa0c1,
+licensed under Apache-2.0. The local Loro transport and wire helpers in
+apps/lody/src/native are adapted from the same project at commit
+a8aa4c221e9a0f6f80f6e69cb5e72718fcf66576, with daemon receipt confirmation added.
+Agenvo implements a limited cloud and local client adapter;
+no Lody daemon or provider runtime is distributed.
+https://github.com/LodyAI/Lody
+
+The selected OpenCode input schemas in apps/opencode/src/schema.json are derived
+from OpenCode 1.18.35 GET /doc. See scripts/import-opencode-schema.py.
+No OpenCode runtime binary is distributed with Agenvo.
+https://github.com/anomalyco/opencode
+
+MIT License
+
+Copyright (c) 2025 opencode
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
