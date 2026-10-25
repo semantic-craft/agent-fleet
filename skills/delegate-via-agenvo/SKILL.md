@@ -25,8 +25,10 @@ description: Hand work to another coding agent (Codex Desktop, DeepSeek Harness/
 
 ## 选哪个 agent
 
-- 用户点名了就用点名的。没点名时默认 **Codex Desktop**（见下节）；Codex 不可用（额度用尽、离线、报错）时用 DSH，DSH 与 Codex 同级，能新建、追问、中断。
-- 要在桌面 app 的**项目下**看到且自动开跑：用 DSH 实例。Codex Desktop 空会话出现在桌面左栏，由用户按发送开跑。
+- 派 Codex／默认编码 → **Codex Desktop**（见下节）。
+- 用户点名 Claude Code／agy／DSH headless（或同类 CLI／pane）→ **Herdr**（承接用户指定的这类模型线，与 Codex Desktop 默认编码线分开）。
+- 桌面可见且自动开跑 → **DSH** 实例。Codex Desktop 空会话出现在桌面左栏，由用户按发送开跑。
+- Codex 不可用（额度用尽、离线、报错）→ 改 DSH；DSH 与 Codex 同级，能新建、追问、中断。
 - Antigravity 桌面版（2.25.0）调不出 `agy -p` 的会话，`--new-project` 只生成空项目；需要桌面可见时不选 agy。
 - 要长时间运行、不怕笔记本合盖：选常开那台 Mac 上的实例。
 - 默认 full access。用户没有要求时不要降权限，也不要替用户回答对方 agent 提出的业务决定问题。
@@ -52,6 +54,8 @@ description: Hand work to another coding agent (Codex Desktop, DeepSeek Harness/
 Brief 落 Helios 本机；prompt 写「读 brief 再动手」。
 
 ## 一轮一个 tab（Herdr 里的 Claude Code、agy、dsh headless）
+
+用户点名 Claude Code／agy／DSH headless（或同类 CLI／pane）时走 Herdr；Herdr 承接用户指定的这类模型线，与 Codex Desktop 默认编码线分开。
 
 每一轮在任务 workspace 里新开一个 tab 运行，命令以 `echo $? > "$D/exit-<轮次>"; exit` 结尾：这一轮结束时 tab 关闭，Herdr 发 `pane_exited`。workspace 的第一个 pane（读取 pane）留着，用来读文件。每轮的输入输出都在 `~/Projects/_status/<任务名>/`：`brief-N.md`、`result-N.*`、`events-N.jsonl`、`stderr-N.log`、`exit-N`。
 
