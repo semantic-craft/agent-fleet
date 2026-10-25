@@ -1,0 +1,45 @@
+{
+  "date": "2026-10-25",
+  "source": "dsh-native-agenvo-mcp",
+  "dshInitiated": true,
+  "grokbotInitiated": false,
+  "dshPreset": "fleet-agenvo",
+  "dshModel": {
+    "provider": "magpie",
+    "model": "antigravity/gemini-4-argon",
+    "effort": "medium",
+    "api": "openai-completions"
+  },
+  "codexObserved": {
+    "runtimeVersion": "0.164.0",
+    "model": "gpt-6-astra",
+    "modelProvider": "openai",
+    "effort": "medium",
+    "upstreamProtocol": "unknown"
+  },
+  "sameThread": true,
+  "turns": [
+    {
+      "ordinal": 1,
+      "status": "completed",
+      "text": "DSH_CODEX_CITRINE_A1_7B62",
+      "modelToolItems": 0
+    },
+    {
+      "ordinal": 2,
+      "status": "completed",
+      "text": "DSH_CODEX_CITRINE_A2_7B62",
+      "modelToolItems": 0
+    }
+  ],
+  "dshFinalStatus": "completed",
+  "historyItemsView": "full",
+  "historyPageComplete": true,
+  "nativeIds": "redacted; retained in private task receipt",
+  "desktopVisible": "unverified",
+  "crossBackendHandoff": "unverified",
+  "pushDelivery": "unverified",
+  "unsubscribePerformed": false,
+  "hostActivity": "Existing hooks and MCP startup ran; zero model tool items is not zero host activity. Raw hook content excluded.",
+  "notificationGapObserved": true
+}
