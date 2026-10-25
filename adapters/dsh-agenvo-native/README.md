@@ -20,7 +20,7 @@ The host-only `createHostAuthorization(ctx, config)` creates an authorization co
 
 **New approval boundary:** this is a new native DSH client identity, with credentials stored as a plugin-owned grant in the configured DSH `credentials` provider, rather than the external bridge's cache. The provider's storage location, approved callback/consent UI, and scope must be confirmed before live use. Do not import dot, GrokBot or mcp-remote credentials. Plugin scope/only-two-tools is not server-side instance authorization. Agenvo grants cover the relay's approved instances; fixed server expiry cannot be extended by client refresh.
 
-The earlier fixed mcp-remote 0.1.38 bridge was installed and started once, registered a client and opened consent; it was stopped on user pause. Its dedicated cache exists without an observed token file, and no DSH plugin was loaded. Installation/cache remain preserved. The bridge is an alternative candidate, not an active fallback; never automatically switch identity/transport on failure.
+The earlier fixed mcp-remote 0.1.38 bridge was installed and started once, registered a client and opened consent; it was stopped on user pause. Its dedicated cache exists without an observed token file, and no DSH plugin was loaded. The extra transport installation was subsequently moved to Trash at the user’s request; its former installation path is absent. The independent OAuth registration cache remains preserved, with no token file observed; remote grant state is unknown and no revocation was attempted. The bridge is an alternative candidate, not an active fallback; never automatically switch identity/transport on failure.
 
 ## Repeatable local verification
 
