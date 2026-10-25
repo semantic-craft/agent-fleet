@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {checkCodexHandoff as check} from '../scripts/codex-handoff.mjs';
 const fixture = () => {
  const target = {deviceId:'device-a', instanceId:'codex-a', runtimeVersion:'fixture-runtime', adapterRevision:'fixture-rev', desktopVersion:'fixture-desktop'};
- return {phase:'create', target, capability:{...target, supported:true, status:'verified', nativeMethod:'fixture-only-handoff', evidenceRef:'fixture:canary',
+ return {topology:'cross-backend',phase:'create', target, capability:{...target, supported:true, status:'verified', nativeMethod:'fixture-only-handoff', evidenceRef:'fixture:canary',
  canary:{create:true,nativeHandoff:true,desktopVisible:true,agentSubmit:true,resultReadback:true,desktopCanTakeOverAfterSubmit:true}},
  brief:{deviceId:target.deviceId,path:'/fixture/brief.md',readback:true,evidenceRef:'fixture:brief'}, admission:'not_submitted',threadId:'thread-a',
  ownership:{...target,threadId:'thread-a',verified:true,nativeMethod:'fixture-only-handoff',evidenceRef:'fixture:ownership'},
@@ -43,4 +43,8 @@ test('unknown or already admitted writes never become create or submit actions',
  for(const phase of ['create','submit']) for(const admission of [undefined,'unknown','accepted','completed']) {
   assert.equal(check({...fixture(),phase,admission}).reason,'observe_only');
  }
+});
+
+test('same-host and unspecified topology cannot use a handoff verdict as execution authority',()=>{
+ for(const topology of [undefined,'same-host']) assert.deepEqual(check({...fixture(),topology}),{allowed:false,reason:'handoff_not_applicable'});
 });

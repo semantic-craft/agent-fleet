@@ -10,9 +10,9 @@
 | --- | --- | --- |
 | dot → Codex | 可用且已授权的原生平台任务通道 | 本次维护已实际使用；依赖平台工具及电脑连接授权，跨机先发现环境 |
 | dot／其他已授权 MCP 调用方 → DSH／Herdr | Agenvo | 按原生会话／pane 读取实际结果；模型与工具验收边界分别保留 |
-| DSH → Codex Desktop；GrokBot → Codex Desktop | Agenvo → Codex app-server → Desktop | 明确需要保留的外部路线；writer handoff 尚未验通，不能用 dot 原生工具替代 |
+| DSH → Codex Desktop；GrokBot → Codex Desktop | Agenvo → Codex app-server → Desktop | 明确需要保留的外部路线；同 host 执行基线已验，实际调用方与 Desktop 可见仍未验；不能用 dot 原生工具替代 |
 
-详细选择与验收见[调用方路由](docs/caller-routing.md)。外部路线的 `blocked_native_writer_release` 不表示 dot 原生 Codex 派活不可用。也不假定任意第三方 agent 拥有平台任务工具。
+详细选择与验收见[调用方路由](docs/caller-routing.md)。仅跨 backend 的 `blocked_native_writer_release` 不表示 dot 原生 Codex 派活不可用。也不假定任意第三方 agent 拥有平台任务工具。
 
 ## 目的
 
@@ -26,7 +26,8 @@
 ```text
 dot（具有平台任务工具及授权） ──原生平台任务通道──► Codex
 已授权 MCP 调用方 ──Agenvo──► DSH／Herdr
-DSH／GrokBot ──Agenvo──► Codex app-server ──待验 writer handoff──► Codex Desktop
+DSH／GrokBot ──Agenvo──► Codex app-server ──独立核验可见性──► Codex Desktop
+                      └─仅跨 backend 转移时核验 writer handoff
 ```
 
 本仓库不实现或替代平台任务服务，不承诺跨入口共享同一会话、writer 迁移或所有客户端具有同等工具。

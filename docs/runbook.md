@@ -128,4 +128,4 @@ node scripts/fleet.mjs check                         # 切换后经 relay 端到
 
 ## 外部 Codex Desktop 交接
 
-**创建前门槛**：DSH／GrokBot 经 Agenvo 的 Desktop 空线程流程见[交接契约](codex-desktop-handoff.md)。本 runbook 的独立常驻 app-server 部署没有已验证的单线程 writer 释放路径；connector 发布、回滚或重启均不能充当交接。未确认支持前报告 `blocked_native_writer_release`，不创建或自动重试线程。目标仍为 Desktop 可见后由 agent `turn/start`；可见性与控制权分别验收，完整 canary 还须证明 agent 提交后 Desktop 可接手。
+**仅跨 backend 的创建前门槛**：需要迁移原生 writer 时才要求受支持交接及完整 canary；否则 `blocked_native_writer_release`。同 host 执行不要求 writer 交接，须观察实际目标并绑定 thread/turn；Desktop 可见性独立验收。connector 重启不释放独立 native writer。目标仍为 Desktop 可见后 agent `turn/start`，见[交接契约](codex-desktop-handoff.md)。

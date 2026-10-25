@@ -1,0 +1,27 @@
+{
+  "date": "2026-10-25",
+  "source": "direct-agenvo-baseline",
+  "runtimeVersion": "0.164.0",
+  "connectorVersion": "0.2.0",
+  "permission": "existing-full-access",
+  "toolCalls": 0,
+  "sameThread": true,
+  "turns": [
+    {
+      "ordinal": 1,
+      "status": "completed",
+      "text": "CODEX_HOST_AQUAMARINE_A1"
+    },
+    {
+      "ordinal": 2,
+      "status": "completed",
+      "text": "CODEX_HOST_AQUAMARINE_A2"
+    }
+  ],
+  "nativeIds": "redacted; retained in private task receipt",
+  "historyPageComplete": true,
+  "dshInitiated": false,
+  "grokbotInitiated": false,
+  "desktopVisible": "unverified",
+  "crossBackendHandoff": "unverified"
+}

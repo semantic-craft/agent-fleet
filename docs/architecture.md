@@ -32,9 +32,9 @@
 
 **外部 Codex Desktop**（DSH／GrokBot 经 Agenvo 的明确需求，尚未验通）：
 
-0. **创建前门槛**：缺目标组合原生交接及后续 agent 提交的完整 canary 证据时，报告 `blocked_native_writer_release`，不创建线程；connector 重启不释放独立 native writer。
+**仅跨 backend 的创建前门槛**：需要迁移原生 writer 时才要求受支持交接及完整 canary；否则 `blocked_native_writer_release`。同 host 执行不要求 writer 交接，须观察实际目标并绑定 thread/turn；Desktop 可见性独立验收。connector 重启不释放独立 native writer。目标仍为 Desktop 可见后 agent `turn/start`，见[交接契约](codex-desktop-handoff.md)。
 1. discovery 选定 Codex deviceId/instanceId，brief 与 cwd 均在该目标机器，回读确认可用；`thread/start` 建空线程 → `threadId`。
-2. 按已验证路径完成原生 ownership 交接，Desktop 接手；见[交接契约](codex-desktop-handoff.md)。
+2. 仅需跨 backend 时完成原生 ownership 交接；见[交接契约](codex-desktop-handoff.md)。
 3. 在目标机器打开 `codex://threads/<threadId>?prompt=…`，确认 Desktop 可见。
 4. 经 agenvo 对同一线程 `turn/start` 提交；Desktop 可见与 turn 结果分别验收。
 
