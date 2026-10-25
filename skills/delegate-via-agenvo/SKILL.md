@@ -27,7 +27,7 @@ description: Hand work to another coding agent (Codex Desktop, DeepSeek Harness/
 
 - 派 Codex／默认编码 → **Codex Desktop**（见下节）。
 - 用户点名 Claude Code／agy／DSH headless（或同类 CLI／pane）→ **Herdr**（承接用户指定的这类模型线，与 Codex Desktop 默认编码线分开）。
-- 桌面可见且自动开跑 → **DSH** 实例。Codex Desktop 空会话出现在桌面左栏，由用户按发送开跑。
+- 桌面可见且自动开跑 → **DSH** 实例。Codex Desktop 走下节四步（释放写锁且 Desktop 可见后再 `turn/start`）。
 - Codex 不可用（额度用尽、离线、报错）→ 改 DSH；DSH 与 Codex 同级，能新建、追问、中断。
 - Antigravity 桌面版（2.25.0）调不出 `agy -p` 的会话，`--new-project` 只生成空项目；需要桌面可见时不选 agy。
 - 要长时间运行、不怕笔记本合盖：选常开那台 Mac 上的实例。
@@ -44,15 +44,16 @@ description: Hand work to another coding agent (Codex Desktop, DeepSeek Harness/
 
 ## Codex Desktop
 
-目标：任务出现在 **Codex Desktop**，由用户在桌面按发送开跑。
+目标：任务出现在 **Codex Desktop** 左栏（会话可见），由 agent 经 agenvo 提交开跑。
 
 按[Codex Desktop 交接契约](../../docs/codex-desktop-handoff.md)执行：
 
-1. 从 discovery 选定 Codex 的 `deviceId` / `instanceId`，用该设备的 context/overlay 解析 home、cwd；brief 写到**同一 deviceId** 上经过授权的目录，并从目标机器回读确认可读。找不到同机文件写入入口就阻断，不借另一台机器代写。
-2. **创建前先确认 native writer 的受支持释放路径**。共享 app-server 没有已验证的单线程释放操作时，状态为 `blocked_native_writer_release`，不要创建更多空线程。connector 重启不释放独立 app-server 的 writer；禁止把 `launchctl kickstart` 当交接步骤。
-3. 仅在前置条件满足时按当前 schema 调 `thread/start` 建空线程，不调 `turn/start`。记录 threadId，执行已获授权的原生交接操作并核实 Desktop 已能接手；未知结果只回读。
-4. 在**目标机器**打开 `codex://threads/<threadId>?prompt=<URL 编码任务>`，正文引用该机已回读的 brief 路径。若当前界面在另一台机器，仅提供目标机操作链接，不声称已打开正确会话。
-5. 预填不等于提交；由用户在 Desktop 按发送，再读对应轮次的真实结果。没有 writer 释放证据不报告交接完成。
+1. 从 discovery 选定 Codex 的 `deviceId` / `instanceId`，用该设备的 context/overlay 解析 home、cwd；brief 写到**同一 deviceId** 上经过授权的目录，并从目标机器回读确认可读。找不到同机文件写入入口就阻断，不借另一台机器代写。对 `codex-helios`（或当前 Codex 实例）调 `thread/start`（`cwd`、`model`、`modelProvider`、`sandbox`、`approvalPolicy`）→ `threadId`。
+2. 释放该 connector 写锁（Helios 上常见：`launchctl kickstart -k gui/$(id -u)/io.agenvo.connector.<codex>`），或走已证实的原生交接，让 Desktop 接手。
+3. 在**目标机器**打开 `codex://threads/<threadId>?prompt=<URL 编码任务>`，正文引用该机已回读的 brief 路径；确认 Desktop 可见。若当前界面在另一台机器，仅提供目标机操作链接，不声称已打开正确会话。
+4. 经 agenvo 对同一线程 `turn/start` 提交；回报带 deep link 与 turn 结果。
+
+Brief 落目标机；prompt／turn 输入写「读 brief 再动手」。
 
 ## 一轮一个 tab（Herdr 里的 Claude Code、agy、dsh headless）
 
