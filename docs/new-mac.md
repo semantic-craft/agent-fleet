@@ -6,9 +6,9 @@
 
 ## 先弄清用户要什么
 
-- **Codex 是主力。** 先保证 Codex 能经 Herdr 运行 `codex exec` 新建任务、通过 `codex exec resume` 续接；Codex connector 只列出线程与读取历史。
+- **Codex 是主力。** 默认目标为 Desktop 空线程交接；先核实原生 writer 释放条件，满足后才创建线程、预填并由用户发送。未满足就记录阻断，不改用 CLI 冒充通过。
 - **DSH（DeepSeek Harness）是同等能力的后备**，防止 Codex 额度用完或出故障：它必须有和 Codex 同级的原生能力，任务出现在 DSH 桌面左栏、可以在桌面里接手；派活、追问、中断都走 DSH 的原生会话，不退回 headless。
-- 安装 Codex 时必须一起装 Herdr，并接好 `herdr server` 与 Herdr connector；Codex 派活依赖这条通路。
+- Herdr 用于同机任务目录/brief 准备及明确选择的 CLI 通道；它不是 Codex Desktop 的模型执行者，也不负责释放 native writer。
 - 一律 full access，访问控制靠 relay 授权。
 - 远程通路只有 Agenvo（见 [ADR-0006](decisions/0006-single-remote-path.md)）。
 - 这台机器的个人值（名字、地址、项目目录）只写进私有 overlay，不写进本仓库。
@@ -28,15 +28,15 @@
 
 ## Codex 派活验收
 
-经 Agenvo 对这台机器的 Herdr 实例跑一次[派活技能](../skills/delegate-via-agenvo/SKILL.md#一轮一个-tabherdr-里的-codexclaude-codeagydsh-headless)里的 execute 脚本：`write = true`，仓库取 overlay 的 `check.project`，任务名形如 `<仓库>-acceptance-<时间>`，正文「只读验收：不要修改任何文件，只回复 OK。」。
+遵循[Codex Desktop 交接契约](codex-desktop-handoff.md)和[派活技能的 Codex Desktop 步骤](../skills/delegate-via-agenvo/SKILL.md#codex-desktop)。这不是 Herdr CLI 模板验收。
 
-1. 返回的任务目录在 `~/Projects/.worktrees/<仓库>/<任务名>`，`pane.get` 轮次 pane 最终返回 `pane_not_found`。
-2. 读取 pane 打印 `EXIT-1=0`，`result-1.md` 为 `OK`，`events-1.jsonl` 第一行是 `thread.started`，记下 `thread_id`。
-3. 同一脚本 `n = 2`、填回 `workspaceId` 与 `cwd`、`agent` 加 ` resume <thread_id>` 再跑一轮，确认 `EXIT-2=0`、同一 `thread_id`。
-4. 在 Codex Desktop 打开 `codex://threads/<thread_id>`：完整两轮历史、正常输入框、没有 “This is open in another app” 横幅。exec 线程不进桌面版的项目列表，不以侧栏作为标准。
-5. `worktree.remove` 删掉验收 worktree，`git branch -D agent/<任务名>`，删掉 `~/Projects/_status/<任务名>/`。
+1. discovery 固定目标 deviceId/instanceId；确认目标机器上的 cwd 与 brief 可读，核对当前模型/权限和 schema。
+2. 创建前确认 native writer 的释放路径。共享 app-server 未提供已验证操作时，记录 `blocked_native_writer_release`，本项未通过，不重启 connector、不重发 `thread/start`。
+3. 前置通过后创建一个空线程并完成原生交接，在目标机器打开预填链接。核对正确 threadId、cwd、brief；Desktop 可接手且无占用横幅。
+4. **用户按发送**后，核对唯一只读标记、实际模型和同一 threadId 的终态；在 Desktop 同线程发送第二轮并核对两轮历史。只打开或预填不算执行。
+5. 记录证据和未验项；只清理本次确认为空闲且无消费者的测试资源，另按授权操作，不自动删除分支或任务资料。
 
-`node scripts/fleet.mjs check --dispatch --instance <herdr 实例>` 不调模型，只验同一套 tab、退出与回读机制，可作为每次改动后的快速回归。
+Herdr 的模板目前默认 **Claude Code**：验收读取 `result-1.json`、`session_id` 与退出码，续接使用 `--resume <session_id>`；不得期待 Codex 的 `thread.started` 或 `result-1.md`。`node scripts/fleet.mjs check --dispatch --instance <herdr 实例>` 不调模型，只验 tab/退出/回读，既不是 Claude 模型验收，也不是 Codex Desktop 验收。
 
 ## 机器角色
 

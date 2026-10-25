@@ -28,10 +28,10 @@
 
 **Codex Desktop**（默认编码线）：
 
-1. agenvo → Codex 实例（如 `codex-helios`）只 `thread/start`（`cwd`、`model`、`modelProvider`、`sandbox`、`approvalPolicy`）建空桌面会话。
-2. 释放 connector 写锁，Desktop 接手。
-3. 打开 `codex://threads/<threadId>?prompt=<URL 编码任务>` 预填。
-4. 用户在 Codex Desktop 按发送开跑。
+1. discovery 选定 Codex deviceId/instanceId，brief 与 cwd 均在该目标机器，回读确认可用。
+2. 先按[交接契约](codex-desktop-handoff.md)确认受支持的 native writer 释放路径；共享 app-server 未证明可释放时，创建前阻断，connector 重启不算释放。
+3. 仅前置通过后 `thread/start` 建空线程并完成已授权原生交接，在目标机器打开带预填 prompt 的线程链接。
+4. 用户在 Codex Desktop 按发送开跑；预填、已接受与任务成功分别验收。
 
 **Claude Code、agy、dsh headless** 在 Herdr 里跑：
 

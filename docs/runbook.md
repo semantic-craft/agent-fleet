@@ -123,3 +123,7 @@ node scripts/fleet.mjs check                         # 切换后经 relay 端到
 | 撤销访问 | 在 `<RELAY>/admin` 页面撤销，或用 `agenvo-* admin revoke grant|instance|device` |
 
 会话级切模候选（未部署）的固定源码、离线测试与调用入口见 [DSH session-only](dsh-session-only.md)。能力缺失明确不支持，不把旧 `session/selectModel` 当作等价 fallback。
+
+## Codex Desktop 交接
+
+默认 Desktop 空线程流程见[交接契约](codex-desktop-handoff.md)。本 runbook 的独立常驻 app-server 部署没有已验证的单线程 writer 释放路径；connector 发布、回滚或重启均不能充当交接。未确认支持前报告 `blocked_native_writer_release`，不创建或自动重试线程。
