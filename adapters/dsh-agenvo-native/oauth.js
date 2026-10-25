@@ -2,7 +2,29 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 
 const OWNER = 'agent-fleet-agenvo-native';
 const fail = code => { throw Object.assign(new Error(code), { code }); };
-const clone = value => structuredClone(value);
+// SDK schemas may expose absent optional object fields as undefined. DSH's
+// credential seam admits only JSON values: omit those fields, but refuse lossy
+// conversions (undefined array slots, nonfinite numbers, exotic objects).
+function clone(value, seen = new Set()) {
+  if (value === undefined || value === null || typeof value === 'string' || typeof value === 'boolean') return value;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value) || Object.is(value, -0)) fail('oauth_non_json_metadata');
+    return value;
+  }
+  if (typeof value !== 'object' || seen.has(value)) fail('oauth_non_json_metadata');
+  seen.add(value);
+  try {
+    if (Array.isArray(value)) {
+      return Array.from(value, item => {
+        if (item === undefined) fail('oauth_non_json_metadata');
+        return clone(item, seen);
+      });
+    }
+    if (![Object.prototype, null].includes(Object.getPrototypeOf(value))) fail('oauth_non_json_metadata');
+    return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined)
+      .map(([name, item]) => [name, clone(item, seen)]));
+  } finally { seen.delete(value); }
+}
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 function url(value, redirect = false) {
   let parsed;

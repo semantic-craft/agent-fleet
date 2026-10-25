@@ -1,6 +1,6 @@
 {
   "name": "agent-fleet-agenvo-native",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "main": "./index.js",
@@ -12,13 +12,19 @@
     "oauth.js",
     "transport.js",
     "README.md",
-    "references.json"
+    "references.json",
+    "flow.js",
+    "setup.js",
+    "authorize.mjs"
   ],
   "peerDependencies": {
     "@deepseek-ai/dsh-mcp-client": "0.2.1-rc.3",
     "@deepseek-ai/dsh-scope": "0.2.1-rc.3",
     "@deepseek-ai/dsh-credentials": "0.2.1-rc.3",
-    "@modelcontextprotocol/client": "2.2.0"
+    "@modelcontextprotocol/client": "2.2.0",
+    "@deepseek-ai/cordis": "4.0.5",
+    "@deepseek-ai/dsh-credentials-local": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-authorization": "0.2.1-rc.3"
   },
   "engines": {
     "node": ">=24.13.0"
