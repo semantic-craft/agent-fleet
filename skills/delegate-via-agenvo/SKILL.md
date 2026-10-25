@@ -1,6 +1,6 @@
 ---
 name: delegate-via-agenvo
-description: Hand work to another coding agent (DeepSeek Harness/DSH, Codex, Claude Code, or agy/codex/dsh headless in Herdr, on this or another Mac) through the Agenvo MCP server, then follow it to a verified result. Use when the user asks to have DSH/Codex/another agent do something, to run work in parallel on another agent, or to check on or continue such work.
+description: Hand work to another coding agent (Codex Desktop, DeepSeek Harness/DSH, Claude Code, or agy/dsh headless in Herdr, on this or another Mac) through the Agenvo MCP server, then follow it to a verified result. Use when 派 Codex／agenvo／桌面接手, or the user asks to have DSH/Codex/another agent do something, or to check on or continue such work.
 ---
 
 # 经 Agenvo 把活交给其他 agent
@@ -11,7 +11,7 @@ description: Hand work to another coding agent (DeepSeek Harness/DSH, Codex, Cla
 
 1. **发现**：调用 `search {"query": ""}`，列出实例和在线状态，读每个实例的 `context`。它写了这台机器、home 与项目目录、默认权限，以及这个实例适合做什么。
 2. **找方法**：用共同术语搜索，例如 `"dsh create work context"`、`"herdr worktree"`、`"dsh read output"`；选定后带 `includeSchema: true` 再搜一次拿参数 schema。不要凭记忆写方法名。
-3. **派活**：任务目录按「任务目录」选；Herdr 里的 agent 每轮按「一轮一个 tab」跑；DSH 实例按 schema 调原生方法。
+3. **派活**：Codex 按「Codex Desktop」；其余任务目录按「任务目录」选；Herdr 里的 Claude Code／agy／dsh headless 每轮按「一轮一个 tab」跑；DSH 实例按 schema 调原生方法。
    - 对方没有你的上下文。任务正文写全：目标、仓库和路径、已知事实、约束、验收方式，以及是否允许提交、推送或开 PR。
    - 核对实际模型：CLI 每轮显式带模型参数。DSH 优先复用已选好且匹配的独占会话；`session/selectModel` 可能持久化全局默认，绝非隔离设置。若运行时明确发现 `session/selectModelForSession` 且实时 catalog 能力为 true，可经[会话级候选入口](../../docs/dsh-session-only.md)显式选择独占会话；applied 非 durable，仍需核对下一请求 header，旧 runtime 不回退。此候选未部署，不能仅据仓库存在就调用。确需使用旧接口时先按[全局副作用保护](../../docs/migration-and-upgrades.md#dsh-模型选择全局副作用保护)取得授权、协调所有选择入口/暂停新会话、快照、受保护恢复并回读；未知结果不重发，漂移不覆盖。不得自动切模型或默认。
    - 派出后立刻告诉用户：任务名、任务目录、会话 id 和桌面查看入口——DSH 报项目名与 sessionId；Codex 报 thread_id 与 `codex://threads/<thread_id>`；Claude Code 报 `session_id`；agy 报 `conversation_id`；Herdr 里的任务另报 workspace 与轮次 pane。没拿到登记结果或链接时如实说，不说用户能在桌面里看到。
@@ -25,8 +25,8 @@ description: Hand work to another coding agent (DeepSeek Harness/DSH, Codex, Cla
 
 ## 选哪个 agent
 
-- 用户点名了就用点名的。没点名时默认 Codex（Herdr 里的 `codex exec`）；Codex 不可用（额度用尽、离线、报错）时用 DSH，DSH 与 Codex 同级，能新建、追问、中断。
-- 要在桌面 app 的**项目下**看到：用 DSH 实例。Codex 桌面版只把桌面自己建的线程（source `vscode`）归进项目，`codex exec` 线程不进任何项目（2026-10-23 核对 `~/.codex/.codex-global-state.json`：10 月 512 个 exec 线程 0 个归入项目），只能用 `codex://threads/<id>` 打开，打开后能接着发消息。
+- 用户点名了就用点名的。没点名时默认 **Codex Desktop**（见下节）；Codex 不可用（额度用尽、离线、报错）时用 DSH，DSH 与 Codex 同级，能新建、追问、中断。
+- 要在桌面 app 的**项目下**看到且自动开跑：用 DSH 实例。Codex Desktop 空会话出现在桌面左栏，由用户按发送开跑。
 - Antigravity 桌面版（2.25.0）调不出 `agy -p` 的会话，`--new-project` 只生成空项目；需要桌面可见时不选 agy。
 - 要长时间运行、不怕笔记本合盖：选常开那台 Mac 上的实例。
 - 默认 full access。用户没有要求时不要降权限，也不要替用户回答对方 agent 提出的业务决定问题。
@@ -38,9 +38,20 @@ description: Hand work to another coding agent (DeepSeek Harness/DSH, Codex, Cla
 - 任务名以仓库名开头（如 `koe-unset-keys`），桌面里看到的项目名、Herdr workspace 名都由它来。
 - 同一任务的追问回到同一个任务目录和同一个会话。PR 合并后 `worktree.remove {session, workspaceId}`（分支保留，`reap` 也会回收遗漏的 worktree）。
 - DSH 实例做改代码的任务：先用同机 Herdr 实例 `worktree.create`，再对 DSH 实例 `workspace/create {request: {path: <worktree 路径>}}`，会话出现在桌面左栏以任务名命名的项目下。
-- `codex exec --worktree` 会放进 `~/.codex/worktrees`，不在约定目录、Herdr 也看不到，不用。
+- 任务目录用 Herdr `worktree.create`（见上），与 Desktop 会话的 `cwd` 对齐到同一路径。
 
-## 一轮一个 tab（Herdr 里的 Codex、Claude Code、agy、dsh headless）
+## Codex Desktop
+
+目标：任务出现在 **Codex Desktop**，由用户在桌面按发送开跑。
+
+1. 对 `codex-helios`（或当前 Codex 实例）调 `thread/start`（`cwd`、`model`、`modelProvider`、`sandbox`、`approvalPolicy`）→ `threadId`。
+2. 释放该 connector 写锁（Helios 上常见：`launchctl kickstart -k gui/$(id -u)/io.agenvo.connector.<codex>`），让 Desktop 接手。
+3. 打开 `codex://threads/<threadId>?prompt=<URL 编码任务>` 预填。
+4. 请用户在 Desktop 按发送；回报带 deep link 与 `threadId`。
+
+Brief 落 Helios 本机；prompt 写「读 brief 再动手」。
+
+## 一轮一个 tab（Herdr 里的 Claude Code、agy、dsh headless）
 
 每一轮在任务 workspace 里新开一个 tab 运行，命令以 `echo $? > "$D/exit-<轮次>"; exit` 结尾：这一轮结束时 tab 关闭，Herdr 发 `pane_exited`。workspace 的第一个 pane（读取 pane）留着，用来读文件。每轮的输入输出都在 `~/Projects/_status/<任务名>/`：`brief-N.md`、`result-N.*`、`events-N.jsonl`、`stderr-N.log`、`exit-N`。
 
@@ -52,7 +63,7 @@ const h = { deviceId: "<search 的 deviceId>", instanceId: "<Herdr 实例>" };
 const session = "<session.list 的名字>", home = "<实例 context 里的 home>";
 const repo = "<仓库>", task = "<仓库>-<任务>", write = true, n = 1, workspaceId = "", cwd0 = "";
 const brief = "<完整任务正文>";
-const agent = (D) => `codex exec --json -o "${D}/result-${n}.md" -C "$PWD" -s danger-full-access -m <模型> -c model_provider="magpie" - < "${D}/brief-${n}.md" > "${D}/events-${n}.jsonl" 2> "${D}/stderr-${n}.log"`;
+const agent = (D) => `claude -p --dangerously-skip-permissions --model deepseek/deepseek-flash --output-format json < "${D}/brief-${n}.md" > "${D}/result-${n}.json" 2> "${D}/stderr-${n}.log"`;
 // ---- 以下照抄 ----
 const b64 = (s) => { const u = unescape(encodeURIComponent(s)), t = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"; let o = ""; for (let i = 0; i < u.length; i += 3) { const x = (u.charCodeAt(i) << 16) | ((u.charCodeAt(i + 1) || 0) << 8) | (u.charCodeAt(i + 2) || 0); o += t[(x >> 18) & 63] + t[(x >> 12) & 63] + (i + 1 < u.length ? t[(x >> 6) & 63] : "=") + (i + 2 < u.length ? t[x & 63] : "="); } return o; };
 const v = (r) => { if (r.error) throw new Error(JSON.stringify(r.error)); return r.result?.result ?? r.result; };
@@ -75,8 +86,7 @@ return { n, cwd, workspaceId: wid, readerPane: ws?.root_pane.pane_id, turnPane: 
 
 | agent | `agent = (D) => ...` 的命令 | 第 2 轮起加 |
 | --- | --- | --- |
-| Codex | 见上 | `-c model_provider="magpie"` 后加 ` resume <thread_id>` |
-| Claude Code | `if nc -z 127.0.0.1 3425 2>/dev/null; then claude -p --dangerously-skip-permissions --model deepseek/deepseek-flash --output-format json < "${D}/brief-${n}.md" > "${D}/result-${n}.json" 2> "${D}/stderr-${n}.log"; else echo "magpie 127.0.0.1:3425 不在线" > "${D}/stderr-${n}.log"; (exit 97); fi` | `--resume <session_id>`，沿用新建时的 `--model` |
+| Claude Code | 见上（或带 magpie 探活的完整一行） | `--resume <session_id>`，沿用新建时的 `--model` |
 | agy | `agy -p "$(cat "${D}/brief-${n}.md")" --output-format json --dangerously-skip-permissions --model <agy models 的 slug> > "${D}/result-${n}.json" 2> "${D}/stderr-${n}.log"` | `--conversation <conversation_id>` |
 | dsh headless | `dsh --profile headless --json - < "${D}/brief-${n}.md" > "${D}/events-${n}.jsonl" 2> "${D}/stderr-${n}.log"` | `--session-id <sessionId>` |
 
@@ -111,6 +121,6 @@ sid=$(head -1 "$HOME/Projects/_status/<任务名>/events-1.jsonl" | sed -n 's/.*
 
 最后一轮 CLI 退出、不再用 `--session-id` 追问后，才可经 DSH 实例 `session/rename {request:{sessionId, title:"[CLI] <任务名>"}}`：改名会让桌面 Host 拿住写锁，之后 CLI 续写报 `already owned by an active write handle`，追问改走 DSH 实例的 `session/prompt`。桌面先建的会话不能反过来用 CLI 续写。
 
-## Codex 实例
+## Codex 实例（读历史）
 
-Codex 实例只用来读历史：`thread/list`（`sourceKinds` 含 `exec`、`modelProviders: []`）与 `thread/read`。不要用它的 `thread/start`、`turn/start` 派活：常驻共享 app-server 会一直占着 writer，桌面版打开时显示 “This is open in another app”。
+列出与读取已有线程：`thread/list`、`thread/read`。新建派活走「Codex Desktop」一节。

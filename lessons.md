@@ -22,15 +22,15 @@
 - 验证点：
 - 复发记录：Seen 1x (2026-10-19)。
 
-### Codex 派活用 exec，进程退出后桌面接手
+### Codex 派活走 Desktop 空会话
 
-**在 Herdr pane 里运行官方 `codex exec`，以 `codex exec resume` 追问；进程退出后通过 `codex://threads/<thread_id>` 接手。**
+**agenvo → Codex 实例只 `thread/start` 建空桌面会话 → 释放 connector 写锁 → 打开 `codex://threads/<thread_id>?prompt=…` 预填 → 用户在 Codex Desktop 按发送。**
 
-- 起因与后果：常驻 `codex app-server` 共用 home 能读取历史，但远程 turn 完成后仍持有 writer，桌面版显示 “This is open in another app”，只能 Fork。
-- 修复与证据：调度方于 2026-10-21 实测 `codex exec --json -o` 完成并退出，`codex exec resume` 可续写，桌面线程链接打开后显示历史与正常输入框，无占用横幅。2026-10-21 22:43 用 `codex exec --help` 与 `codex exec resume --help` 核对：`resume` 不接受 `-C`、`-s`；把 `-C`、`-s danger-full-access`、`-m`、`-c model_provider="magpie"` 放在 `resume` 之前实测续写同一线程，两轮 turn context 均为 `danger-full-access`、所选模型，会话 provider 为 magpie。
-- 正确做法：派活走 Herdr，任务正文写文件经 stdin 传入，每轮都带 `-s danger-full-access`、`-m`、`-c model_provider="magpie"`，立刻记录 JSONL 中 `thread.started` 的 `thread_id` 并告知用户。Codex connector 只列出线程与读取历史；列表查询包含 `sourceKinds: ["exec"]`、`modelProviders: []`。exec 线程不一定出现在侧栏，因此必须提供线程链接。完整流程见[派活技能](skills/delegate-via-agenvo/SKILL.md)。
-- 验证点：`rg -n 'codex exec|sourceKinds' skills/delegate-via-agenvo/SKILL.md` 有派活与只读列表两处规则；派活后能给出 `codex://threads/<thread_id>` 链接，桌面打开无占用横幅。
-- 复发记录：Seen 2x (2026-10-21)。
+- 起因与后果：用户要任务出现在 Codex Desktop，并由本人按发送开跑（2026-10-25 纠正）。
+- 修复与证据：正本改写于 `skills/delegate-via-agenvo/SKILL.md`「Codex Desktop」；全局 Grok 技能同文案。
+- 正确做法：同上四步；Brief 落 Helios 本机；prompt 写「读 brief 再动手」；回报带 deep link。完整流程见[派活技能](skills/delegate-via-agenvo/SKILL.md)。
+- 验证点：`rg -n 'Codex Desktop|thread/start' skills/delegate-via-agenvo/SKILL.md` 有 Desktop 一节；派活回报含 `codex://threads/<id>?prompt=`。
+- 复发记录：Seen 1x (2026-10-25，纠正 herdr-exec 误抄)。
 
 ### Herdr 常驻要用 `herdr server`
 
@@ -253,15 +253,15 @@
 - 验证点：`node scripts/fleet.mjs check --dispatch --instance <herdr 实例>` 输出 `turn pane …: exited, exit file read back`。
 - 复发记录：Seen 1x (2026-10-23)。
 
-### Codex 桌面版只把桌面自己建的线程归进项目
+### 桌面项目下自动开跑用 DSH
 
-**`codex exec` 派出的线程不会出现在 Codex 桌面版任何项目下；回报里给 `codex://threads/<id>`，要在项目下看到就派给 DSH 实例。**
+**Codex 走 Desktop 空会话（用户按发送）；要在桌面**项目下**自动开跑时选 DSH。**
 
-- 起因与后果：用户要派出的任务出现在桌面对应项目下。2026-10-23 核对 `~/.codex/.codex-global-state.json`：149 条线程归属全部来自 source `vscode` 的线程，10 月 512 个 `exec` 线程 0 个归入项目，也不在无项目列表里。
-- 修复与证据：技能「选哪个 agent」写明这一点；DSH 实例经 `workspace/create {path: <任务目录>}` 建的会话在桌面左栏对应项目下（2026-10-20 验收）。
-- 正确做法：Codex 任务给线程链接；桌面项目内可见是硬要求时选 DSH。
-- 验证点：`rg -n '0 个归入项目' skills/delegate-via-agenvo/SKILL.md` 有结果；Codex 升级后重新核对 `thread-project-assignments` 里是否出现 exec 线程，出现了就更新本条和技能。
-- 复发记录：Seen 1x (2026-10-23)。
+- 起因与后果：用户有时要左栏项目下直接跑起来的会话。
+- 修复与证据：DSH 经 `workspace/create {path: <任务目录>}` 的会话在桌面左栏对应项目下（2026-10-20 验收）。
+- 正确做法：默认编码线用 Codex Desktop 四步；项目下自动开跑用 DSH。见[派活技能](skills/delegate-via-agenvo/SKILL.md)。
+- 验证点：`rg -n 'Codex Desktop|项目下' skills/delegate-via-agenvo/SKILL.md` 有对应表述。
+- 复发记录：Seen 1x (2026-10-23；2026-10-25 按 Desktop 正道改写)。
 
 ### 经 relay 的写操作返回 unknown 时，可能已执行也可能没送达
 
