@@ -1,4 +1,4 @@
-# DSH as an Agenvo caller (source candidate; not installed)
+# DSH as an Agenvo caller (external bridge candidate; paused)
 
 This optional namespace plugin composes the official DSH MCP client with an explicitly approved `mcp-remote` stdio OAuth transport. It exposes Agenvo's existing `search` and `execute`, just as other MCP callers do. It does not create a relay, Codex child process, dispatcher, new network service, credential provider or copy of the inbound `agent-fleet-dsh` bridge. Magpie remains model inference.
 
@@ -12,16 +12,16 @@ Agenvo ACK is not completion. Follow native status/history through a separate ex
 
 ## Exact prerequisite and approval
 
-Agenvo's standard client requires dynamic OAuth registration, S256 PKCE, Streamable HTTP and refresh. The inspected DSH client exposes headers but no OAuth authProvider, so use reviewed `mcp-remote v0.1.38`, upstream commit in `references.json`, after installation approval. Do not use on-demand `npx`, floating versions, shared client caches or copied tokens.
+Agenvo's standard client requires dynamic OAuth registration, S256 PKCE, Streamable HTTP and refresh. The inspected official client configuration does not wire authProvider; this does not mean the SDK or DSH ecosystem lacks OAuth. This optional external bridge uses reviewed `mcp-remote v0.1.38`; the [native candidate](../dsh-agenvo-native/README.md) instead uses the existing SDK and DSH credential service. Do not use on-demand `npx`, floating versions, shared client caches or copied tokens.
 
-The concrete next approval covers:
+If explicitly resuming this alternative, its installation/load requirements are:
 
 1. Install the reviewed transport into a versioned local location with its dependency lock retained; record package integrity and actual script/dependency hashes. No existing release is installed by this repository change.
 2. Create one **dedicated DSH-only 0700 OAuth directory** and reserve an approved fixed loopback callback port (1024–65535). Config validation reads only path metadata, never credentials. Use canonical absolute paths; no symlink cache. Changing callback port can force transport client re-registration, so do not silently change it.
 3. Load this module in one selected Agent/preset scope. This spawns the stdio proxy and may open the browser/loopback callback on first authentication. On Agenvo's own page the user signs in and clicks Allow. The administrator key is never supplied to the agent or configuration.
 4. The real grant scope is **all currently approved instances and future approvals**, not just Codex. DSH tool scoping does not narrow that grant. Access tokens last 15 minutes; grants up to 30 days per inspected Agenvo version. User consent is required for this new persistent DSH client. No new connector pairing or Cloudflare/Tailscale/network change is needed.
 
-The transport is not currently on PATH in the inspected machine. Installing it and loading this plugin are not done. Existing Dot grants and inbound connector authorization cannot be reused as implicit approval.
+Status: fixed 0.1.38 transport was installed with scripts disabled, started once for client registration and browser consent, then stopped on user pause. Its dedicated cache remains, with no observed token file; grant completion is not confirmed. No DSH plugin was loaded. Do not resume from the old approval without confirming the selected approach. Existing Dot grants and inbound connector authorization cannot be reused as implicit approval.
 
 ## Load after approval
 
