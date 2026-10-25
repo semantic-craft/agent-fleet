@@ -69,4 +69,4 @@ License: Apache-2.0。
 
 ### DSH 作为 Agenvo 调用方
 
-[可选 scoped 客户端源码](adapters/dsh-agenvo/README.md)复用 DSH 官方 MCP client 与标准 OAuth transport，提供 Agenvo 原生 search/execute；已做官方客户端＋本地 fixture 验证，尚未安装或授权。它与入站 `agent-fleet-dsh` 分开，不新增 relay，不把 raw execute 冒称持久幂等调度器。真实接入所需用户授权、范围、迁移与撤销步骤见该说明。
+[原生 scoped 客户端候选](adapters/dsh-agenvo-native/README.md)复用 DSH credentials、官方工具投影与 SDK OAuth，提供 Agenvo 原生 search/execute；源码与离线 fixture 不等于真实授权或已部署。此前[外置桥候选](adapters/dsh-agenvo/README.md)的固定 transport 曾安装并短暂启动，暂停后已按用户要求移入废纸篓，客户端注册/授权页已产生，但未确认 grant、未加载 DSH 插件。它与入站 `agent-fleet-dsh` 分开，不新增 relay，不把 raw execute 冒称持久幂等调度器。真实接入所需用户授权、范围、迁移与撤销步骤见该说明。

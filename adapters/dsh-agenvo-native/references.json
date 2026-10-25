@@ -1,0 +1,27 @@
+{
+  "sources": [
+    {
+      "repo": "deepseek-ai/deepseek-harness",
+      "revision": "1f81c047fc48fa190a683e469daa699857e9afe8",
+      "paths": [
+        "packages/mcp/mcp-client/src/tools.ts",
+        "packages/credentials/credentials/src/index.ts",
+        "packages/core/scope/src/index.ts"
+      ],
+      "use": "public APIs; existing built fixture dependencies, not installed app provenance"
+    },
+    {
+      "repo": "k0ndrateff/dsh-plugins",
+      "revision": "c21c78e13f1db3cbf69e7a3341c58e6c1bd594a5",
+      "path": "packages/mcp-oauth",
+      "license": "MIT",
+      "use": "design comparison only; no copied source; early401 expiry no-op deliberately not reused"
+    },
+    {
+      "package": "@modelcontextprotocol/client",
+      "version": "2.2.0",
+      "license": "MIT",
+      "use": "OAuth auth/refreshAuthorization and StreamableHTTP transport; supplied by host"
+    }
+  ]
+}
