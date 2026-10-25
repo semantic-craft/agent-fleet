@@ -17,7 +17,7 @@ const {ApiSessionAgentController}=await load('packages/api/session-controller/sr
 const ctx=new Context();await ctx.plugin(Sessions);await ctx.plugin(Commands);
 const session=ctx.sessions.create(SessionId('synthetic-caller'),{meta:{cwd:'/synthetic'}});
 const agent={id:session.id,session,status:'idle'};
-let scope,disposeStatus,current='fleet-agenvo';
+let scope,disposeStatus,current='fleet-agenvo',selectCalls=0;
 async function mount(preset){
  disposeStatus?.();await scope?.ctx.fiber.dispose();
  current=preset;
@@ -28,7 +28,7 @@ async function mount(preset){
  }
 }
 await mount(current);
-const presets={resolve:async id=>({id:id??'standard'}),select:async(_agent,id)=>{await mount(id);session.append('agent-preset/selected',{agentPreset:id});}};
+const presets={resolve:async id=>({id:id??'standard'}),select:async(_agent,id)=>{selectCalls++;await mount(id);session.append('agent-preset/selected',{agentPreset:id});}};
 // Inject public service boundaries around actual upstream createSession/reuseLive.
 // Roster activation is a small fixture mounting real scoped Commands; no runtime mutation.
 const host={typert:{lookups:{configure(){}},contexts:{configureHost(){}}},sessions:ctx.sessions,agents:{get:id=>id===agent.id?agent:undefined},
@@ -41,6 +41,7 @@ try{
  const explicit=fleetCallerCreate({sessionId:agent.id,workspaceId:'synthetic-workspace'});
  await api.createSession({...explicit.params.request,cwd:'/synthetic',reusable:()=>true});
  assert.equal(current,'fleet-agenvo');assert.equal(ctx.commands.list(agent).length,1);
+ assert.equal(selectCalls,0,'same-preset create is a no-op: not evidence of generation reload');
  await api.createSession({sessionId:agent.id,cwd:'/synthetic',reusable:()=>true});
  assert.equal(current,'standard');assert.equal(ctx.commands.list(agent).length,0);
  await api.createSession({...explicit.params.request,cwd:'/synthetic',reusable:()=>true});

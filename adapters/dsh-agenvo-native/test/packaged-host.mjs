@@ -68,6 +68,7 @@ try{
  assert.equal(network,0,'passive package load must never start OAuth/MCP');
  const names=ctx.commands.list(agent).map(x=>x.name);
  assert.ok(names.includes('agenvo-authorize'),'official UI registry must discover command');
+ assert.ok(names.includes('agenvo-status'),'actual package apply must register status');
  assert.equal(ctx.commands.list({}).length,0,'unrelated scope must not see command');
  assert.equal(ctx.authorization.list().length,0,'no flow or OAuth attempt before explicit command');
  await fiber.dispose();await isolated.dispose();
