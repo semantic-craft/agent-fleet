@@ -6,11 +6,11 @@
 
 ## 先弄清用户要什么
 
-- **Codex 是主力。** 默认目标为 Desktop 空线程交接；先核实原生 writer 释放条件，满足后才创建线程、确认 Desktop 可见并由 agent 经 `turn/start` 提交。未满足就记录阻断，不改用 CLI 冒充通过。
+- **Codex 是主力，入口按调用方区分。** dot 有原生平台任务工具且电脑连接已授权时优先原生通道；跨机先发现环境。DSH／GrokBot→Agenvo→Codex Desktop 是另需保留的外部需求，其 writer 阻断不阻挡前者。见[调用方路由](caller-routing.md)。
 - **DSH（DeepSeek Harness）是同等能力的后备**，防止 Codex 额度用完或出故障：它必须有和 Codex 同级的原生能力，任务出现在 DSH 桌面左栏、可以在桌面里接手；派活、追问、中断都走 DSH 的原生会话，不退回 headless。
 - Herdr 用于同机任务目录/brief 准备及明确选择的 CLI 通道；它不是 Codex Desktop 的模型执行者，也不负责释放 native writer。
-- 一律 full access，访问控制靠 relay 授权。
-- 远程通路只有 Agenvo（见 [ADR-0006](decisions/0006-single-remote-path.md)）。
+- Agenvo 默认执行约定见实例 context；原生平台任务遵守其自身权限与用户范围，不能套用 relay 授权。
+- 自建 MCP 远程通路统一 Agenvo；不替代已有原生平台任务服务（见 [ADR-0006](decisions/0006-single-remote-path.md)）。
 - 这台机器的个人值（名字、地址、项目目录）只写进私有 overlay，不写进本仓库。
 
 ## 步骤
@@ -19,7 +19,7 @@
 | --- | --- | --- |
 | 1 | 装 Node 24.13+、Git，装好 Codex（CLI 和 Desktop 共用 `~/.codex`）、Herdr 和 DSH 桌面版，Codex 与 DSH 都登录好 | `node -v`；Codex 和 DSH 都能正常对话 |
 | 2 | 拿到私有 overlay：`git clone git@github.com:<owner>/agent-fleet-overlay.git ~/.config/agent-fleet`，在 `fleet.json` 的 `machines` 里为这台机器加一项（名字、`hostnames`、`projectsRoot`、实例和 context）。实例 context 照已有机器的写法改 | `node scripts/fleet.mjs doctor --machine <名字>` 能识别这台机器 |
-| 3 | 准备 agenvo fork 并构建（[runbook §1](runbook.md#1-准备-agenvo-fork每台机器)），再按 [runbook §3、§4](runbook.md#3-原生服务常驻) 接好 Codex 与 Herdr：`codex-app-server` 和 `herdr server` 常驻，添加、配对并批准 `agenvo-codex-app-server` 与 `agenvo-herdr` 实例，安装两者 connector 服务 | relay 上 Codex、Herdr 实例均 online；`fleet.mjs check` 中 `thread/list`、`session.list` 均为 ok；再完成下述 Codex 派活验收 |
+| 3 | 准备 agenvo fork 并构建（[runbook §1](runbook.md#1-准备-agenvo-fork每台机器)），再按 [runbook §3、§4](runbook.md#3-原生服务常驻) 接好 Codex 与 Herdr：`codex-app-server` 和 `herdr server` 常驻，添加、配对并批准 `agenvo-codex-app-server` 与 `agenvo-herdr` 实例，安装两者 connector 服务 | relay 上 Codex、Herdr 实例均 online；`fleet.mjs check` 中 `thread/list`、`session.list` 均为 ok；外部 Codex 交接按下述独立记录，不阻挡 dot 原生任务验收 |
 | 4 | **装 DSH 插件**：`node scripts/fleet.mjs release dsh --sha <reviewed SHA>`（把 [adapters/dsh](../adapters/dsh/README.md) 链进 DSH 桌面版的 `desktop` profile） | 出现 `~/.local/state/agent-fleet-dsh/native.sock`，权限 0600 |
 | 5 | 挂 DSH 实例并配对：`agenvo-dsh instance add`，`fleet.mjs contexts --apply`，然后 `connect` 和 `service install`（[runbook §4](runbook.md#4-添加实例并配对每台机器每种-connector)）。这台机器没有管理员密钥时，用 `--no-browser` 拿到配对码，在有密钥的机器上批准 | relay 上这个实例显示 online 且已批准 |
 | 6 | 登录自启动：`fleet.mjs launchd desktop-agents-autostart` | 注销重登后 DSH 自己打开 |
@@ -27,6 +27,8 @@
 | 8 | 把 overlay 的改动提交并推送 | `git -C ~/.config/agent-fleet status` 干净 |
 
 ## Codex 派活验收
+
+先按调用方区分：dot 原生平台任务的创建／执行／读回，在连接授权及环境发现完成后独立验收，不以外部 writer handoff 为前提；缺平台工具就报告能力缺失。以下步骤只验 DSH／GrokBot 经 Agenvo 的外部 Codex Desktop 路线，不是全部 Codex 的准入条件。
 
 遵循[Codex Desktop 交接契约](codex-desktop-handoff.md)和[派活技能的 Codex Desktop 步骤](../skills/delegate-via-agenvo/SKILL.md#codex-desktop)。这不是 Herdr CLI 模板验收。
 

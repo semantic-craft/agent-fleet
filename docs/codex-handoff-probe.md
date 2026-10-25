@@ -1,5 +1,9 @@
 # Codex handoff probe candidate (not deployed)
 
+Scope: the required external DSH/GrokBot → Agenvo → Codex Desktop route.
+It does not gate dot’s available, authorized native platform task route; that route
+cannot replace external callers’ needs. See [caller routing](caller-routing.md).
+
 This is offline preparation for one explicitly authorized canary, not a working
 Desktop handoff route. Keep the [PR64 admission gate](codex-desktop-handoff.md).
 The desired UX remains Desktop visibility followed by agent `turn/start` on the

@@ -1,6 +1,8 @@
-# Codex Desktop 空线程交接契约
+# 外部 Agenvo → Codex Desktop 空线程交接契约
 
-默认目标（先通过下述创建前门槛）：`thread/start` 建空线程 → 按已验证原生 ownership 路径交接→ 目标机打开 `codex://threads/<id>?prompt=…` 使 Desktop 可见 → 经 agenvo `turn/start` 提交。不是改回 exec；会话仍须 Desktop 可见。
+适用者：DSH→Agenvo→Codex Desktop、GrokBot→Agenvo→Codex Desktop，都是明确需要保留的需求。dot 已有原生平台任务通道时不经过本交接；本页 blocked 不表示 Codex 整体不可用，见[调用方路由](caller-routing.md)。
+
+本外部路线目标（先通过下述创建前门槛）：`thread/start` 建空线程 → 按已验证原生 ownership 路径交接→ 目标机打开 `codex://threads/<id>?prompt=…` 使 Desktop 可见 → 经 agenvo `turn/start` 提交。不是改回 exec；会话仍须 Desktop 可见。
 
 ## 当前支持边界
 

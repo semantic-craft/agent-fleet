@@ -32,7 +32,9 @@
 - 验证点：
 - 复发记录：Seen 1x (2026-10-19)。
 
-### Codex 派活走 Desktop 空会话
+### Codex 派活走 Desktop 空会话（仅外部 Agenvo 入口）
+
+dot 原生平台任务通道不受本节阻断；DSH／GrokBot→Agenvo→Codex Desktop 是需保留的外部目标，不能互相替代，见[调用方路由](docs/caller-routing.md)。
 
 **agenvo → Codex 实例 `thread/start` 建空桌面会话 → 按已验证原生 ownership 路径交接→ 打开 `codex://threads/<thread_id>?prompt=…` 确认 Desktop 可见 → 经 agenvo 对同一线程 `turn/start` 提交。**
 
@@ -265,11 +267,11 @@
 
 ### 桌面项目下自动开跑用 DSH
 
-**Codex 走 Desktop 四步（通过创建前门槛、完成原生交接且 Desktop 可见后再 `turn/start`）；要在桌面**项目下**自动开跑时选 DSH。**
+**外部 DSH／GrokBot 经 Agenvo 派 Codex 走 Desktop 四步（通过创建前门槛、完成原生交接且 Desktop 可见后再 `turn/start`）；要在桌面**项目下**自动开跑时选 DSH。**
 
 - 起因与后果：用户有时要左栏项目下直接跑起来的会话。
 - 修复与证据：DSH 经 `workspace/create {path: <任务目录>}` 的会话在桌面左栏对应项目下（2026-10-20 验收）。
-- 正确做法：默认编码线用 Codex Desktop 四步；项目下自动开跑用 DSH。见[派活技能](skills/delegate-via-agenvo/SKILL.md)。
+- 正确做法：dot 有平台任务工具与授权时优先原生 Codex；DSH／GrokBot 的外部 Codex Desktop 需求仍保留且单独验收；Agenvo 项目下自动开跑用 DSH。见[派活技能](skills/delegate-via-agenvo/SKILL.md)。
 - 验证点：`rg -n 'Codex Desktop|项目下' skills/delegate-via-agenvo/SKILL.md` 有对应表述。
 - 复发记录：Seen 1x (2026-10-23；2026-10-25 按 Desktop 正道改写)。
 
