@@ -32,3 +32,12 @@ test('host auth fetch preserves cancellation and supplies a bounded signal',asyn
  const {boundedAuthFetch}=await import('../index.js');const controller=new AbortController();controller.abort();
  await boundedAuthFetch(async(_input,init)=>{assert.equal(init.signal.aborted,true);assert.equal(init.method,'POST');})('https://fixture.invalid/token',{method:'POST',signal:controller.signal});
 });
+
+test('connection liveness gates manual reconnect and never replays old calls',async()=>{
+ const {connectionGate}=await import('../index.js');const f=fixture();let opened=0,handle;
+ const connect=connectionGate(async()=>{opened++;return handle=await connectScoped(f.ctx,f.input,f.deps);},()=>false);
+ await connect();assert.equal(handle.closed,false);await connect();assert.equal(opened,1);
+ f.client.onclose();assert.equal(handle.closed,true);assert.equal(f.defs.size,0);assert.equal(opened,1);
+ await connect();assert.equal(opened,2);assert.equal(handle.closed,false);assert.equal(f.defs.size,2);assert.equal(f.calls,0);
+ await handle.dispose();assert.equal(handle.closed,true);
+});

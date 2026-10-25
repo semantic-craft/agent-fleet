@@ -40,7 +40,7 @@ export async function connectScoped(ctx, { relayUrl, authProvider }, { Client, S
       });
       disposers.push(ctx.tools.register(definition));
     }
-    return { dispose };
+    return { dispose, get closed() { return closed; } };
   } catch (error) {
     await dispose().catch(() => {});
     // SDK errors may contain remote response bodies; do not forward them into host logs.

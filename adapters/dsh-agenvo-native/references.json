@@ -6,7 +6,11 @@
       "paths": [
         "packages/mcp/mcp-client/src/tools.ts",
         "packages/credentials/credentials/src/index.ts",
-        "packages/core/scope/src/index.ts"
+        "packages/core/scope/src/index.ts",
+        "packages/interaction/commands/src/index.ts",
+        "packages/credentials/authorization/src/index.ts",
+        "packages/util/native-command/src/runner.ts",
+        "apps/cli/src/args.ts"
       ],
       "use": "public APIs; existing built fixture dependencies, not installed app provenance"
     },
