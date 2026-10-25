@@ -13,7 +13,7 @@ description: Hand work to another coding agent (DeepSeek Harness/DSH, Codex, Cla
 2. **找方法**：用共同术语搜索，例如 `"dsh create work context"`、`"herdr worktree"`、`"dsh read output"`；选定后带 `includeSchema: true` 再搜一次拿参数 schema。不要凭记忆写方法名。
 3. **派活**：任务目录按「任务目录」选；Herdr 里的 agent 每轮按「一轮一个 tab」跑；DSH 实例按 schema 调原生方法。
    - 对方没有你的上下文。任务正文写全：目标、仓库和路径、已知事实、约束、验收方式，以及是否允许提交、推送或开 PR。
-   - 每个会话显式选模型：DSH 用 `session/selectModel {request: {sessionId, provider, model, reasoningEffort}}`；CLI 每轮在命令里带模型参数。实例和用户的全局默认保持原样。
+   - 核对实际模型：CLI 每轮显式带模型参数。DSH 优先复用已选好且匹配的独占会话；`session/selectModel` 可能持久化全局默认，绝非隔离设置。确需选择时先按[全局副作用保护](../../docs/migration-and-upgrades.md#dsh-模型选择全局副作用保护)取得授权、协调所有选择入口/暂停新会话、快照、受保护恢复并回读；未知结果不重发，漂移不覆盖。不得自动切模型或默认。
    - 派出后立刻告诉用户：任务名、任务目录、会话 id 和桌面查看入口——DSH 报项目名与 sessionId；Codex 报 thread_id 与 `codex://threads/<thread_id>`；Claude Code 报 `session_id`；agy 报 `conversation_id`；Herdr 里的任务另报 workspace 与轮次 pane。没拿到登记结果或链接时如实说，不说用户能在桌面里看到。
 4. **跟进**：结果不会自己回来。
    - 有事件订阅就等事件（Herdr `pane_exited`、DSH `turn/end`）；没有就按节奏查：派出约 60 秒后第一次，之后每 2–3 分钟一次，约 10 分钟仍未结束就停下，把会话 id 和当前状态报告给用户。每次查询单独一次 `execute`。

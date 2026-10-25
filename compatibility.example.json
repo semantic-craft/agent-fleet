@@ -1,0 +1,26 @@
+{
+  "identity": {
+    "runtime": "unknown",
+    "adapter": "unknown",
+    "provider": "unknown",
+    "model": "unknown",
+    "modelAlias": "unknown",
+    "effort": "unknown",
+    "preset": "unknown",
+    "policy": "unknown",
+    "harness": "unknown",
+    "schema": "unknown"
+  },
+  "capabilities": { "observe": "unknown", "submit": "candidate" },
+  "requiredCapabilities": ["observe", "submit"],
+  "scope": "marker",
+  "canary": {
+    "identityHash": "unknown",
+    "source": "simulated",
+    "status": "candidate",
+    "terminal": "unknown",
+    "expiresAt": 0,
+    "output": { "expectedHash": "unknown", "actualHash": "unknown" },
+    "tools": { "callCount": 0, "resultCount": 0 }
+  }
+}

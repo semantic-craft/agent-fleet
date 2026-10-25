@@ -300,3 +300,8 @@
 - 修复与证据：MiniMax single-fixture profile复用HarnessRunner与ReadOnlyVerificationHarness；回归覆盖参数篡改、额外工具、错误结果、错callId、继承header、权限漂移和持久恢复。
 - 验证点：路径/参数/正文只在内存匹配并参与指纹，不写FileJournal；零自动切模/切权限；后验不等于执行前强制限制。
 - 复发记录：Seen 1x (2026-10-24)。
+
+### 新机恢复与模型选择必须显式验收
+
+- `session/selectModel` 可能写全局默认；操作窗口需协调所有选择者和新会话创建，漂移不得覆盖。纯前置校验见 `scripts/model-selection.mjs`，回归见 `test/model-selection.test.mjs`；不是服务端CAS。
+- 版本字符串与模型别名不代替行为；unknown/candidate不得晋升已验工具能力。服务重建不重发在途任务。入口见 `docs/migration-and-upgrades.md`。

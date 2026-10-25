@@ -1,5 +1,7 @@
 # Bounded DSH harness
 
+迁移与升级先读[兼容来源、模型选择保护及在途恢复门槛](migration-and-upgrades.md)；历史通过不代表未知新版本可用。
+
 `scripts/harness.mjs` adds caller-side run validation to the existing Agenvo/native
 endpoint path. It has no network client, credentials, dispatcher, daemon, queue, or
 model router. `fleet.mjs` supplies the existing authenticated `call` function.
