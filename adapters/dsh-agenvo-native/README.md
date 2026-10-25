@@ -70,3 +70,44 @@ These use synthetic upstream responses and isolated loopback callbacks. The setu
 Actual host command integration: `node adapters/dsh-agenvo-native/test/action-official.mjs /path/to/approved/dsh-source`. This uses official Commands, AuthorizationService, SDK and synthetic HTTP responses; the browser opener is injected and no real grant is created.
 
 Installation-shape regression: `node adapters/dsh-agenvo-native/test/packaged-host.mjs /path/to/approved/dsh-source`. It stages the actual package and preset, creates the same profile symlink form as the manager, reproduces ordinary Node peer-resolution failure, then loads all fixed peers and the declared plugin through the official profile resolver. Real Commands discovery is scope-isolated and unload removes it; no OAuth, browser, network or model request is made. This proves the fixed source/runtime contract, not the provenance or live UI of the signed desktop application.
+
+## Keep the explicit caller preset; inspect status without authorizing
+
+`/agenvo-status` is a scoped human command. It calls only the official `credentials.describeRecord` presence API and reads in-memory connection state. Its result contains configured/kind/writable and disconnected/connecting/connected/disposed. Expiry and granted scopes are **unknown**: the command does not read credential values, call `token()`, refresh, connect or start OAuth. Presence is not proof that a grant is valid. It accepts no arguments and does not change model, preset or global defaults.
+
+A command-only session remains blank. In upstream rc.3, generic New Session can reuse it and intentionally apply the configured default when its create request omits `agentPreset`. This unloads this preset's commands/tools. Do not submit `/agenvo-authorize` as ordinary chat text if command discovery is absent; it could become a model prompt. `/agenvo-status` also leaves a session blank and is not a way to pin it.
+
+The opt-in preparation helper always names the desired preset and caller identity:
+
+```js
+import {fleetCallerCreate, checkFleetCaller} from '../../scripts/dsh-native-caller.mjs';
+// call is the existing authenticated Agenvo transport; this creates no new grant.
+const identity = {sessionId: suppliedStableSessionId, workspaceId: suppliedWorkspaceId};
+const descriptor = fleetCallerCreate(identity);
+// Persist the one-shot submission decision in the caller's existing journal BEFORE dispatch.
+// Never rerun this dispatch after a timeout, disconnect or restart with uncertain admission.
+try { await call(descriptor.method, descriptor.params); } catch { /* observe same ID only */ }
+const observation = await checkFleetCaller(call, {...identity, readCommands: existingNativeCommandDiscovery});
+// If blocked: stop; do not retry create, switch a default, or send a model prompt.
+// Ready is a point-in-time preset+command check, not a valid-grant assertion.
+```
+
+The helper constructs a request and performs readback; it is not a journal or automatic dispatcher. The caller must preserve its stable ID and submission decision using existing recovery infrastructure. Unknown admission, absent observation, or preset drift never authorizes recreation. The observation is a point-in-time check, not a lock: subsequent generic UI navigation can still reset an empty session. Use the explicit preset entry for reuse and recheck immediately before an authorized action. This patch does not change official generic New Session behavior.
+
+Source evidence at DSH `1f81c047fc48fa190a683e469daa699857e9afe8`:
+- `packages/client/ui-workspace/src/client/navigation.ts:221`: omitted preset permits any blank and omits the field from create.
+- `packages/api/session-controller/src/agent.ts:460`: actual claim/reuse resolves omitted preset to default, then selects it.
+- `packages/api/session-controller/tests/session-presets.host.spec.ts:238`: existing omitted-preset regression.
+- `packages/api/session-controller/tests/session-list-blank.host.spec.ts:57`: command lifecycle does not clear blank.
+
+Offline lifecycle test (existing approved source and built dependencies, no installation):
+
+```sh
+node --import /path/to/dsh/node_modules/tsx/dist/loader.mjs adapters/dsh-agenvo-native/test/preset-reuse-official.mjs /path/to/dsh
+```
+
+This executes the real upstream `ApiSessionAgentController` create/reuse and official Commands/SessionStore, with an injected synthetic preset roster that mounts/removes our actual status command. It proves the create/reuse boundary and command availability, not a full UI click or production profile reload. No credential contents, network, model, or real session is used.
+
+Public offline planning entry: `node scripts/fleet.mjs caller-plan --session STABLE_ID --workspace WORKSPACE_ID`. It prints only the explicit create descriptor, never dispatches, reads an overlay or starts OAuth. For automated preflight use `checkFleetCaller(call, {sessionId, readCommands})`, injecting an existing supported native command-discovery function. Missing discovery support or either missing status/authorize command is blocked; a `ready` result permits only an explicitly authorized status action, not an authentication claim or blanket permission to dispatch.
+
+The create descriptor intentionally omits `permission`; it neither requests full access nor changes global policy. The caller must inspect the existing connector’s default permission behavior and explicitly supply only its authorized policy. `observeFleetCaller` alone returns `observed/caller_preset_matches`, not ready; use `checkFleetCaller` for both scoped commands. No precheck provides a server-side lock against a later UI preset change.

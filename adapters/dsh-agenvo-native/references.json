@@ -10,7 +10,11 @@
         "packages/interaction/commands/src/index.ts",
         "packages/credentials/authorization/src/index.ts",
         "packages/util/native-command/src/runner.ts",
-        "apps/cli/src/args.ts"
+        "apps/cli/src/args.ts",
+        "packages/client/ui-workspace/src/client/navigation.ts",
+        "packages/api/session-controller/src/agent.ts",
+        "packages/api/session-controller/tests/session-presets.host.spec.ts",
+        "packages/api/session-controller/tests/session-list-blank.host.spec.ts"
       ],
       "use": "public APIs; existing built fixture dependencies, not installed app provenance"
     },
