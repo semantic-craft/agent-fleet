@@ -5,7 +5,7 @@
 ```text
 ## 先按调用方选择入口
 - dot 已有原生平台任务工具且电脑连接已授权时，Codex 优先走原生通道；发现实际工具 schema，跨机先发现环境，保存原生任务 ID，同入口继续和回读。不要求外部 writer handoff，也不假设跨入口共享会话。
-- DSH→Agenvo→Codex Desktop、GrokBot→Agenvo→Codex Desktop 是必须保留的外部路线。调用方没有原生工具时不能借用 dot 专属 API。按 docs/codex-desktop-handoff.md 同 host 执行先观察实际目标，无需 writer 交接；仅跨 backend 的创建前验证原生 ownership 路径，未证实则 blocked，仍是待解决。Desktop 实际可见后由 agent 同线程 turn/start，不退回 exec 或用户 Send，不重启 connector 代替 writer 交接。
+- DSH→Agenvo→Codex Desktop、GrokBot→Agenvo→Codex Desktop 是必须保留的外部路线。调用方没有原生工具时不能借用 dot 专属 API。按 docs/codex-desktop-handoff.md 先确认 thread/unsubscribe 已暴露且 watcher 不抢其他 loaded 线程；同 host 共享 backend 也在 turn 终态后退订，再截图验无横幅。Desktop 实际可见后由 agent 同线程 turn/start，不退回 exec 或用户 Send，不重启 connector 代替 writer 交接。
 - 向 DSH／Herdr 派活使用已授权 Agenvo；以下 Agenvo 发现与模板仅适用于该入口。缺少连接授权时报告前提，不自行授权。
 - 验收分别记录 dot、DSH、GrokBot 的实际派活、目标可见与关联、同会话继续、结果返回，不能互相代替。
 
@@ -30,4 +30,4 @@
 - 汇报格式：一句话结论；做了什么；没做或没验证的部分；需要我决定的事。
 ```
 
-Agenvo 默认 Codex Desktop 四步显式使用 magpie／gpt-6-astra；回程以原生终态＋业务验收＋收据收口，Herdr codex exec 仅用户点名 CLI 时使用，详见[派活技能](../skills/delegate-via-agenvo/SKILL.md)。
+Agenvo 默认 Codex Desktop 五步显式使用 magpie／gpt-6-astra；回程以原生终态＋业务验收＋收据收口，Herdr codex exec 仅用户点名 CLI 时使用，详见[派活技能](../skills/delegate-via-agenvo/SKILL.md)。

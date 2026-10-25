@@ -40,7 +40,7 @@ dot 原生平台任务通道不受本节阻断；DSH／GrokBot→Agenvo→Codex 
 
 - 起因与后果：用户要任务出现在 Codex Desktop，并由 agent 经 agenvo 提交开跑；会话仍须 Desktop 可见（2026-10-25 10:18 经图灵纠正）。
 - 修复与证据：正本改写于 `skills/delegate-via-agenvo/SKILL.md`「Codex Desktop」；外部技能副本是否同步须另核，不能由本仓修改推断。
-**仅跨 backend 的创建前门槛**：需要迁移原生 writer 时才要求受支持交接及完整 canary；否则 `blocked_native_writer_release`。同 host 执行不要求 writer 交接，须观察实际目标并绑定 thread/turn；Desktop 可见性独立验收。connector 重启不释放独立 native writer。目标仍为 Desktop 可见后 agent `turn/start`，见[交接契约](docs/codex-desktop-handoff.md)。
+**创建前门槛**：确认 connector 暴露 `thread/unsubscribe` 且 watcher 不抢其他 loaded 线程，否则 `blocked_native_writer_release`。同 host 共享 app-server 与 Desktop 自带 backend 也要交还 writer；本次 turn 终态后由同一 connector 退订，再截图核实项目下可见且无横幅。connector 重启不释放独立 native writer。目标仍为 Desktop 可见后 agent `turn/start`，见[交接契约](docs/codex-desktop-handoff.md)。
 - 验证点：`test/codex-handoff-docs.test.mjs` 检查所有入口的前置阻断与提交者一致；`test/codex-handoff.test.mjs` 检查目标/版本/线程关联、证据缺失与 unknown 不重发；离线文档回归不证明实际 writer 已释放。
 - 复发记录：Seen 3x（2026-10-25 保留 agent 提交目标，修复控制权前提）。
 
@@ -267,7 +267,7 @@ dot 原生平台任务通道不受本节阻断；DSH／GrokBot→Agenvo→Codex 
 
 ### 桌面项目下自动开跑用 DSH
 
-**仅跨 backend 的创建前门槛**：需要迁移原生 writer 时才要求受支持交接及完整 canary；否则 `blocked_native_writer_release`。同 host 执行不要求 writer 交接，须观察实际目标并绑定 thread/turn；Desktop 可见性独立验收。connector 重启不释放独立 native writer。目标仍为 Desktop 可见后 agent `turn/start`，见[交接契约](docs/codex-desktop-handoff.md)。
+**创建前门槛**：确认 connector 暴露 `thread/unsubscribe` 且 watcher 不抢其他 loaded 线程，否则 `blocked_native_writer_release`。同 host 共享 app-server 与 Desktop 自带 backend 也要交还 writer；本次 turn 终态后由同一 connector 退订，再截图核实项目下可见且无横幅。connector 重启不释放独立 native writer。目标仍为 Desktop 可见后 agent `turn/start`，见[交接契约](docs/codex-desktop-handoff.md)。
 
 - 起因与后果：用户有时要左栏项目下直接跑起来的会话。
 - 修复与证据：DSH 经 `workspace/create {path: <任务目录>}` 的会话在桌面左栏对应项目下（2026-10-20 验收）。
@@ -321,6 +321,13 @@ dot 原生平台任务通道不受本节阻断；DSH／GrokBot→Agenvo→Codex 
 ### 双向派活需要收据，连接重启不等于交接
 
 - 起因与后果：旧默认仍可能从已安装技能或 connector context 进入；accepted、空闲和链接打开均不足以证明 Desktop 与业务成功。
-- 正确做法：以派活技能的 Magpie 四步和轮询为准；connector kickstart 不证明 native writer 释放，DSH 同值选模仍回读全局默认。原生终态、业务结果和收据分别留证。
+- 正确做法：以派活技能的 Magpie 五步和轮询为准；connector kickstart 不证明 native writer 释放，DSH 同值选模仍回读全局默认。原生终态、业务结果和收据分别留证。
 - 验证点：`npm test`；真实烟雾逐项报告 UI、模型 header、终态、标记与 receipt。UI 或模型失败就停该路，不换 CLI 冒充。
 - 复发记录：Seen 1x (2026-10-25，本次双向派活验收)。
+
+### 事件观察不能替其他客户端取得 writer
+
+- 起因与后果：watchEvents 自动 resume 所有 loaded 线程，导致共享 app-server 保留订阅，Desktop 显示 writerConflict；重启 connector 不能证明放锁。
+- 修复：仅恢复明确订阅的 resumeTargets，暴露 thread/unsubscribe，成功后移除目标；完成回读后由同一连接退订。
+- 验证：agenvo 的 codex-attach 回归检查 orphan loaded 不被收养、退订后重连不再 resume；桌面必须另验左栏项目与无横幅，原生成功不代替截图。
+- 复发记录：Seen 1x (2026-10-25)。

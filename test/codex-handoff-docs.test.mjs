@@ -10,7 +10,10 @@ test('Desktop handoff retains agent submission but gates creation',()=>{
  assert.match(desktop,/turn\/start/);
  assert.match(desktop,/connector 重启不释放独立 native writer/);
  assert.match(desktop,/不能把 kickstart 成功当作跨 backend ownership 证据/);
- assert.match(desktop,/同 host 执行无需 writer 交接/);
+ assert.match(desktop,/thread\/unsubscribe/);
+ assert.match(desktop,/5\. \*\*交还 Desktop/);
+ assert.match(desktop,/退订后 notifications 可能停止/);
+ assert.doesNotMatch(desktop,/同 host.*无需.*交接/);
  assert.match(desktop,/blocked_native_writer_release/);
  assert.match(desktop,/确认 Desktop 可见|Desktop 可见/);
  assert.doesNotMatch(desktop,/用户按发送|由用户在 Desktop 按发送|不调 `turn\/start`/);
@@ -53,5 +56,5 @@ test('all consumer instructions retain the same precreation gate and no personal
   assert.doesNotMatch(s,/释放 connector 写锁|由用户发送|用户按发送/,p);
  }
  assert.doesNotMatch(desktop,/`codex-[a-z][a-z0-9]+`/); // concrete instances belong to discovery, not instructions
- assert.doesNotMatch(read('docs/codex-desktop-handoff.md'),/kickstart/);
+ assert.match(read('docs/codex-desktop-handoff.md'),/kickstart.*不等于放锁/);
 });

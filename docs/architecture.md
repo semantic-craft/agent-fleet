@@ -32,11 +32,11 @@
 
 **外部 Codex Desktop**（DSH／GrokBot 经 Agenvo 的明确需求，尚未验通）：
 
-**仅跨 backend 的创建前门槛**：需要迁移原生 writer 时才要求受支持交接及完整 canary；否则 `blocked_native_writer_release`。同 host 执行不要求 writer 交接，须观察实际目标并绑定 thread/turn；Desktop 可见性独立验收。connector 重启不释放独立 native writer。目标仍为 Desktop 可见后 agent `turn/start`，见[交接契约](codex-desktop-handoff.md)。
-1. discovery 选定 Codex deviceId/instanceId，brief 与 cwd 均在该目标机器，回读确认可用；`thread/start` 建空线程 → `threadId`。
-2. 仅需跨 backend 时完成原生 ownership 交接；见[交接契约](codex-desktop-handoff.md)。
-3. 在目标机器打开 `codex://threads/<threadId>?prompt=…`，确认 Desktop 可见。
-4. 经 agenvo 对同一线程 `turn/start` 提交；Desktop 可见与 turn 结果分别验收。
+**创建前门槛**：目标 connector 支持 `thread/unsubscribe`，watchEvents 不收养其他 loaded 线程；否则 `blocked_native_writer_release`。同 host 的共享 app-server 与 Desktop 自带 backend 也必须交还 writer。connector 重启不释放独立 native writer。
+1. discovery 选定 deviceId/instanceId，brief 与 cwd 均在该目标机器；`thread/start` 保存 threadId。
+2. 在目标机器打开 `codex://threads/<threadId>`，确认 Desktop 项目下可见。
+3. 经 Agenvo `turn/start`，读本次 turn 终态与实际输出。
+4. 同一 connector `thread/unsubscribe` 后重新打开 Desktop，截图核实左栏项目和无 writerConflict；完整五步与 kickstart 的可选处理见[交接契约](codex-desktop-handoff.md)。
 
 **Claude Code、agy、dsh headless** 在 Herdr 里跑：
 
@@ -55,4 +55,4 @@ connector 与 relay 之间是会断开重连的长连接（2026-10-23 实测：r
 - 同一 macOS 用户下 full access 能触及该用户能访问的一切；这是有意的取舍，见 [ADR-0004](decisions/0004-desktop-strict-and-full-access.md)。
 
 
-Agenvo 默认 Codex Desktop 四步显式使用 magpie／gpt-6-astra；回程以原生终态＋业务验收＋收据收口，Herdr codex exec 仅用户点名 CLI 时使用，详见[派活技能](../skills/delegate-via-agenvo/SKILL.md)。
+Agenvo 默认 Codex Desktop 五步显式使用 magpie／gpt-6-astra；回程以原生终态＋业务验收＋收据收口，Herdr codex exec 仅用户点名 CLI 时使用，详见[派活技能](../skills/delegate-via-agenvo/SKILL.md)。
