@@ -55,3 +55,17 @@ DSH／Herdr 回读；外部 Codex 交接。账号、版本、平台工具和模�
 离线 guard、probe mock 或 dot 原生任务成功均不能补作外部两条的端到端证据。
 下一轮 live 验收先解决正式接入支持与必要授权，再用唯一无敏感任务逐项回读；
 本轮仅纠正文档与回归，不创建任务、不突破 UI／进程探测拒绝或扩大访问。
+
+## 机器可读路由
+
+唯一结构源是 `scripts/caller-routes.mjs`；`createCallerRouter` 仅从宿主注入的函数能力判定可用入口，任务 JSON 的 true/verified 不能启用外部 writer 路线。`fleet check` 的 DSH 分支调用此 resolver 后进入 Harness。原生平台工具仍由平台宿主提供，resolver 不代理或认证平台权限，也不构成真实验收。
+
+<!-- caller-routes:start -->
+| Caller | Target | Route | Acceptance |
+| --- | --- | --- | --- |
+| dot | codex | native-platform | partial-maintenance-evidence |
+| dsh | codex | agenvo-desktop | unverified |
+| grokbot | codex | agenvo-desktop | unverified |
+<!-- caller-routes:end -->
+
+`npm run lint:routes` 校验表与跨文件禁用的旧路由表述，包含在 `npm test` 中。lint 只检查明确规则，不声称理解任意自然语言矛盾。

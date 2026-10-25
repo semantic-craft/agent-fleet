@@ -490,3 +490,47 @@ aborted, with no tool executed. That does not validate tool execution. The
 cancel-attempted session stays quarantined by the existing durable policy; a
 new session is required for later work. Neither that failed trial nor the MiniMax
 fixture result upgrades Sol's tool capability claim.
+
+## Structural enforcement (v4)
+
+The existing public `fleet check --dispatch` DSH path is
+`fleet.mjs → dshTurn → createCallerRouter → HarnessRunner → DshProviderAdapter`.
+Read-only TaskSpecs now require observed runtime `permissions.currentValue = read-only`
+before any prompt and after completion, even when expected permission is omitted.
+Permission/sandbox expansion within the observed turn fails verification even if
+restored by its end. This does not change a user's permission setting. New sessions use the existing Agenvo connector’s top-level `permission: read-only`
+create bridge (not a native request field); projections must confirm it before prompt.
+Existing sessions are never silently changed. An older bridge that ignores the field
+cannot pass the observed permission check.
+The transport adapter refuses methods outside its six observe/submit/cancel endpoints,
+including model selection and approval responses. Optional nativeIds in envelopes
+must match the requested session. The public fleet path binds its discovered device/instance
+to the adapter and journal fingerprint; changing targets cannot reuse a cached result.
+Library callers without a target retain legacy unbound transport semantics and must not
+share a journal across endpoints. A binding identifies the host-selected transport, not
+cryptographic proof of remote identity. Projections and real headers supply model checks;
+known-failure production profiles cannot be bypassed by omitting the profile name.
+Discovery remains explicit and does not promote a combination to verified.
+
+Version v4 intentionally refuses v3 journal reuse. Preserve old observer code and
+receipts for existing in-flight requests; never clear a journal or assign a new
+request ID to get around this barrier. No automatic replay/migration is provided.
+
+The [OO-Harness paper](https://arxiv.org/html/2610.28380v1) motivates complete
+reviewed classes, inheritance and frozen deployment policy. It does not establish
+our permission checks, lint or OS isolation guarantees; these are engineering
+controls added here. We have not reproduced its training or benchmark results.
+
+Remaining trust boundaries: host-injected transport and native platform functions
+are trusted integrations, not task JSON. The pure compatibility and handoff evidence
+helpers remain validators of supplied data, not authenticators; no external Codex
+dispatch is enabled by their boolean results in this caller router. No production
+writer observer exists yet. Direct Agenvo calls, a modified host, and agents with
+repository write/execute authority can bypass this library; it is not an OS sandbox.
+Runtime read-only enforcement remains DSH's responsibility. Projection preflight
+is not atomic with submit, so concurrent permission changes cannot be prevented
+here; observed changes invalidate the result, not undo already executed work.
+Cancellation's exclusiveSession claim still requires host ownership because DSH
+cancel lacks an atomic expected-turn precondition. The smoke CLI retains fresh IDs
+and process-local journals; use existing persistent Harness APIs for resumable work,
+never retry a crashed smoke invocation as recovery. No new live acceptance is claimed.

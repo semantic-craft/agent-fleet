@@ -36,7 +36,7 @@ function fixture({ mutate = () => {}, permission = 'read-only', afterPermission 
   const events = [...before, ...current].map((e, i) => ({ ...e, seq: i + 1 }));
   const transport = async (method, { request }) => {
     calls.push(method);
-    if (method === 'session/projections') return { result: { values: { agentPreset: 'standard', modelSelection: { next: model }, permissions: { currentValue: ++projections === 1 ? permission : afterPermission } } } };
+    if (method === 'session/projections') return { result: { values: { agentPreset: 'standard', modelSelection: { next: model }, permissions: { currentValue: ++projections <= 2 ? permission : afterPermission } } } };
     if (method === 'session/follow') return { result: { cursor: sent ? events.length : before.length } };
     if (method === 'session/page') return { result: { records: events.filter(e => e.seq < request.beforeSeq).map(event => ({ event })) } };
     if (method === 'session/prompt') { sent = true; if (unknown) throw Error('synthetic-response-loss'); return { result: {} }; }

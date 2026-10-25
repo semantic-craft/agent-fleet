@@ -7,10 +7,11 @@
     "node": ">=24.13.0"
   },
   "scripts": {
-    "test": "node --test test/*.test.mjs adapters/*/test/*.test.mjs && node scripts/guard.mjs private",
+    "test": "node --test test/*.test.mjs adapters/*/test/*.test.mjs && node scripts/guard.mjs private && node scripts/lint-routes.mjs",
     "guard": "node scripts/guard.mjs",
     "doctor": "node scripts/fleet.mjs doctor",
-    "check": "node scripts/fleet.mjs check"
+    "check": "node scripts/fleet.mjs check",
+    "lint:routes": "node scripts/lint-routes.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.1"

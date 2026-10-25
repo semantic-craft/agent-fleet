@@ -19,7 +19,7 @@ function fixture({ preset = 'ptc', selected = model, header = model, tool = fals
   ].map((event, i) => ({ seq: i + 1, ...event }));
   const call = async (method, { request }) => {
     calls.push(method);
-    if (method === 'session/projections') return { result: { values: { agentPreset: preset, modelSelection: { next: selected } } } };
+    if (method === 'session/projections') return { result: { values: { permissions: { currentValue: 'read-only' }, agentPreset: preset, modelSelection: { next: selected } } } };
     if (method === 'session/follow') return { result: { cursor: sent ? events.length : 0 } };
     if (method === 'session/page') return { result: { records: events.filter(e => e.seq < request.beforeSeq).map(event => ({ event })) } };
     if (method === 'session/prompt') { sent = true; if (unknown) throw Error('synthetic-lost-response'); return { result: {} }; }
@@ -66,7 +66,7 @@ test('profile changes cannot reuse a reserved native request fingerprint', async
 test('external preparation enforces profile without submitting or changing the session', async () => {
   const f = fixture(); const prepared = await f.runner.prepareExternalRun(task(), context());
   assert.equal(prepared.result.status, 'prepared'); assert.equal(prepared.dispatchAllowed, true);
-  assert.equal(prepared.descriptor.method, 'session/prompt'); assert.deepEqual(f.calls, ['session/projections', 'session/follow']);
+  assert.equal(prepared.descriptor.method, 'session/prompt'); assert.deepEqual(f.calls, ['session/projections', 'session/follow', 'session/projections']);
   const blocked = fixture(); const rejected = await blocked.runner.prepareExternalRun(task(), context({ routeProfile: 'sol-low-standard-v1' }));
   assert.equal(rejected.dispatchAllowed, false); assert.equal(rejected.descriptor, undefined); assert.deepEqual(blocked.calls, []);
 });
