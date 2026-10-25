@@ -139,8 +139,8 @@ dot 原生平台任务通道不受本节阻断；DSH／GrokBot→Agenvo→Codex 
 
 - 起因与后果：不显式传模型时 Claude Code 用设置里的默认模型，结果随设置变化，曾返回 `is_error: true`，继续等待无用；agy 遇到信任提示时 `agent.prompt` 返回 `agent_blocked`。
 - 修复与证据：调度方于 2026-10-21 19:26–19:27 实测 Claude Code 已登录，显式选 `deepseek/deepseek-flash` 后成功，`--resume <session_id>` 也能续接同一会话。调度方于 2026-10-21 19:57 在目标开发机实测，加 `--dangerously-skip-permissions` 的无头命令返回 `is_error: false`。调度方于 2026-10-21 21:11–21:16 实测 `--model deepseek/deepseek-flash` 新建与 `--resume` 均成功，请求经 `~/.claude/settings.json` 的 `ANTHROPIC_BASE_URL` 进入本机 magpie。agy 经 relay 用 `pane.run` 发空命令回车确认信任后可回答。
-- 正确做法：确认 `ANTHROPIC_BASE_URL` 指向 magpie（`http://127.0.0.1:3425`），启动前 3425 不在线就不启动（exit 文件记 97）；按[派活技能](skills/delegate-via-agenvo/SKILL.md)「一轮一个 tab」的表格，每轮 `claude -p --dangerously-skip-permissions --model deepseek/deepseek-flash --output-format json`，正文从 `~/Projects/_status/<任务名>/brief-N.md` 经 stdin 传入，结果写 `result-N.json`，读取 `result`、`session_id` 与 `is_error`；用 MiniMax 时把 `--model` 换成 `minimax-code/MiniMax-M3.1-Flash`；第 2 轮起加 `--resume <session_id>`，沿用新建时的 `--model`。不用交互式 `agent.start kind claude`。输入已接受不等于轮次完成。
-- 验证点：`rg -n -- "--model deepseek/deepseek-flash" skills/delegate-via-agenvo/SKILL.md` 有结果，且同一行的「第 2 轮起加」一栏是 `--resume <session_id>`、沿用新建时的 `--model`。
+- 正确做法：确认 `ANTHROPIC_BASE_URL` 指向 magpie（`http://127.0.0.1:3425`），启动前 3425 不在线就不启动（exit 文件记 97）；按[派活技能](https://github.com/semantic-craft/xw-stack/blob/main/skills/delegate-via-agenvo/SKILL.md)「一轮一个 tab」的表格，每轮 `claude -p --dangerously-skip-permissions --model deepseek/deepseek-flash --output-format json`，正文从 `~/Projects/_status/<任务名>/brief-N.md` 经 stdin 传入，结果写 `result-N.json`，读取 `result`、`session_id` 与 `is_error`；用 MiniMax 时把 `--model` 换成 `minimax-code/MiniMax-M3.1-Flash`；第 2 轮起加 `--resume <session_id>`，沿用新建时的 `--model`。不用交互式 `agent.start kind claude`。输入已接受不等于轮次完成。
+- 验证点：`rg -n -- "--model deepseek/deepseek-flash" ~/Projects/xw-skills/live/xw-stack/skills/delegate-via-agenvo/SKILL.md` 有结果，且同一行的「第 2 轮起加」一栏是 `--resume <session_id>`、沿用新建时的 `--model`。
 - 复发记录：Seen 1x (2026-10-19)；模型与登录状态于 2026-10-21 更新。
 
 ### 从 DSH 的 shell 启动 Electron app 要去掉 ELECTRON_RUN_AS_NODE
@@ -198,7 +198,7 @@ dot 原生平台任务通道不受本节阻断；DSH／GrokBot→Agenvo→Codex 
 
 - 起因与后果：调度方于 2026-10-22 在隔离 `dsh web`（临时 HOME/DSH_HOME）实测，`session/rename` 后 CLI 续写报 `already owned by an active write handle`，等待 45 秒仍未释放。
 - 修复与证据：派活技能将 `workspace/attachSession` 与 `session/rename` 分开；前者经 registry.create + attachSession 登记并推送 workspace/follow upsert，不拿会话写锁，CLI 可继续续写。2026-10-22 在隔离 dsh web 上用本插件实测：新路径返回 created:true 且重名规则生效；cwd 不一致返回 bridge/attach-failed，不新建空项目；登记后 CLI `--session-id` 续写不报写锁错误。
-- 正确做法：拿到 sessionId 立即登记并告知项目 title；完成全部 CLI 轮次后再改为 `[CLI] <任务名>`，之后追问走桌面或 DSH 实例的 `session/prompt`。详见[派活技能](skills/delegate-via-agenvo/SKILL.md#dsh-headless登记到桌面项目)。
+- 正确做法：拿到 sessionId 立即登记并告知项目 title；完成全部 CLI 轮次后再改为 `[CLI] <任务名>`，之后追问走桌面或 DSH 实例的 `session/prompt`。详见[派活技能](https://github.com/semantic-craft/xw-stack/blob/main/skills/delegate-via-agenvo/SKILL.md#dsh-headless登记到桌面项目)。
 - 验证点：隔离环境中登记后 CLI `--session-id` 仍可续写；改名后 CLI 复现写锁错误，桌面或 DSH 实例接手。插件假注册表回归测试见 `adapters/dsh/test/native-bridge.test.mjs`，不替代真实写锁验收。
 - 复发记录：Seen 1x (2026-10-22)。
 
@@ -208,8 +208,8 @@ dot 原生平台任务通道不受本节阻断；DSH／GrokBot→Agenvo→Codex 
 
 - 起因与后果：2026-10-22 koe 会议纪要第 1 期在主力 Mac 的临时 /tmp 克隆里用 `dsh --profile headless` 派活，会话已经落盘，桌面 Host 的 `session/list` 也列得出，但它没有记到任何项目下，桌面左栏的项目里找不到，用户看不到进度。桌面版只在首次初始化时按 cwd 自动归组，之后 CLI 新建的会话一律不归项目；原生端点也没有把已有会话记进项目的方法。
 - 修复与证据：#39 给插件加 `workspace/attachSession`，派活技能写明登记步骤与项目 title 规则；隔离 `dsh web` 实测登记后会话出现在项目下，CLI `--session-id` 可继续续写（见上一条）。
-- 正确做法（Done right）：照[派活技能](skills/delegate-via-agenvo/SKILL.md#dsh-headless登记到桌面项目)，第一轮跑起来后从 `events-1.jsonl` 第一行取 sessionId，在同机读取 pane 里经插件 socket 调 `/bridge/workspace/attachSession`，核对 `ok:true`；登记失败如实报告，不说用户能在桌面里看到。
-- 验证点：`rg -n 'workspace/attachSession' skills/delegate-via-agenvo/SKILL.md` 有结果；之后每次 headless 派活的回报里都有「DSH 桌面左栏项目『<title>』下」和 sessionId。
+- 正确做法（Done right）：照[派活技能](https://github.com/semantic-craft/xw-stack/blob/main/skills/delegate-via-agenvo/SKILL.md#dsh-headless登记到桌面项目)，第一轮跑起来后从 `events-1.jsonl` 第一行取 sessionId，在同机读取 pane 里经插件 socket 调 `/bridge/workspace/attachSession`，核对 `ok:true`；登记失败如实报告，不说用户能在桌面里看到。
+- 验证点：`rg -n 'workspace/attachSession' ~/Projects/xw-skills/live/xw-stack/skills/delegate-via-agenvo/SKILL.md` 有结果；之后每次 headless 派活的回报里都有「DSH 桌面左栏项目『<title>』下」和 sessionId。
 - 复发记录：Seen 1x (2026-10-22)。
 
 ### 桌面版续发不做自动化验收
@@ -219,7 +219,7 @@ dot 原生平台任务通道不受本节阻断；DSH／GrokBot→Agenvo→Codex 
 - 起因与后果：2026-10-21 想经 Herdr 用 osascript 自动点 Codex 桌面版，验证派活线程能续发、出现在侧栏。权限记在 herdr 头上（launchd 起的 herdr 0.9.3），herdr 只有 adhoc 签名、没有 Team ID；用户三轮守在主力 Mac 前点 Allow，「控制 System Events」记住了，辅助功能一直没授予（22:17–22:22 六次检查都是 false，这项权限不弹窗，点 Allow 解决不了），自动检查始终没跑通。
 - 修复与证据：用户 2026-10-21 22:26 定：不自动化桌面，不申请辅助功能，不重签 herdr；「桌面在同一线程续发」以用户 22:16、22:17 在桌面里发出的两个 turn 为证记为通过；侧栏是否出现不单独测，技能写明 exec 线程不一定在侧栏、必须给链接。
 - 正确做法（Done right）：Codex 新建派活用 `codex exec`，追问用 `codex exec resume`，均经 Herdr pane 执行，不需要桌面权限；要验证桌面能续发，请用户在桌面里发一轮并截图或给时间点。授予 herdr 辅助功能等于让 herdr 里跑的任何命令都能控制键盘鼠标，且 adhoc 签名下每次升级 herdr 都可能要重新授权。
-- 验证点：`rg -n 'osascript|System Events' skills/ prompts/ scripts/` 无派活或验收用的桌面自动化步骤；`rg -n '0 个归入项目' skills/delegate-via-agenvo/SKILL.md` 有结果。
+- 验证点：`rg -n 'osascript|System Events' ~/Projects/xw-skills/live/xw-stack/skills/delegate-via-agenvo/ prompts/ scripts/` 无派活或验收用的桌面自动化步骤；`rg -n '0 个归入项目' ~/Projects/xw-skills/live/xw-stack/skills/delegate-via-agenvo/SKILL.md` 有结果。
 - 复发记录：Seen 1x (2026-10-21)。
 
 ### 改用户的配置前先读现状，派活模型只照决定清单写进命令
@@ -229,7 +229,7 @@ dot 原生平台任务通道不受本节阻断；DSH／GrokBot→Agenvo→Codex 
 - 起因与后果：2026-10-21 22:33 交代把主力 Mac 上 `~/.claude/settings.json` 的默认模型从「gemini-4-argon」换成 `deepseek/deepseek-flash`。实际文件里 5 处都是用户自己 22:16 刚设的 `minimax-code/MiniMax-M3.1-Flash`，改动照样覆盖了，改完才报「和背景对不上」；用户确认 MiniMax 是他有意设的，只好用备份还原。
 - 修复与证据：改前做了备份，按 sha256 核对还原后不带 `--model` 跑短会话，用量里是 MiniMax。派活命令每轮显式带 `--model`（#32、#35），用户自己的默认模型保持他设的值。
 - 正确做法（Done right）：动用户配置前读文件、记 mtime 与要改的字段原值，和交代不一致就停下报告；派活所用模型查决定清单，写进每条命令（Codex `-m`、Claude Code `--model`、agy `--model`、DSH `session/selectModel`），不靠改用户或实例的全局默认。
-- 验证点：`rg -n -- "--model deepseek/deepseek-flash" skills/delegate-via-agenvo/SKILL.md` 有结果（Claude Code 那一行，续接沿用同一 `--model`）；派活回报里写明所用模型，且没有改用户 settings 的步骤。
+- 验证点：`rg -n -- "--model deepseek/deepseek-flash" ~/Projects/xw-skills/live/xw-stack/skills/delegate-via-agenvo/SKILL.md` 有结果（Claude Code 那一行，续接沿用同一 `--model`）；派活回报里写明所用模型，且没有改用户 settings 的步骤。
 - 复发记录：Seen 1x (2026-10-21)。
 
 ### 修复合并、部署过不等于修好，要按原症状实测
@@ -249,7 +249,7 @@ dot 原生平台任务通道不受本节阻断；DSH／GrokBot→Agenvo→Codex 
 - 起因与后果：#39 合并后技能让派活方经 DSH 实例调 connector 方法 `workspace/attachSession`，但 connector 一侧是 semantic-craft/agenvo#7，至 2026-10-23 仍未合并，发布的 connector（ff2db52）里没有这个方法；按技能派 dsh headless 时登记必然失败，CLI 会话进不了桌面项目。
 - 修复与证据：技能改为在同机 Herdr 读取 pane 里经插件 socket 调 `/bridge/workspace/attachSession`（插件 ff35cd8 已部署）；2026-10-23 经 relay 实测返回 `ok:true`，会话归入桌面已有项目 agent-fleet。
 - 正确做法：改技能或 context 前，对照 `search {includeSchema:true}` 的结果确认方法存在；新方法只在 connector 发布、`check` 通过后写进技能。
-- 验证点：派活技能和 overlay context 里经实例调用的方法名，都能在 `search {"query": "<方法名>", "includeSchema": true}` 里搜到；`rg -n 'workspace/attachSession' skills/delegate-via-agenvo/SKILL.md` 的结果写明它要等 agenvo#7 发布。
+- 验证点：派活技能和 overlay context 里经实例调用的方法名，都能在 `search {"query": "<方法名>", "includeSchema": true}` 里搜到；`rg -n 'workspace/attachSession' ~/Projects/xw-skills/live/xw-stack/skills/delegate-via-agenvo/SKILL.md` 的结果写明它要等 agenvo#7 发布。
 - 复发记录：Seen 1x (2026-10-23)。
 
 ### 派出去改代码的任务进 worktree，不进主 checkout
@@ -259,7 +259,7 @@ dot 原生平台任务通道不受本节阻断；DSH／GrokBot→Agenvo→Codex 
 - 起因与后果：派活技能原来让 Herdr workspace 的 cwd 直接取 `~/Projects/<项目>`。2026-10-23 核对时 koe、agent-fleet、box-services 三个主 checkout 都停在功能分支上（agent-fleet 还有未推送提交），同一仓库的并行任务会互相踩；更早的派活用 `/private/tmp/turing-*` 克隆，Herdr 里留下 6 个指向 `/tmp` 的 workspace，桌面项目里看不到，`reap` 也不回收。
 - 修复与证据：技能与 context 的 execute 脚本在 `write = true` 时调 `worktree.create`（分支 `agent/<任务名>`，基于 `origin/main`，第一轮先 fetch 并快进）；2026-10-23 经 relay 实测建出 worktree、两轮 Codex 都在其中运行，`worktree.remove` 后只剩分支。
 - 正确做法：任务名以仓库名开头；追问回同一 worktree；合并后 `worktree.remove` 并删分支。
-- 验证点：`rg -n 'worktree.create' skills/delegate-via-agenvo/SKILL.md prompts/operator.md fleet.example.json` 三处都有结果；派活之后 `git -C ~/Projects/<仓库> branch --show-current` 仍是默认分支。
+- 验证点：`rg -n 'worktree.create' ~/Projects/xw-skills/live/xw-stack/skills/delegate-via-agenvo/SKILL.md prompts/operator.md fleet.example.json` 三处都有结果；派活之后 `git -C ~/Projects/<仓库> branch --show-current` 仍是默认分支。
 - 复发记录：Seen 1x (2026-10-23)。
 
 ### Herdr 里的 CLI 轮次用 pane 退出表示结束，不看 agent 状态
@@ -278,8 +278,8 @@ dot 原生平台任务通道不受本节阻断；DSH／GrokBot→Agenvo→Codex 
 
 - 起因与后果：用户有时要左栏项目下直接跑起来的会话。
 - 修复与证据：DSH 经 `workspace/create {path: <任务目录>}` 的会话在桌面左栏对应项目下（2026-10-20 验收）。
-- 正确做法：dot 有平台任务工具与授权时优先原生 Codex；DSH／GrokBot 的外部 Codex Desktop 需求仍保留且单独验收；Agenvo 项目下自动开跑用 DSH。见[派活技能](skills/delegate-via-agenvo/SKILL.md)。
-- 验证点：`rg -n 'Codex Desktop|项目下' skills/delegate-via-agenvo/SKILL.md` 有对应表述。
+- 正确做法：dot 有平台任务工具与授权时优先原生 Codex；DSH／GrokBot 的外部 Codex Desktop 需求仍保留且单独验收；Agenvo 项目下自动开跑用 DSH。见[派活技能](https://github.com/semantic-craft/xw-stack/blob/main/skills/delegate-via-agenvo/SKILL.md)。
+- 验证点：`rg -n 'Codex Desktop|项目下' ~/Projects/xw-skills/live/xw-stack/skills/delegate-via-agenvo/SKILL.md` 有对应表述。
 - 复发记录：Seen 1x (2026-10-23；2026-10-25 按 Desktop 正道改写)。
 
 ### 经 relay 的写操作返回 unknown 时，可能已执行也可能没送达

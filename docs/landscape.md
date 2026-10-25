@@ -29,5 +29,5 @@ ZCode 不再派活（#34 起仓库里没有它的接收端代码），但主力 
 - 别人的代码按关系分放：上游是别人的 fork 或封装放 `~/Projects/_forks/<仓库名>`，只读参考克隆放 `~/Projects/_ref/<仓库名>`。
 - 开发在临时 worktree 里做，例如 `git worktree add ~/Projects/.worktrees/<仓库名>/<分支> -b <分支> origin/main`。分支合并后，`git worktree remove <路径>`（含 submodule 的 worktree 要加 `--force`，先确认 submodule 也干净）再 `git worktree prune`，用 `git branch -d <分支>` 删本地分支，`git fetch --prune` 清掉远端已删的跟踪分支。squash 合并的分支 `git branch -d` 认不出已合并，先用 `gh pr list --head <分支> --state merged --json number,headRefOid` 核对 PR 已合并，且 `headRefOid` 与 `git rev-parse <分支>` 一致，再决定是否删除。
 - `~/Projects` 只放 git 仓库和 `_forks/`、`_ref/`、`.worktrees/`、`_status/` 这几个容器，外加 `~/Projects/README.md` 定的 `_artifacts/`（本机报告与验收证据）和 `_shared-work/`（跨机同步的非 Git 产物）。仓库在机器之间经 git 远端同步。
-- `_status/` 只放经 Agenvo 派出的任务：一个任务一个目录 `_status/<任务名>/`，放这个任务各轮的 `brief-N.md`、`result-N.*`、`events-N.jsonl`、`stderr-N.log`、`exit-N`（见[派活技能](../skills/delegate-via-agenvo/SKILL.md)）。调研报告、截图等放 `_artifacts/<项目>/<任务>/`，不属于任何项目的放 `~/agent-tasks/`。
+- `_status/` 只放经 Agenvo 派出的任务：一个任务一个目录 `_status/<任务名>/`，放这个任务各轮的 `brief-N.md`、`result-N.*`、`events-N.jsonl`、`stderr-N.log`、`exit-N`（见[派活技能](https://github.com/semantic-craft/xw-stack/blob/main/skills/delegate-via-agenvo/SKILL.md)）。调研报告、截图等放 `_artifacts/<项目>/<任务>/`，不属于任何项目的放 `~/agent-tasks/`。
 - 派出去改代码的任务在 `.worktrees/<仓库>/<任务名>/`（Herdr `worktree.create`），不在主 checkout 里开发，也不另做 `/tmp` 克隆。

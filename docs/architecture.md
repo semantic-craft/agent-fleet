@@ -44,7 +44,7 @@
 2. **一轮一个 tab**：`tab.create` + `pane.run` 写 brief、跑 CLI（`claude -p`、`agy -p`、`dsh --profile headless`），以 `echo $? > exit-N; exit` 收尾；结束看 `pane_exited` 或 `pane.get` → `pane_not_found`。
 3. **续接**：同一任务目录新开 tab（`claude --resume`、`agy --conversation`、`dsh --session-id`）。
 
-要在桌面**项目下**自动开跑：派 DSH（`workspace/create`、`session/create`、`session/prompt`、`session/follow`）。完整步骤见[派活技能](../skills/delegate-via-agenvo/SKILL.md)。
+要在桌面**项目下**自动开跑：派 DSH（`workspace/create`、`session/create`、`session/prompt`、`session/follow`）。完整步骤见[派活技能](https://github.com/semantic-craft/xw-stack/blob/main/skills/delegate-via-agenvo/SKILL.md)。
 
 connector 与 relay 之间是会断开重连的长连接（2026-10-23 实测：relay 主机走机场线路时 31.5 分钟断 30 次，网关规则改走直连后 31.6 分钟断 1 次，见[网络与桌面验收](network-and-desktop-acceptance.md#重连可观察性)）。断线时进行中的调用返回 `unknown`、事件不补发，所以派活方以原生状态和 `_status/<任务名>/` 里的文件为准，事件只用来提早醒来。
 
@@ -55,4 +55,4 @@ connector 与 relay 之间是会断开重连的长连接（2026-10-23 实测：r
 - 同一 macOS 用户下 full access 能触及该用户能访问的一切；这是有意的取舍，见 [ADR-0004](decisions/0004-desktop-strict-and-full-access.md)。
 
 
-Agenvo 默认 Codex Desktop 五步显式使用 magpie／gpt-6-astra；回程以原生终态＋业务验收＋收据收口，Herdr codex exec 仅用户点名 CLI 时使用，详见[派活技能](../skills/delegate-via-agenvo/SKILL.md)。
+Agenvo 默认 Codex Desktop 五步显式使用 magpie／gpt-6-astra；回程以原生终态＋业务验收＋收据收口，Herdr codex exec 仅用户点名 CLI 时使用，详见[派活技能](https://github.com/semantic-craft/xw-stack/blob/main/skills/delegate-via-agenvo/SKILL.md)。

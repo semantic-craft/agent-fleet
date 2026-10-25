@@ -1,6 +1,6 @@
 # Agenvo → Codex Desktop：执行与 writer 交接
 
-适用者：DSH→Agenvo→Codex Desktop、GrokBot→Agenvo→Codex Desktop；blocked 不表示 Codex 整体不可用。dot 原生平台任务仍按[调用方路由](caller-routing.md)。操作步骤以[派活技能](../skills/delegate-via-agenvo/SKILL.md#codex-desktop)为正本。
+适用者：DSH→Agenvo→Codex Desktop、GrokBot→Agenvo→Codex Desktop；blocked 不表示 Codex 整体不可用。dot 原生平台任务仍按[调用方路由](caller-routing.md)。操作步骤以[派活技能](https://github.com/semantic-craft/xw-stack/blob/main/skills/delegate-via-agenvo/SKILL.md#codex-desktop)为正本。
 
 ## 独立执行与 Desktop 交接门槛
 
