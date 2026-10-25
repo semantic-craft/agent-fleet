@@ -115,3 +115,5 @@ node scripts/fleet.mjs check                         # 切换后经 relay 端到
 | 换 relay 域名 | 部署新的 `BASE_URL`，把各 connector 配置里的 `relay` 字段改掉并重启（配对凭据仍有效）；ChatGPT 的连接器要重新添加 |
 | 升级 agenvo | 把上游 tag 合并进 fork 分支并推送，重新部署 relay，`release agenvo`，再跑 `check` |
 | 撤销访问 | 在 `<RELAY>/admin` 页面撤销，或用 `agenvo-* admin revoke grant|instance|device` |
+
+会话级切模候选（未部署）的固定源码、离线测试与调用入口见 [DSH session-only](dsh-session-only.md)。能力缺失明确不支持，不把旧 `session/selectModel` 当作等价 fallback。

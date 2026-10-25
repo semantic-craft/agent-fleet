@@ -28,6 +28,8 @@
 
 ## DSH 模型选择：全局副作用保护
 
+消除全局副作用的源码候选与 capability-gated caller 已独立提供，见 [DSH session-only](dsh-session-only.md)；尚未部署，不影响下述旧接口保护。新接口仅 applied，不提供 crash/restart 持久化保证。
+
 `session/selectModel` 可能持久化全局默认。它不是隔离会话设置；不允许技能直接承诺“全局默认保持原样”。优先使用已选好且核验匹配的独占会话，不为复用 profile 自动切模型、effort 或 preset。
 
 确需选择时：

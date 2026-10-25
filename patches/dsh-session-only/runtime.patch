@@ -1,0 +1,479 @@
+diff --git a/docs/subsystems/session.md b/docs/subsystems/session.md
+index 4933734d57..85a895f883 100644
+--- a/docs/subsystems/session.md
++++ b/docs/subsystems/session.md
+@@ -805,6 +805,8 @@ The backends that consume this contract are on [persistence.md](persistence.md).
+ 
+ `ModelCatalog` is the Host-generation model directory returned by `session/modelCatalog`: it carries the deployment default, routable provider ids, successful provider groups, and isolated provider failures. It is not derived from one Session and remains separate from Session projections.
+ 
++`ModelCatalog.capabilities.selectModelForSession` advertises session-only model selection. An absent capability means unsupported; callers must not substitute the default-writing `selectModel`. `SessionSelectModelForSessionValue` acknowledges an applied selection and event sequence, not a persistence barrier. See the [controller contract](../../packages/api/session-controller/README.md).
++
+ `SessionOpenWorkspacePathRequest` carries an absolute or workspace-resolved `path`; optional `action: "reveal"` selects file-manager navigation instead of default-application opening. `SessionOpenWorkspacePathValue` confirms that the Host accepted the native handoff. A Session-aware Client resolves relative paths against its current Session cwd when known; the controller hands the path to the opener unchanged and reports invalid requests, cancellation, and opener failures through the Session Remote error vocabulary.
+ 
+ The optional `application` selects a registered file handler without changing the system default; `workspacePathApplications({ path })` returns current handlers, names, icons, and default selection after Host path verification.
+@@ -871,6 +873,13 @@ inspect( sessionId: SessionId, signal?: AbortSignal, ): Promise<SessionInspectio
+  */
+ @Remote('selectModel') selectModel(request: SessionSelectModelRequest): Promise<SessionSelectModelValue>
+ 
++/**
++ * Select a model for this Session without updating the global default.
++ * @param request - Session identity and requested model selection.
++ * @returns the applied selection and event sequence; does not guarantee disk persistence.
++ */
++@Remote('selectModelForSession') selectModelForSession(request: SessionSelectModelRequest): Promise<SessionSelectModelForSessionValue>
++
+ /**
+  * Select the first available account model after login when no provider API key is configured.
+  * @returns after saving the first available model or retaining the existing default.
+@@ -881,7 +890,7 @@ inspect( sessionId: SessionId, signal?: AbortSignal, ): Promise<SessionInspectio
+  * Describe every currently routable model for Host-generation selectors.
+  * @returns provider-grouped models, the deployment default, and isolated provider failures.
+  */
+-@Remote('modelCatalog') modelCatalog(): Promise<ModelCatalog>
++@Remote('modelCatalog') async modelCatalog(): Promise<ModelCatalog>
+ 
+ /**
+  * Report whether this deployment can hand a Session workspace path to a native desktop.
+diff --git a/docs/subsystems/session.zh.md b/docs/subsystems/session.zh.md
+index a3e5446b61..a08dc5ec6f 100644
+--- a/docs/subsystems/session.zh.md
++++ b/docs/subsystems/session.zh.md
+@@ -809,6 +809,8 @@ interface PluginRecord {
+ 
+ `ModelCatalog` 是 `session/modelCatalog` 返回的 Host generation 模型目录：它携带部署默认值、可路由 provider id、成功的 provider 分组与相互隔离的 provider 失败。它不由某个 Session 派生，因此与 Session projection 分开保存。
+ 
++`ModelCatalog.capabilities.selectModelForSession` 声明仅会话级模型选择能力。缺少该能力表示不支持；调用方不能替换成会写默认值的 `selectModel`。`SessionSelectModelForSessionValue` 确认选择及事件序号已应用，不是持久化屏障。详见[controller 约定](../../packages/api/session-controller/README.zh.md)。
++
+ `SessionOpenWorkspacePathRequest` 携带绝对路径或已按 workspace 解析的 `path`。`SessionOpenWorkspacePathValue` 确认 Host 已接受原生交接。Session-aware Client 会在已知当前 Session cwd 时据此解析相对路径；controller 将路径原样交给打开器，并通过 Session Remote 错误词汇表报告无效请求、取消与打开器失败。 可选的 `action: "reveal"` 选择文件管理器导航；省略时使用默认应用打开。
+ 
+ 可选的 `application` 指定文件关联应用，不修改系统默认值；`workspacePathApplications({ path })` 在校验 Host 路径后返回当前关联应用、名称、图标和默认项。
+@@ -875,6 +877,13 @@ inspect( sessionId: SessionId, signal?: AbortSignal, ): Promise<SessionInspectio
+  */
+ @Remote('selectModel') selectModel(request: SessionSelectModelRequest): Promise<SessionSelectModelValue>
+ 
++/**
++ * Select a model for this Session without updating the global default.
++ * @param request - Session identity and requested model selection.
++ * @returns the applied selection and event sequence; does not guarantee disk persistence.
++ */
++@Remote('selectModelForSession') selectModelForSession(request: SessionSelectModelRequest): Promise<SessionSelectModelForSessionValue>
++
+ /**
+  * Select the first available account model after login when no provider API key is configured.
+  * @returns after saving the first available model or retaining the existing default.
+@@ -885,7 +894,7 @@ inspect( sessionId: SessionId, signal?: AbortSignal, ): Promise<SessionInspectio
+  * Describe every currently routable model for Host-generation selectors.
+  * @returns provider-grouped models, the deployment default, and isolated provider failures.
+  */
+-@Remote('modelCatalog') modelCatalog(): Promise<ModelCatalog>
++@Remote('modelCatalog') async modelCatalog(): Promise<ModelCatalog>
+ 
+ /**
+  * Report whether this deployment can hand a Session workspace path to a native desktop.
+diff --git a/packages/api/session-controller/README.md b/packages/api/session-controller/README.md
+index 02dff176ba..41fcde70e0 100644
+--- a/packages/api/session-controller/README.md
++++ b/packages/api/session-controller/README.md
+@@ -90,6 +90,8 @@ GUI model selection requires the exact provider/model pair in the available cata
+ 
+ A successful `selectModel` response acknowledges the Session-local selection without waiting for the default profile setting to save. Default saves run in the background in submission order; a failure logs a warning and leaves the Session selection intact. New Sessions read the last successfully saved default.
+ 
++`selectModelForSession` applies a validated model only to the named Session and never saves the global default. Discover it through `modelCatalog.capabilities.selectModelForSession === true`; older Hosts without the capability are unsupported, and callers must not fall back to `selectModel`. Its `{ selected, scope: 'session', status: 'applied', seq }` response identifies the in-memory `model/selection` event, not a disk durability barrier. A running request keeps its assembled selection; the new selection applies at the next assembly. Recheck the actual request header, since another caller may subsequently select a different model in the same Session.
++
+ -----
+ 
+ <a id="configuration"></a>
+diff --git a/packages/api/session-controller/README.zh.md b/packages/api/session-controller/README.zh.md
+index b01a99cc1f..2db0024256 100644
+--- a/packages/api/session-controller/README.zh.md
++++ b/packages/api/session-controller/README.zh.md
+@@ -90,6 +90,8 @@ GUI 模型选择要求确切提供方／模型对出现在可用目录中；不
+ 
+ `selectModel` 成功返回表示会话级模型选择已生效，不等待默认 profile 设置保存。默认设置在后台按提交顺序保存；保存失败会记录警告，并保留会话选择。新会话读取最近一次成功保存的默认值。
+ 
++`selectModelForSession` 只对指定会话应用经过校验的模型，不保存全局默认值。通过 `modelCatalog.capabilities.selectModelForSession === true` 发现能力；旧 Host 缺少该能力时应明确报告不支持，不能回退到 `selectModel`。返回的 `{ selected, scope: 'session', status: 'applied', seq }` 标识内存中的 `model/selection` 事件，不是落盘持久化屏障。运行中的请求保持其已组装的选择，新选择从下一次组装开始应用。调用方仍须核对实际请求头，因为其他调用方可能随后再次选择同一会话的模型。
++
+ -----
+ 
+ <a id="configuration"></a>
+diff --git a/packages/api/session-controller/src/agent.ts b/packages/api/session-controller/src/agent.ts
+index aaacc886e7..48f9b06ec7 100644
+--- a/packages/api/session-controller/src/agent.ts
++++ b/packages/api/session-controller/src/agent.ts
+@@ -335,10 +335,12 @@ export class ApiSessionAgentController {
+    * Commit and cache one validated selection for the next prompt assembly.
+    * @param agent - live Agent that owns the selection.
+    * @param selection - validated selection to record and apply.
++   * @returns the applied event sequence, without a disk durability guarantee.
+    */
+-  selectForNextRequest(agent: Agent, selection: AgentModelSelection): void {
+-    agent.session.append('model/selection', selection)
++  selectForNextRequest(agent: Agent, selection: AgentModelSelection): number {
++    const event = agent.session.append('model/selection', selection)
+     this.selectionFor(agent).current = selection
++    return event.seq
+   }
+ 
+   /**
+diff --git a/packages/api/session-controller/src/commands.ts b/packages/api/session-controller/src/commands.ts
+index 8dd38573c8..20832c8ee3 100644
+--- a/packages/api/session-controller/src/commands.ts
++++ b/packages/api/session-controller/src/commands.ts
+@@ -49,6 +49,7 @@ import type {
+   SessionRenameValue,
+   SessionSelectModelRequest,
+   SessionSelectModelValue,
++  SessionSelectModelForSessionValue,
+   SessionUpdateQueueRequest,
+   SessionUpdateQueueValue,
+   SessionRequestId,
+@@ -155,6 +156,23 @@ export class SessionCommandController {
+    * @returns the normalized selection installed for the Session, without waiting for default persistence.
+    */
+   async selectModel(request: SessionSelectModelRequest): Promise<SessionSelectModelValue> {
++    const { selected } = await this.applyModelSelection(request, true)
++    return { selected }
++  }
++
++  /**
++   * Apply a selection only to this Session; never write the default model.
++   * @param request - Session identity and requested selection.
++   * @returns an applied event position, not a disk durability acknowledgement.
++   */
++  selectModelForSession(request: SessionSelectModelRequest): Promise<SessionSelectModelForSessionValue> {
++    return this.applyModelSelection(request, false)
++  }
++
++  private async applyModelSelection(
++    request: SessionSelectModelRequest,
++    saveDefault: boolean,
++  ): Promise<SessionSelectModelForSessionValue> {
+     const agent = await this.resolveAgent(request.sessionId)
+     return this.agents.serializeImageAdmission(agent, async () => {
+       try {
+@@ -173,13 +191,13 @@ export class SessionCommandController {
+             ? {}
+             : { reasoningEffort: resolved.reasoningEffort }),
+         }
+-        this.agents.selectForNextRequest(agent, selected)
+-        void this.ctx.agentDefaultModel.saveSelection(selected).catch((error: unknown) => {
++        const seq = this.agents.selectForNextRequest(agent, selected)
++        if (saveDefault) void this.ctx.agentDefaultModel.saveSelection(selected).catch((error: unknown) => {
+           this.ctx.logger.warn(
+             `session-controller: model selection changed for the Session but the default was not saved: ${String(error)}`,
+           )
+         })
+-        return { selected: { ...selected } }
++        return { selected: { ...selected }, scope: 'session', status: 'applied', seq }
+       } catch (error) {
+         if (remoteErrorOf(error) !== undefined) throw error
+         throw new RemoteError(
+diff --git a/packages/api/session-controller/src/index.ts b/packages/api/session-controller/src/index.ts
+index 2362bce21c..d41d9d3f68 100644
+--- a/packages/api/session-controller/src/index.ts
++++ b/packages/api/session-controller/src/index.ts
+@@ -61,6 +61,7 @@ import type {
+   SessionSearchValue,
+   SessionSelectModelRequest,
+   SessionSelectModelValue,
++  SessionSelectModelForSessionValue,
+   SessionProjectionsRequest,
+   SessionProjectionsValue,
+   SessionProjectionValues,
+@@ -312,6 +313,16 @@ export class SessionController extends TypertRemoteService {
+     return this.commands.selectModel(request)
+   }
+ 
++  /**
++   * Select a model for this Session without updating the global default.
++   * @param request - Session identity and requested model selection.
++   * @returns the applied selection and event sequence; does not guarantee disk persistence.
++   */
++  @Remote('selectModelForSession')
++  selectModelForSession(request: SessionSelectModelRequest): Promise<SessionSelectModelForSessionValue> {
++    return this.commands.selectModelForSession(request)
++  }
++
+   /**
+    * Select the first available account model after login when no provider API key is configured.
+    * @returns after saving the first available model or retaining the existing default.
+@@ -335,8 +346,8 @@ export class SessionController extends TypertRemoteService {
+    * @returns provider-grouped models, the deployment default, and isolated provider failures.
+    */
+   @Remote('modelCatalog')
+-  modelCatalog(): Promise<ModelCatalog> {
+-    return buildModelCatalog(this.ctx)
++  async modelCatalog(): Promise<ModelCatalog> {
++    return { ...await buildModelCatalog(this.ctx), capabilities: { selectModelForSession: true } }
+   }
+ 
+   /**
+diff --git a/packages/api/session-controller/src/types.ts b/packages/api/session-controller/src/types.ts
+index c0b2b9a573..855104a2e5 100644
+--- a/packages/api/session-controller/src/types.ts
++++ b/packages/api/session-controller/src/types.ts
+@@ -157,6 +157,8 @@ export interface ModelCatalogFailure {
+ 
+ /** Host-generation model catalog and the default used by unconfigured Sessions. */
+ export interface ModelCatalog {
++  /** Omitted by older Hosts; absence must never fall back to default-writing selection. */
++  readonly capabilities?: { readonly selectModelForSession: true }
+   readonly default: ModelSelection
+   /** Provider routes with at least one currently available catalog model. */
+   readonly routableProviders: readonly string[]
+@@ -314,6 +316,14 @@ export interface SessionSelectModelValue {
+   readonly selected: ModelSelection
+ }
+ 
++/** Session-only selection acknowledgement; not a disk durability barrier. */
++export interface SessionSelectModelForSessionValue extends SessionSelectModelValue {
++  readonly scope: 'session'
++  readonly status: 'applied'
++  /** Sequence of the applied model/selection event, not a persisted-through cursor. */
++  readonly seq: number
++}
++
+ /** Session rename request. */
+ export interface SessionRenameRequest {
+   readonly sessionId: SessionId
+diff --git a/packages/api/session-controller/tests/session-cold.host.spec.ts b/packages/api/session-controller/tests/session-cold.host.spec.ts
+index a6b7a033dd..a55406e556 100644
+--- a/packages/api/session-controller/tests/session-cold.host.spec.ts
++++ b/packages/api/session-controller/tests/session-cold.host.spec.ts
+@@ -692,6 +692,9 @@ describe('subagent ownership fence', () => {
+     }))
+     expect(selection.ok).toBe(false)
+     if (!selection.ok) expect(selection.error.code).toBe('session/agent-busy')
++    expect(await remote.selectModelForSession({ sessionId: startingChild.id, provider: 'p', model: 'm' }))
++      .toMatchObject({ ok: false, error: { code: 'session/agent-busy' } })
++
+ 
+     const create = await remote.create(request({ sessionId: originChild.id, cwd: '/proj' }))
+     expect(create.ok).toBe(false)
+diff --git a/packages/api/session-controller/tests/session-models.host.spec.ts b/packages/api/session-controller/tests/session-models.host.spec.ts
+index e852460e93..ac7ec80736 100644
+--- a/packages/api/session-controller/tests/session-models.host.spec.ts
++++ b/packages/api/session-controller/tests/session-models.host.spec.ts
+@@ -157,6 +157,136 @@ function currentSelection(ctx: Context, sessionId: SessionId) {
+ }
+ 
+ describe('Web session model selection', () => {
++  it('advertises session-only selection and acknowledges application without saving defaults', async () => {
++    const { ctx, agent, sessionId } = await harness()
++    onTestFinished(() => ctx.fiber.dispose())
++    const save = vi.fn(() => Promise.reject(new Error('must not write defaults')))
++    const remote = createSessionTestRemote(ctx, {
++      defaultModelSelection: () => ({ provider: 'deepseek-official', model: 'deepseek-chat' }),
++      saveDefaultModelSelection: save, cwd: '/tmp',
++    })
++    const catalog = expectValue(await remote.modelCatalog())
++    expect(catalog.capabilities).toEqual({ selectModelForSession: true })
++    const result = expectValue(await remote.selectModelForSession({
++      sessionId, provider: 'deepseek-official', model: 'deepseek-reasoner', reasoningEffort: 'max',
++    }))
++    expect(result).toEqual({
++      selected: { provider: 'deepseek-official', model: 'deepseek-reasoner', reasoningEffort: 'max' },
++      scope: 'session', status: 'applied', seq: 0,
++    })
++    expect(agent.session.snapshotEvents()[result.seq]).toMatchObject({
++      type: 'model/selection', data: result.selected,
++    })
++    expect(currentSelection(ctx, sessionId)).toEqual(result.selected)
++    expect(expectValue(await remote.modelCatalog()).default).toEqual(catalog.default)
++    expect(save).not.toHaveBeenCalled()
++    // A new controller reconstructs the pending selection from the same event log.
++    expect(new ApiSessionAgentController(ctx).selectionFor(agent).current).toEqual(result.selected)
++  })
++
++  it.each([
++    { provider: 'missing', model: 'model' },
++    { provider: 'deepseek-official', model: 'missing' },
++    { provider: 'deepseek-official', model: 'deepseek-chat', reasoningEffort: 'medium' },
++  ])('refuses invalid session-only selection without residual events: %j', async (invalid) => {
++    const { ctx, agent, sessionId } = await harness()
++    onTestFinished(() => ctx.fiber.dispose())
++    const save = vi.fn(() => Promise.resolve())
++    const remote = createSessionTestRemote(ctx, {
++      defaultModelSelection: () => ({ provider: 'deepseek-official', model: 'deepseek-chat' }),
++      saveDefaultModelSelection: save, cwd: '/tmp',
++    })
++    const before = [...agent.session.snapshotEvents()]
++    expect(await remote.selectModelForSession({ sessionId, ...invalid }))
++      .toMatchObject({ ok: false, error: { code: 'session/model-unavailable' } })
++    expect(agent.session.snapshotEvents()).toEqual(before)
++    expect(save).not.toHaveBeenCalled()
++    expectValue(await remote.selectModelForSession({ sessionId, provider: 'deepseek-official', model: 'deepseek-chat' }))
++    expect(save).not.toHaveBeenCalled()
++  })
++
++  it('serializes session-only changes with legacy selection while preserving legacy saves', async () => {
++    const { ctx, agent, sessionId } = await harness()
++    onTestFinished(() => ctx.fiber.dispose())
++    const save = vi.fn(() => Promise.resolve())
++    const remote = createSessionTestRemote(ctx, {
++      defaultModelSelection: () => ({ provider: 'deepseek-official', model: 'deepseek-chat' }),
++      saveDefaultModelSelection: save, cwd: '/tmp',
++    })
++    const [first, legacy, last] = await Promise.all([
++      remote.selectModelForSession({ sessionId, provider: 'deepseek-official', model: 'deepseek-reasoner' }),
++      remote.selectModel({ sessionId, provider: 'deepseek-official', model: 'deepseek-chat' }),
++      remote.selectModelForSession({ sessionId, provider: 'deepseek-official', model: 'deepseek-reasoner', reasoningEffort: 'max' }),
++    ])
++    expect(expectValue(first).seq).toBeLessThan(expectValue(last).seq)
++    expect(Object.keys(expectValue(legacy))).toEqual(['selected'])
++    expect(save).toHaveBeenCalledTimes(1)
++    expect(agent.session.snapshotEvents().filter(event => event.type === 'model/selection')).toHaveLength(3)
++    expect(currentSelection(ctx, sessionId)).toEqual(expectValue(last).selected)
++  })
++
++  it('does not block another Session behind a pending model lookup', async () => {
++    const { ctx, agent, sessionId } = await harness()
++    const release = Promise.withResolvers<undefined>()
++    const entered = Promise.withResolvers<undefined>()
++    onTestFinished(async () => { release.resolve(undefined); await ctx.fiber.dispose() })
++    const other = ctx.sessions.create()
++    await ctx.agents.register({ ...agent, id: other.id, session: other } as Agent)
++    const resolve = ctx.llm.resolveCallConfig.bind(ctx.llm)
++    vi.spyOn(ctx.llm, 'resolveCallConfig').mockImplementation(async (config) => {
++      if (config.model === 'deepseek-reasoner') {
++        entered.resolve(undefined)
++        await release.promise
++      }
++      return resolve(config)
++    })
++    const save = vi.fn(() => Promise.resolve())
++    const remote = createSessionTestRemote(ctx, {
++      defaultModelSelection: () => ({ provider: 'deepseek-official', model: 'deepseek-chat' }),
++      saveDefaultModelSelection: save, cwd: '/tmp',
++    })
++    const pending = remote.selectModelForSession({ sessionId, provider: 'deepseek-official', model: 'deepseek-reasoner' })
++    await entered.promise
++    const otherResult = expectValue(await remote.selectModelForSession({
++      sessionId: other.id, provider: 'deepseek-official', model: 'deepseek-chat',
++    }))
++    expect(otherResult.status).toBe('applied')
++    expect(agent.session.snapshotEvents()).toHaveLength(0)
++    release.resolve(undefined)
++    expectValue(await pending)
++    expect(save).not.toHaveBeenCalled()
++  })
++
++  it('applies session-only selection at the next assembly, not to the already assembled request', async () => {
++    const { ctx, agent, sessionId } = await harness()
++    onTestFinished(() => ctx.fiber.dispose())
++    const save = vi.fn(() => Promise.resolve())
++    const remote = createSessionTestRemote(ctx, {
++      defaultModelSelection: () => ({ provider: 'deepseek-official', model: 'deepseek-chat' }),
++      saveDefaultModelSelection: save, cwd: '/tmp',
++    })
++    const seed: LlmCallConfig = { provider: 'seed', model: 'seed' }
++    const signal = new AbortController().signal
++    expectValue(await remote.selectModelForSession({
++      sessionId, provider: 'deepseek-official', model: 'deepseek-chat',
++    }))
++    await ctx.systemPrompt.assemble()
++    expectValue(await remote.selectModelForSession({
++      sessionId, provider: 'deepseek-official', model: 'deepseek-reasoner', reasoningEffort: 'max',
++    }))
++    await expect(agentEvents(ctx, agent).waterfall(
++      'agent/request', { turn: 1, step: 0, signal }, () => Promise.resolve(seed),
++    )).resolves.toMatchObject({ provider: 'deepseek-official', model: 'deepseek-chat' })
++    await ctx.systemPrompt.assemble()
++    const config = await agentEvents(ctx, agent).waterfall(
++      'agent/request', { turn: 1, step: 1, signal }, () => Promise.resolve(seed),
++    )
++    expect(config).toMatchObject({ provider: 'deepseek-official', model: 'deepseek-reasoner', reasoningEffort: 'max' })
++    agent.session.append('request/header', { header: { config }, reason: 'initial' })
++    expect(agent.session.requestHeader()?.config).toEqual(config)
++    expect(save).not.toHaveBeenCalled()
++  })
++
+   it('validates an ordered image batch before persisting any member', async () => {
+     const { ctx, agent, sessionId } = await harness()
+     const validateImage = vi.fn((_input: { data: Uint8Array }) => Promise.resolve())
+diff --git a/packages/api/session-controller/tests/test-remote.ts b/packages/api/session-controller/tests/test-remote.ts
+index 586afcde7b..6a8913ed47 100644
+--- a/packages/api/session-controller/tests/test-remote.ts
++++ b/packages/api/session-controller/tests/test-remote.ts
+@@ -61,6 +61,7 @@ import type {
+   SessionSearchValue,
+   SessionSelectModelRequest,
+   SessionSelectModelValue,
++  SessionSelectModelForSessionValue,
+   SessionProjectionsRequest,
+   SessionUpdateQueueRequest,
+   SessionUpdateQueueValue,
+@@ -76,6 +77,7 @@ export interface TestSessionRemote {
+   search(request: SessionSearchRequest, signal?: AbortSignal): Promise<RemoteResult<SessionSearchValue>>
+   create(request: SessionCreateRequest): Promise<RemoteResult<SessionCreateValue>>
+   selectModel(request: SessionSelectModelRequest): Promise<RemoteResult<SessionSelectModelValue>>
++  selectModelForSession(request: SessionSelectModelRequest): Promise<RemoteResult<SessionSelectModelForSessionValue>>
+   modelCatalog(): Promise<RemoteResult<ModelCatalog>>
+   rename(request: SessionRenameRequest): Promise<RemoteResult<SessionRenameValue>>
+   fork(request: SessionForkRequest): Promise<RemoteResult<SessionForkValue>>
+@@ -364,6 +366,7 @@ export function createSessionTestRemote(
+     ),
+     create: request => remoteResult(() => direct.create(request)),
+     selectModel: request => remoteResult(() => direct.selectModel(request)),
++    selectModelForSession: request => remoteResult(() => direct.selectModelForSession(request)),
+     modelCatalog: () => remoteResult(() => direct.modelCatalog()),
+     rename: request => remoteResult(() => direct.rename(request)),
+     fork: request => remoteResult(() => direct.fork(request)),
+diff --git a/packages/extensions/tool-cordis/src/api-catalog.ts b/packages/extensions/tool-cordis/src/api-catalog.ts
+index 03fdcaa7b4..b41b13a3a1 100644
+--- a/packages/extensions/tool-cordis/src/api-catalog.ts
++++ b/packages/extensions/tool-cordis/src/api-catalog.ts
+@@ -2094,6 +2094,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
+         parameters: [{ name: 'request', description: 'Session identity and requested model selection.' }],
+         returns: 'the normalized selection installed for the Session, without waiting for default persistence.',
+       },
++      {
++        signature: '@Remote(\'selectModelForSession\') selectModelForSession(request: SessionSelectModelRequest): Promise<SessionSelectModelForSessionValue>',
++        description: 'Select a model for this Session without updating the global default.',
++        parameters: [{ name: 'request', description: 'Session identity and requested model selection.' }],
++        returns: 'the applied selection and event sequence; does not guarantee disk persistence.',
++      },
+       {
+         signature: '@Remote async initializeDefaultModel(): Promise<void>',
+         description: 'Select the first available account model after login when no provider API key is configured.',
+@@ -2101,7 +2107,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
+         returns: 'after saving the first available model or retaining the existing default.',
+       },
+       {
+-        signature: '@Remote(\'modelCatalog\') modelCatalog(): Promise<ModelCatalog>',
++        signature: '@Remote(\'modelCatalog\') async modelCatalog(): Promise<ModelCatalog>',
+         description: 'Describe every currently routable model for Host-generation selectors.',
+         parameters: [],
+         returns: 'provider-grouped models, the deployment default, and isolated provider failures.',
+@@ -6223,7 +6229,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
+   },
+   {
+     name: 'ModelCatalog',
+-    declaration: 'export interface ModelCatalog {\n    readonly default: ModelSelection;\n    readonly routableProviders: readonly string[];\n    readonly groups: readonly ModelProviderGroup[];\n    readonly failures: readonly ModelCatalogFailure[];\n}',
++    declaration: 'export interface ModelCatalog {\n    readonly capabilities?: {\n        readonly selectModelForSession: true;\n    };\n    readonly default: ModelSelection;\n    readonly routableProviders: readonly string[];\n    readonly groups: readonly ModelProviderGroup[];\n    readonly failures: readonly ModelCatalogFailure[];\n}',
+   },
+   {
+     name: 'ModelCatalogFailure',
+@@ -7433,6 +7439,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
+     name: 'SessionSeedEventState',
+     declaration: 'export type SessionSeedEventState = \'detached\' | \'shared-frozen\';',
+   },
++  {
++    name: 'SessionSelectModelForSessionValue',
++    declaration: 'export interface SessionSelectModelForSessionValue extends SessionSelectModelValue {\n    readonly scope: \'session\';\n    readonly status: \'applied\';\n    readonly seq: number;\n}',
++  },
+   {
+     name: 'SessionSelectModelRequest',
+     declaration: 'export interface SessionSelectModelRequest extends ModelSelection {\n    readonly sessionId: SessionId;\n}',
+diff --git a/scripts/gen-cordis-catalog.ts b/scripts/gen-cordis-catalog.ts
+index ebd7527142..e99539aa5b 100644
+--- a/scripts/gen-cordis-catalog.ts
++++ b/scripts/gen-cordis-catalog.ts
+@@ -439,6 +439,7 @@ export const LINK_MAP: Readonly<Record<string, string>> = {
+   SessionSearchValue: 'session.md',
+   SessionSelectModelRequest: 'session.md',
+   SessionSelectModelValue: 'session.md',
++  SessionSelectModelForSessionValue: 'session.md',
+   SessionSummary: 'session.md',
+   SessionMessageProjection: 'session.md',
+   SessionUpdateQueueRequest: 'session.md',

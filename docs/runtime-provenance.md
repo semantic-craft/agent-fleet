@@ -115,39 +115,11 @@ general JSON Schema equivalence claim. The targeted tests do not cover the full
 REA schema corpus or every oneOf/allOf constraint. Review candidate initialization
 and subscription/configuration migrations before any future launch.
 
-## DSH session-only patch boundary (not implemented)
+## DSH session-only candidate
 
-Static inspection of installed rc.3 confirms `selectModel` first applies
-`selectForNextRequest`, then launches `agentDefaultModel.saveSelection(...).catch`
-without awaiting it. The generated public schema has no session-only scope or
-persistence operation ID. Catalog/projection reads are not a save barrier.
-
-No editable owning DSH source checkout was found in the inspected project/fork/
-reference/worktree locations. Installed code and consumer plugins are not used
-as an editable runtime checkout. The next step is to prepare an approved isolated
-checkout of the official source, then change these ownership boundaries:
-
-- DSH `packages/api/session-controller`: add a separate typed
-  `session/selectModelForSession`, sharing validation and per-session admission
-  serialization, appending the existing selection event, and never calling global
-  `saveSelection`. Keep old `selectModel` behavior unchanged. Test invalid models,
-  concurrent session inputs, omitted effort, old API compatibility, zero default
-  writes and restored next-selection/header behavior.
-- Specify receipt semantics honestly: current append assigns/logs a sequence and
-  queues background listeners, so sequence alone is not a durable acknowledgement.
-  Return **applied** selection/sequence unless a separately tested active-writer
-  and flush-through-sequence contract exists. A store flush can await listeners,
-  but a missing JSONL writer can make its listener a no-op. Do not return persisted
-  merely because flush resolved. Durable acknowledgement would require an owning
-  runtime persistence seam, failure propagation and crash/restart tests.
-- Agenvo's existing DSH connector: discover/advertise the new native capability
-  only when present, preserve its receipt semantics and return unsupported on old
-  runtimes. Never route the new request to global-saving `selectModel`.
-- agent-fleet: capability-gated caller and actual next-request header verification;
-  no private service invocation or fabricated persistence barrier. The generic
-  bridge transport need not become a new dispatcher.
-
-No runtime patch, new fork, upstream push, installed package modification, or
-adapter service deployment was performed. Preparing the owning source and
-validating this cross-repository change remains a concrete prerequisite, separate
-from this completed source-evidence increment.
+The owning source is now pinned at official rc.3
+`1f81c047fc48fa190a683e469daa699857e9afe8`. A separate runtime patch and Agenvo
+capability-gated adapter patch are retained with replay instructions in
+[session-only model selection](dsh-session-only.md). Neither is deployed. The
+signed installed package-to-source gap above is unchanged; same tag is not proof
+of binary equivalence. Applied event sequence is never represented as durable.

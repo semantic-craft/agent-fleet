@@ -1,0 +1,30 @@
+{
+  "format": 1,
+  "deployed": false,
+  "runtime": {
+    "repository": "https://github.com/deepseek-ai/deepseek-harness",
+    "base": "1f81c047fc48fa190a683e469daa699857e9afe8",
+    "licenseId": "MIT",
+    "patch": {
+      "file": "runtime.patch",
+      "sha256": "440d4ba2ad1f0df3c999982eaab521df9f94da05888c7854aabd6e15a9ed0822"
+    },
+    "license": {
+      "file": "runtime-license.txt",
+      "sha256": "ebb4f09972aee8608be255debaf78451a68e95c290f55c240dec2ecfa16ea6be"
+    }
+  },
+  "agenvo": {
+    "repository": "https://github.com/semantic-craft/agenvo",
+    "base": "cd10fb92e1da731b307b85f8e94e8db8b6b8808a",
+    "licenseId": "Apache-2.0",
+    "patch": {
+      "file": "agenvo.patch",
+      "sha256": "758d5a895dd95d2fa5901da7727ec2176a7dd19552e28cc461a335792891c44d"
+    },
+    "license": {
+      "file": "agenvo-license.txt",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    }
+  }
+}
