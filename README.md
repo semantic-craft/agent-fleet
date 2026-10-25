@@ -2,29 +2,34 @@
 
 迁移与升级先读[兼容来源、模型选择保护及在途恢复门槛](docs/migration-and-upgrades.md)；历史通过不代表未知新版本可用。
 
-让手机上的 ChatGPT dots（以及 Grok Bot 等任何支持 OAuth MCP 的助手）直接给你自己电脑上的编码 agent 派活：
-Codex、DSH 桌面版，以及在 Herdr 终端里运行的 Antigravity（agy）、Codex CLI 和 `dsh headless`。
+按调用方能力选择派活入口：dot 有原生平台任务工具时，直接给 Codex 创建任务、执行并读回结果；DSH、GrokBot 经 Agenvo 给 Codex Desktop 派活的需求仍须保留。Agenvo 同时承接 DSH 桌面版与 Herdr CLI 路线。
+
+## 入口与状态
+
+| 调用方 → 目标 | 路线 | 边界 |
+| --- | --- | --- |
+| dot → Codex | 可用且已授权的原生平台任务通道 | 本次维护已实际使用；依赖平台工具及电脑连接授权，跨机先发现环境 |
+| dot／其他已授权 MCP 调用方 → DSH／Herdr | Agenvo | 按原生会话／pane 读取实际结果；模型与工具验收边界分别保留 |
+| DSH → Codex Desktop；GrokBot → Codex Desktop | Agenvo → Codex app-server → Desktop | 明确需要保留的外部路线；writer handoff 尚未验通，不能用 dot 原生工具替代 |
+
+详细选择与验收见[调用方路由](docs/caller-routing.md)。外部路线的 `blocked_native_writer_release` 不表示 dot 原生 Codex 派活不可用。也不假定任意第三方 agent 拥有平台任务工具。
 
 ## 目的
 
-1. **一个入口派活**：主入口是 ChatGPT dots，Grok Bot 等其他 MCP 助手是辅助，都可以直接给本地 agent 派活并拿回结果。本地 agent 包括 DSH、Codex 桌面版，以及 Herdr 里的 agy、codex 和 dsh headless。
-2. **以上游为底座**：架构完全按 [Xuanwo/agenvo](https://github.com/Xuanwo/agenvo) 的设计来，不另起一套。
-3. **只做边际补丁**：上游已覆盖的部分原样使用；只补上游没覆盖、而我们确实需要的部分（目前是 DSH 桌面版），而且一旦上游覆盖了就删掉。
-4. **可复用、对 agent 友好**：没有对话记忆的 agent 读完本仓库，也能独立重建整套系统，并做出和原设计一致的决策。
+1. **按真实能力派活**：创建、执行、读回各自走支持的入口，输入接受不等于业务完成。
+2. **以上游为底座**：Agenvo 部分复用 [Xuanwo/agenvo](https://github.com/Xuanwo/agenvo)，不另造 dispatcher。
+3. **只做边际补丁**：只补上游缺失且明确需要的能力；源候选与已部署能力分开。
+4. **可复用**：保存架构、重建与验收步骤；个人值只放仓库外 overlay，见 [fleet.example.json](fleet.example.json)。
 
-判断有没有偏离目的：`fleet.mjs check --dispatch` 通过，且 [prompts/acceptance-codex.md](prompts/acceptance-codex.md) 的界面验收通过。
+`fleet.mjs check --dispatch` 验 Agenvo 的 DSH／Herdr 路径，不覆盖 dot 原生任务或外部 Codex writer 交接。界面验收按[提示词](prompts/acceptance-codex.md)逐路线记录，不把一个阻断概括为全系统失败。
 
-本仓库是这套基础设施的**设计原件与重建入口**：架构、决策、可复用脚本、模板和提示词。它不保存任何个人地址、账号或密钥；
-这些值放在仓库外的私有 overlay（见 [fleet.example.json](fleet.example.json)）。
-
+```text
+dot（具有平台任务工具及授权） ──原生平台任务通道──► Codex
+已授权 MCP 调用方 ──Agenvo──► DSH／Herdr
+DSH／GrokBot ──Agenvo──► Codex app-server ──待验 writer handoff──► Codex Desktop
 ```
-ChatGPT / dots / Grok Bot ──MCP(OAuth, HTTPS)──► Agenvo relay（Cloudflare Worker，自有域名）
-                                                    ▲ WSS（connector 主动外连，电脑不开入站端口）
-        ┌───────────────────────────────────────────┼─────────────────────────────┐
-  每台 Mac：agenvo-codex-app-server ─► codex app-server（launchd 常驻，共用 ~/.codex，Desktop 可见）
-            agenvo-herdr            ─► herdr server（headless）─► pane 里的 agy / codex / dsh headless
-            agenvo-dsh              ─► DSH 桌面版 Host 的原生会话接口（插件 native bridge，Unix socket）
-```
+
+本仓库不实现或替代平台任务服务，不承诺跨入口共享同一会话、writer 迁移或所有客户端具有同等工具。
 
 ## 组成
 

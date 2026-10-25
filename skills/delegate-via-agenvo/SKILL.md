@@ -1,17 +1,21 @@
 ---
 name: delegate-via-agenvo
-description: Hand work to another coding agent (Codex Desktop, DeepSeek Harness/DSH, Claude Code, or agy/dsh headless in Herdr, on this or another Mac) through the Agenvo MCP server, then follow it to a verified result. Use when 派 Codex／agenvo／桌面接手, or the user asks to have DSH/Codex/another agent do something, or to check on or continue such work.
+description: Hand work to another coding agent (Codex Desktop, DeepSeek Harness/DSH, Claude Code, or agy/dsh headless in Herdr, on this or another Mac) through the Agenvo MCP server, then follow it to a verified result. Use for external DSH/GrokBot-to-Codex Desktop routing and Agenvo DSH/Herdr delegation; native platform task-capable callers should choose their native Codex route first. Use when agenvo／外部桌面接手, or the user asks to have DSH/Codex/another agent do something, or to check on or continue such work.
 ---
 
 # 经 Agenvo 把活交给其他 agent
 
 前提：当前 agent 已连接名为 `agenvo` 的 MCP 服务器，它提供 `search` 和 `execute` 两个工具。连不上时，告诉用户运行 `codex mcp login agenvo`（或在自己的 MCP 设置里重新授权）。
 
+## 先选入口
+
+先读[调用方路由](../../docs/caller-routing.md)。dot 当前拥有原生平台任务工具且电脑已连接／授权时，Codex 派活优先该通道，不适用下文外部 writer 创建前门槛。DSH→Agenvo→Codex Desktop、GrokBot→Agenvo→Codex Desktop 是需要保留的外部需求，不能用 dot 专属 API 替代；第三方工具缺失时不得假定可用。跨机先做环境发现。下文只描述 Agenvo 路线。
+
 ## 步骤
 
 1. **发现**：调用 `search {"query": ""}`，列出实例和在线状态，读每个实例的 `context`。它写了这台机器、home 与项目目录、默认权限，以及这个实例适合做什么。
 2. **找方法**：用共同术语搜索，例如 `"dsh create work context"`、`"herdr worktree"`、`"dsh read output"`；选定后带 `includeSchema: true` 再搜一次拿参数 schema。不要凭记忆写方法名。
-3. **派活**：Codex 按「Codex Desktop」；其余任务目录按「任务目录」选；Herdr 里的 Claude Code／agy／dsh headless 每轮按「一轮一个 tab」跑；DSH 实例按 schema 调原生方法。
+3. **派活**：外部 Agenvo 调用方派 Codex 按「Codex Desktop」；其余任务目录按「任务目录」选；Herdr 里的 Claude Code／agy／dsh headless 每轮按「一轮一个 tab」跑；DSH 实例按 schema 调原生方法。
    - 对方没有你的上下文。任务正文写全：目标、仓库和路径、已知事实、约束、验收方式，以及是否允许提交、推送或开 PR。
    - 核对实际模型：CLI 每轮显式带模型参数。DSH 优先复用已选好且匹配的独占会话；`session/selectModel` 可能持久化全局默认，绝非隔离设置。若运行时明确发现 `session/selectModelForSession` 且实时 catalog 能力为 true，可经[会话级候选入口](../../docs/dsh-session-only.md)显式选择独占会话；applied 非 durable，仍需核对下一请求 header，旧 runtime 不回退。此候选未部署，不能仅据仓库存在就调用。确需使用旧接口时先按[全局副作用保护](../../docs/migration-and-upgrades.md#dsh-模型选择全局副作用保护)取得授权、协调所有选择入口/暂停新会话、快照、受保护恢复并回读；未知结果不重发，漂移不覆盖。不得自动切模型或默认。
    - 派出后立刻告诉用户：任务名、任务目录、会话 id 和桌面查看入口——DSH 报项目名与 sessionId；Codex 报 thread_id 与 `codex://threads/<thread_id>`；Claude Code 报 `session_id`；agy 报 `conversation_id`；Herdr 里的任务另报 workspace 与轮次 pane。没拿到登记结果或链接时如实说，不说用户能在桌面里看到。
@@ -25,9 +29,10 @@ description: Hand work to another coding agent (Codex Desktop, DeepSeek Harness/
 
 ## 选哪个 agent
 
-- 派 Codex／默认编码 → **Codex Desktop**（见下节）。
-- 用户点名 Claude Code／agy／DSH headless（或同类 CLI／pane）→ **Herdr**（承接用户指定的这类模型线，与 Codex Desktop 默认编码线分开）。
-- 桌面可见且自动开跑 → **DSH** 实例。Codex Desktop 走下节四步（通过创建前门槛、完成原生交接且 Desktop 可见后再 `turn/start`）。
+- dot 有原生平台任务工具且已授权 → Codex 走原生平台任务通道（见调用方路由），不绕经外部交接。
+- DSH／GrokBot 派 Codex → **外部 Codex Desktop**（见下节）；该需求保留，当前 writer 交接未验通，不影响 dot 原生路线。
+- 用户点名 Claude Code／agy／DSH headless（或同类 CLI／pane）→ **Herdr**（承接用户指定的这类模型线，与 按调用方选择的 Codex 路线分开）。
+- 桌面可见且自动开跑 → **DSH** 实例。外部 DSH／GrokBot 经 Agenvo 的 Codex Desktop 走下节四步（通过创建前门槛、完成原生交接且 Desktop 可见后再 `turn/start`）。
 - Codex 不可用（额度用尽、离线、报错）→ 改 DSH；DSH 与 Codex 同级，能新建、追问、中断。
 - Antigravity 桌面版（2.25.0）调不出 `agy -p` 的会话，`--new-project` 只生成空项目；需要桌面可见时不选 agy。
 - 要长时间运行、不怕笔记本合盖：选常开那台 Mac 上的实例。
@@ -44,6 +49,8 @@ description: Hand work to another coding agent (Codex Desktop, DeepSeek Harness/
 
 ## Codex Desktop
 
+适用者：DSH、GrokBot 等外部 Agenvo 调用方；本节不约束 dot 已有原生平台任务工具的路线。
+
 目标：任务出现在 **Codex Desktop** 左栏（会话可见），由 agent 经 agenvo 提交开跑。
 
 按[Codex Desktop 交接契约](../../docs/codex-desktop-handoff.md)执行：
@@ -57,7 +64,7 @@ Brief 落目标机；prompt／turn 输入写「读 brief 再动手」。
 
 ## 一轮一个 tab（Herdr 里的 Claude Code、agy、dsh headless）
 
-用户点名 Claude Code／agy／DSH headless（或同类 CLI／pane）时走 Herdr；Herdr 承接用户指定的这类模型线，与 Codex Desktop 默认编码线分开。
+用户点名 Claude Code／agy／DSH headless（或同类 CLI／pane）时走 Herdr；Herdr 承接用户指定的这类模型线，与 按调用方选择的 Codex 路线分开。
 
 每一轮在任务 workspace 里新开一个 tab 运行，命令以 `echo $? > "$D/exit-<轮次>"; exit` 结尾：这一轮结束时 tab 关闭，Herdr 发 `pane_exited`。workspace 的第一个 pane（读取 pane）留着，用来读文件。每轮的输入输出都在 `~/Projects/_status/<任务名>/`：`brief-N.md`、`result-N.*`、`events-N.jsonl`、`stderr-N.log`、`exit-N`。
 

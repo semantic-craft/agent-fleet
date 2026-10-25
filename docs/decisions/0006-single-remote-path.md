@@ -1,10 +1,14 @@
-# ADR-0006：远程派活只走 Agenvo
+# ADR-0006：自建 MCP 远程派活统一 Agenvo
 
 状态：已采纳（2026-10-19）
 
+## 适用范围澄清（2026-10-25）
+
+本决定约束自建 MCP 连接，不排除 dot 已提供且已授权的原生平台任务通道。dot→Codex 优先原生；DSH／GrokBot→Agenvo→Codex Desktop 仍是明确需求；Agenvo→DSH／Herdr 保持。见[调用方路由](../caller-routing.md)。不要求第三方 agent 拥有 dot 工具。
+
 ## 决定
 
-- 所有远程派活只走 Agenvo：一个 relay，每台电脑上的每种运行时只挂一个 connector。
+- 自建 MCP 远程派活统一走 Agenvo：一个 relay，每台电脑上的每种运行时只挂一个 connector。
 - 新的入口（ChatGPT、dots、Grok Bot 或以后的客户端）作为 MCP 客户端接 relay 的 `/mcp`（OAuth），不为某个入口单独搭传输链路。
 
 ## 理由

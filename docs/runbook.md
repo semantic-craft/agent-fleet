@@ -2,6 +2,8 @@
 
 迁移与升级先读[兼容来源、模型选择保护及在途恢复门槛](migration-and-upgrades.md)；历史通过不代表未知新版本可用。
 
+本页维护 Agenvo 路线；dot→Codex 优先可用且已授权的原生平台任务通道。DSH／GrokBot→Agenvo→Codex Desktop 的需求保留，阻断只作用于该外部路线。先读[调用方路由](caller-routing.md)，跨机先发现目标环境。
+
 所有命令都在本仓库根目录执行。个人值从 overlay（`~/.config/agent-fleet/fleet.json`，或用 `AGENT_FLEET_CONFIG` 指定）读取，下面用 `<RELAY>` 表示 `relay.baseUrl`。
 
 ## 0. 前提
@@ -124,6 +126,6 @@ node scripts/fleet.mjs check                         # 切换后经 relay 端到
 
 会话级切模候选（未部署）的固定源码、离线测试与调用入口见 [DSH session-only](dsh-session-only.md)。能力缺失明确不支持，不把旧 `session/selectModel` 当作等价 fallback。
 
-## Codex Desktop 交接
+## 外部 Codex Desktop 交接
 
-**创建前门槛**：默认 Desktop 空线程流程见[交接契约](codex-desktop-handoff.md)。本 runbook 的独立常驻 app-server 部署没有已验证的单线程 writer 释放路径；connector 发布、回滚或重启均不能充当交接。未确认支持前报告 `blocked_native_writer_release`，不创建或自动重试线程。目标仍为 Desktop 可见后由 agent `turn/start`；可见性与控制权分别验收，完整 canary 还须证明 agent 提交后 Desktop 可接手。
+**创建前门槛**：DSH／GrokBot 经 Agenvo 的 Desktop 空线程流程见[交接契约](codex-desktop-handoff.md)。本 runbook 的独立常驻 app-server 部署没有已验证的单线程 writer 释放路径；connector 发布、回滚或重启均不能充当交接。未确认支持前报告 `blocked_native_writer_release`，不创建或自动重试线程。目标仍为 Desktop 可见后由 agent `turn/start`；可见性与控制权分别验收，完整 canary 还须证明 agent 提交后 Desktop 可接手。

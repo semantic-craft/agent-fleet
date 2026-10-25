@@ -7,7 +7,11 @@
 3. 任务在用户平时用的桌面 app 里可见（Codex Desktop、DSH；agy 会话只在 Herdr 终端可见，Antigravity 桌面版 2.25.0 调不出 CLI 会话），也可以在 Herdr 终端里运行（agy、codex CLI、dsh headless）。
 4. 电脑不开入站端口；合盖、断网、关闭聊天都不会中断已经在跑的 agent。
 
-## 组件与职责
+## 调用方入口
+
+先按[调用方路由](caller-routing.md)区分 dot 原生 Codex 任务、Agenvo→DSH／Herdr、DSH／GrokBot→Agenvo→Codex Desktop。原生任务工具依赖调用方与连接授权；外部 writer 阻断不影响 dot 日常 Codex 路线，也不能用 dot 工具替代外部需求。
+
+## Agenvo 组件与职责
 
 | 组件 | 运行在哪 | 职责 | 不负责 |
 | --- | --- | --- | --- |
@@ -26,7 +30,7 @@
 5. DSH 桌面在左栏该项目下建出可见会话并开始执行；connector 立即返回 session id。
 6. 轮次结束时 connector 转发原生 `turn/end`（`runtime.changed`），dot 被唤醒后调 `session/follow` 读结果，再决定下一步。
 
-**Codex Desktop**（默认编码线）：
+**外部 Codex Desktop**（DSH／GrokBot 经 Agenvo 的明确需求，尚未验通）：
 
 0. **创建前门槛**：缺目标组合原生交接及后续 agent 提交的完整 canary 证据时，报告 `blocked_native_writer_release`，不创建线程；connector 重启不释放独立 native writer。
 1. discovery 选定 Codex deviceId/instanceId，brief 与 cwd 均在该目标机器，回读确认可用；`thread/start` 建空线程 → `threadId`。
