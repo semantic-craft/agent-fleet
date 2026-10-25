@@ -33,3 +33,7 @@
 ## 本轮证据
 
 只读核对现有源码、文档和派活技能；没有重启服务、真实 thread/start、跨机写 brief 或模型请求。本轮回归只防文档入口、模板和验收契约再次漂移，不证明 native writer 已能交接。
+
+## 隔离候选准备
+
+已参数化的测试 connector 源码与运行边界见[隔离 handoff probe](codex-handoff-probe.md)。它不改变现役默认、不创建测试线程、不证明 writer 已交接。尤其不能让候选连接带有默认自动 resume watcher 的生产 app-server。隔离 Desktop 接入尚未确认，不能据补丁存在启动实验。

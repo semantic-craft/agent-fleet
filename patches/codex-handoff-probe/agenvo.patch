@@ -1,0 +1,687 @@
+diff --git a/apps/codex-app-server/README.md b/apps/codex-app-server/README.md
+index cb67929..22b87f8 100644
+--- a/apps/codex-app-server/README.md
++++ b/apps/codex-app-server/README.md
+@@ -17,3 +17,7 @@ For AI agents: follow the [installation guide](https://github.com/Xuanwo/agenvo/
+ Requires Node.js 24.13+. Installing a Connector does not install Herdr or Codex.
+ 
+ [Usage and deployment](https://github.com/Xuanwo/agenvo/blob/v0.2.0/docs/usage.md) <!-- x-release-please-version -->
++
++## Offline handoff probe candidate
++
++`instance add --handoff-probe-thread-id ID` opts into a single-thread probe; the default connector is unchanged. This candidate is not deployed. It requires explicit read-only parameters, disables automatic approvals and all automatic resume/discovery, and exposes subscription-only `thread/unsubscribe`. It cannot create a thread or establish native writer transfer. Use only an independently authorized test runtime without other watchers, never the production shared endpoint. `connect` pairs a new isolated installation; `run` is foreground operation. Neither is authorized merely by building this source. See [design and remaining prerequisites](../../design/codex-handoff-probe.zh-CN.md).
+diff --git a/apps/codex-app-server/README.zh-CN.md b/apps/codex-app-server/README.zh-CN.md
+index 36f7d18..b84c262 100644
+--- a/apps/codex-app-server/README.zh-CN.md
++++ b/apps/codex-app-server/README.zh-CN.md
+@@ -17,3 +17,7 @@ AI Agent 请按照[安装指南](https://github.com/Xuanwo/agenvo/blob/v0.2.0/do
+ 需要 Node.js 24.13+。安装 Connector 不会安装 Herdr 或 Codex。
+ 
+ [使用与部署说明](https://github.com/Xuanwo/agenvo/blob/v0.2.0/docs/usage.zh-CN.md) <!-- x-release-please-version -->
++
++## 离线交接试验候选
++
++`instance add --handoff-probe-thread-id ID` 显式启用单线程模式；默认 connector 不变。候选尚未部署。它要求显式只读参数，禁止自动审批及自动 resume/discovery，只提供订阅层面的 `thread/unsubscribe`。它不能创建线程或证明 native writer 转移。仅限另获授权且没有其他 watcher 的独立测试运行时，不得指向生产共享 endpoint。`connect` 用于独立安装的配对，`run` 才是前台运行；源码构建不等于获准执行这两项。见[设计和未解决前置条件](../../design/codex-handoff-probe.zh-CN.md)。
+diff --git a/apps/codex-app-server/src/backend.ts b/apps/codex-app-server/src/backend.ts
+index bfb9a75..d6cff9b 100644
+--- a/apps/codex-app-server/src/backend.ts
++++ b/apps/codex-app-server/src/backend.ts
+@@ -11,9 +11,16 @@ export const backend: Backend<CodexConfig> = {
+   name: "codex-app-server",
+   command: "agenvo-codex-app-server",
+   schema: instanceConfigSchema,
+-  options: ["home", "endpoint"],
+-  help: "[--home PATH] [--endpoint unix://PATH|ws://127.0.0.1:PORT] [--cwd PATH] (connects to an independently running app-server)",
+-  revision: () => "codex-0.160.1-attach-native-v1",
++  options: ["home", "endpoint", "handoff-probe-thread-id"],
++  help: "[--home PATH] [--endpoint unix://PATH|ws://127.0.0.1:PORT] [--cwd PATH] [--handoff-probe-thread-id ID] (connects to an independently running app-server)",
++  executionPolicyForConfig: (config) =>
++    config.handoffProbeThreadId
++      ? { execution: "read-only-handoff-probe", approvalPolicy: "never" }
++      : undefined,
++  revision: (config) =>
++    config.handoffProbeThreadId
++      ? "codex-0.164.0-handoff-probe-v1"
++      : "codex-0.160.1-attach-native-v1",
+   async configure(options) {
+     if (options.binary)
+       throw new Fault(
+@@ -34,6 +41,7 @@ export const backend: Backend<CodexConfig> = {
+       kind: "codex",
+       cwd: await realpath(resolve(String(options.cwd ?? process.cwd()))),
+       home,
++      handoffProbeThreadId: options["handoff-probe-thread-id"],
+       endpoint:
+         options.endpoint ??
+         "unix://" + join(home, "app-server-control", "app-server-control.sock"),
+diff --git a/apps/codex-app-server/src/codex.ts b/apps/codex-app-server/src/codex.ts
+index 4f627fd..62c255a 100644
+--- a/apps/codex-app-server/src/codex.ts
++++ b/apps/codex-app-server/src/codex.ts
+@@ -12,6 +12,7 @@ import {
+   type Adapter,
+   type Method,
+ } from "@agenvo/connector/adapters/adapter";
++import { probeMethods, probeParams } from "./handoff-probe.js";
+ import { executionParams } from "./codex-execution.js";
+ import { Observations } from "@agenvo/connector/adapters/observations";
+ import { bytes, Fault, VERSION, type Outcome } from "@agenvo/protocol";
+@@ -45,7 +46,10 @@ export class CodexAdapter implements Adapter {
+   version = "unknown";
+   available = false;
+   onAvailabilityChange?: () => void;
+-  private connection?: CodexConnection;
++  private connection?: Pick<
++    CodexConnection,
++    "open" | "rpc" | "write" | "close" | "isOpen"
++  >;
+   private reconnect?: NodeJS.Timeout;
+   private reconnectAttempt = 0;
+   // Desired subscriptions survive transport loss; observed coverage does not.
+@@ -54,7 +58,14 @@ export class CodexAdapter implements Adapter {
+   private interactions: Interactions;
+   private closed = false;
+   private readonly notifications = new Observations();
+-  constructor(public config: CodexConfig) {
++  constructor(
++    public config: CodexConfig,
++    private connectionFactory = (
++      config: CodexConfig,
++      receive: (packet: NativePacket) => void,
++      disconnect: () => void,
++    ) => new CodexConnection(config, receive, disconnect),
++  ) {
+     this.interactions = new Interactions(
+       () => this.generation,
+       (packet) => this.write(packet),
+@@ -99,7 +110,7 @@ export class CodexAdapter implements Adapter {
+   }
+   private async attach() {
+     if (this.closed) throw new Fault("runtime_unavailable");
+-    const connection = new CodexConnection(
++    const connection = this.connectionFactory(
+       this.config,
+       (packet) => {
+         if (this.connection === connection) this.receive(packet);
+@@ -120,7 +131,9 @@ export class CodexAdapter implements Adapter {
+       typeof init.userAgent === "string" ? init.userAgent : "unknown";
+     this.write({ jsonrpc: "2.0", method: "initialized" });
+     // Restore subscriptions in full access without replaying any user input.
+-    for (const threadId of this.resumeTargets) {
++    for (const threadId of this.config.handoffProbeThreadId
++      ? []
++      : this.resumeTargets) {
+       try {
+         await this.rpc(
+           "thread/resume",
+@@ -165,6 +178,11 @@ export class CodexAdapter implements Adapter {
+   watchEvents(emit: (event: RuntimeEvent) => void) {
+     this.stopEvents?.();
+     this.eventSink = emit;
++    if (this.config.handoffProbeThreadId) {
++      return (this.stopEvents = () => {
++        this.eventSink = undefined;
++      });
++    }
+     let busy = false,
+       stopped = false;
+     const discover = async () => {
+@@ -223,6 +241,27 @@ export class CodexAdapter implements Adapter {
+   }
+   private receive(packet: NativePacket) {
+     if (!packet.method) return;
++    if (this.config.handoffProbeThreadId) {
++      const threadId = packet.params?.threadId ?? packet.params?.thread?.id;
++      // Unrelated/untagged notifications and requests must not enter observers,
++      // interactions, or the legacy automatic approval path.
++      if (threadId !== this.config.handoffProbeThreadId) return;
++      if (packet.id !== undefined) {
++        this.write({
++          jsonrpc: "2.0",
++          id: packet.id,
++          error: {
++            code: -32000,
++            message: "Scoped handoff probe does not answer native requests",
++          },
++        });
++        this.record(threadId, "interaction.blocked", {
++          threadId,
++          method: packet.method,
++        });
++        return;
++      }
++    }
+     if (typeof packet.method === "string" && packet.id === undefined)
+       this.record(
+         packet.params?.threadId ?? packet.params?.thread?.id,
+@@ -287,6 +326,8 @@ export class CodexAdapter implements Adapter {
+   }
+ 
+   methods(): Method[] {
++    if (this.config.handoffProbeThreadId)
++      return probeMethods(this.config.handoffProbeThreadId);
+     return [
+       ...Object.entries(schemas.methods).map(([name, schema]) => ({
+         name,
+@@ -315,6 +356,25 @@ export class CodexAdapter implements Adapter {
+     original: Record<string, unknown>,
+   ): Promise<Outcome> {
+     if (!this.available) throw new Fault("runtime_unavailable");
++    if (this.config.handoffProbeThreadId) {
++      const params = probeParams(
++        this.config.handoffProbeThreadId,
++        method,
++        original,
++      );
++      if (method === "notifications.list")
++        return accepted(
++          this.notifications.list(
++            String(params.threadId),
++            params.cursor as string | undefined,
++            params.limit as number | undefined,
++          ),
++        );
++      // Remove before awaiting: unknown/native failure must never resume implicitly.
++      if (method === "thread/unsubscribe")
++        this.resumeTargets.delete(this.config.handoffProbeThreadId);
++      return accepted(await this.rpc(method, params));
++    }
+     if (method === "notifications.list") {
+       const p = z
+         .strictObject({
+diff --git a/apps/codex-app-server/src/config.ts b/apps/codex-app-server/src/config.ts
+index dc3a06d..04c3cc2 100644
+--- a/apps/codex-app-server/src/config.ts
++++ b/apps/codex-app-server/src/config.ts
+@@ -26,5 +26,7 @@ export const instanceConfigSchema = z.strictObject({
+   cwd: absolutePath,
+   home: absolutePath,
+   endpoint: endpointSchema,
++  // Local experiment only: never enables creation or instance-wide discovery.
++  handoffProbeThreadId: z.string().trim().min(1).max(256).optional(),
+ });
+ export type CodexConfig = z.infer<typeof instanceConfigSchema>;
+diff --git a/apps/codex-app-server/src/handoff-probe.ts b/apps/codex-app-server/src/handoff-probe.ts
+new file mode 100644
+index 0000000..e44f9b6
+--- /dev/null
++++ b/apps/codex-app-server/src/handoff-probe.ts
+@@ -0,0 +1,85 @@
++import { z } from "zod";
++import { Fault } from "@agenvo/protocol";
++import type { Method } from "@agenvo/connector/adapters/adapter";
++import { methodValidators, validate } from "./native-schema.js";
++
++// Native unsubscribe request shape from Codex CLI 0.164.0 generated schema.
++// It removes this connection's subscription, not ownership: the last subscriber
++// triggers unload only after the server's inactivity grace period (30 minutes).
++function inputs(threadId: string) {
++  const id = z.literal(threadId);
++  const readonly = { approvalPolicy: z.literal("never") };
++  return {
++    "thread/read": z.strictObject({
++      threadId: id,
++      includeTurns: z.literal(false).optional(),
++    }),
++    "thread/turns/list": z.strictObject({
++      threadId: id,
++      cursor: z.string().optional(),
++      limit: z.number().int().min(1).max(50),
++    }),
++    "thread/items/list": z.strictObject({
++      threadId: id,
++      turnId: z.string().optional(),
++      cursor: z.string().optional(),
++      limit: z.number().int().min(1).max(50),
++    }),
++    "thread/resume": z.strictObject({
++      threadId: id,
++      ...readonly,
++      sandbox: z.literal("read-only"),
++      excludeTurns: z.literal(true),
++    }),
++    "turn/start": z.strictObject({
++      threadId: id,
++      ...readonly,
++      sandboxPolicy: z.strictObject({
++        type: z.literal("readOnly"),
++        networkAccess: z.literal(false),
++      }),
++      input: z
++        .array(
++          z.strictObject({
++            type: z.literal("text"),
++            text: z.string().min(1).max(8192),
++          }),
++        )
++        .min(1)
++        .max(1),
++    }),
++    "thread/unsubscribe": z.strictObject({ threadId: id }),
++    "notifications.list": z.strictObject({
++      threadId: id,
++      cursor: z.string().optional(),
++      limit: z.number().int().min(1).max(50).optional(),
++    }),
++  };
++}
++export function probeMethods(threadId: string): Method[] {
++  return Object.entries(inputs(threadId)).map(([name, schema]) => ({
++    name,
++    readOnly: /(?:\/list|\/read|\.list)$/.test(name),
++    inputSchema: z.toJSONSchema(schema),
++    description:
++      name === "thread/unsubscribe"
++        ? "Unsubscribe this connection from the designated test thread. Not proof of writer release; no auto-resume, retry, or fallback."
++        : `Scoped handoff probe: ${name}; designated test thread only. Explicit read-only sandbox required for submit input/resume. No automatic approvals.`,
++  }));
++}
++export function probeParams(
++  threadId: string,
++  method: string,
++  original: Record<string, unknown>,
++): Record<string, unknown> {
++  const schemas = inputs(threadId);
++  const schema = schemas[method as keyof typeof schemas];
++  if (!schema) throw new Fault("unsupported_method");
++  const parsed = schema.safeParse(original);
++  if (!parsed.success)
++    throw new Fault("invalid_params", "Outside scoped handoff probe contract");
++  const params = parsed.data;
++  const native = methodValidators.get(method);
++  if (native) validate(native, params);
++  return structuredClone(params);
++}
+diff --git a/design/codex-handoff-probe.zh-CN.md b/design/codex-handoff-probe.zh-CN.md
+new file mode 100644
+index 0000000..7efac08
+--- /dev/null
++++ b/design/codex-handoff-probe.zh-CN.md
+@@ -0,0 +1,24 @@
++# Codex 单线程交接试验候选（未部署）
++
++目标仍为创建 → 原生交接 → Desktop 可见 → agent 对同一 thread 提交 → 结果回读。本候选只为研究中间接口提供受限连接，不声称该路线已可用，也不是完整 dispatcher。
++
++`handoffProbeThreadId` 默认缺省，原有 connector 行为不变。显式配置后，只可访问该 thread 的有界历史/通知、resume、turn/start、unsubscribe；不提供 thread/start、全实例列表、修改元数据、取消或 requests.respond。resume 和 turn/start 必须显式 readonly/never，禁止 config/cwd/其他权限覆盖，turn 网络权限必须 false。native server requests 一律返回错误，不批准权限或运行工具。收到外线程/无 threadId 事件直接忽略，不存储、不转发、不答复。
++
++候选 watcher 不扫描 loaded threads，断线重连也不自动 resume。unsubscribe 先清本地恢复目标，再原样调用 native，不重试、不 fallback；unknown 只能回读。返回 unsubscribed 仅表示本连接取消订阅，**不是 writer 释放证据**。官方 Codex 0.164.0 schema 提供该请求；官方文档规定最后订阅者退出且无活动 30 分钟后才卸载，必须观察原生 notLoaded/thread/closed 及后续 Desktop 实际可接手证据，不能 sleep 后宣布成功。当前无受支持的即时 writer-transfer 接口证据。thread/attachmentOwner/list 是附件反查，不是 writer ownership。
++
++## 运行前未解决项
++
++- 必须事先明确一个获准、空白、只读测试 threadId；候选不能创建。bootstrap 创建及 Desktop 独立 CODEX_HOME 支持尚未验证，不得用旧业务线程凑合。
++- **不能指向现役共享 app-server**：原 connector 的全局 watcher 仍会扫描/resume 该线程并强制 full access，候选自身过滤无法阻止其他客户端。必须是无其他 watcher/客户端写入的独立 native 环境，Desktop 是否能正式连接该环境仍待证实。
++- 独立 AGENVO_CONFIG_DIR、临时设备/实例配对、授权及 endpoint 都须另获批准，不复制现役凭据，不注册常驻服务。显式 scope 改动需正常审批新指纹。
++- `connect` 是配对流程；`run` 才是前台连接。停止本候选只结束其前台进程，不停止 native 服务、不取消 native turn。清理须先核对本测试 turn 终态；取消尚不在此候选范围，不能靠退出伪称已取消。
++
++## 离线证据边界
++
++`tests/codex-handoff-probe.test.ts` 注入内存 transport，执行实际 adapter init/call/watch/receive/reconnect；没有 socket、模型、Desktop、relay 配对。它验证过滤和权限契约，不能验证真实卸载、writer 或桌面交接。旧默认路径仍由原有 Codex 测试覆盖。本轮不运行 system/adapters/native 安装器。
++
++候选能力 revision 为 `codex-0.164.0-handoff-probe-v1`，区分方法集合；这是 schema 来源标识，不是运行版本白名单。默认能力 revision 保持原值。scope.execution 为 `read-only-handoff-probe`，变更指定 threadId 会变更审批指纹。
++
++源基线 cd10fb92e1da731b307b85f8e94e8db8b6b8808a；unsubscribe 请求为 CLI 0.164.0 本地 schema 的 `{threadId:string}`，新方法不写入旧生成 schema，而在候选模式单独验证；原生不支持会直接返回错误。
++
++来源：https://developers.openai.com/codex/app-server （Unsubscribe from a loaded thread）。
+diff --git a/packages/connector/src/backend.ts b/packages/connector/src/backend.ts
+index b3c3b60..cf861c3 100644
+--- a/packages/connector/src/backend.ts
++++ b/packages/connector/src/backend.ts
+@@ -10,6 +10,9 @@ export interface Backend<T extends InstanceConfig> {
+   help: string;
+   options: string[];
+   executionPolicy?: { execution: string; approvalPolicy: string };
++  executionPolicyForConfig?(
++    config: T,
++  ): { execution: string; approvalPolicy: string } | undefined;
+   configure(options: Options, dir: string): Promise<T>;
+   create(config: T): Promise<Adapter>;
+   revision(config: T): string;
+diff --git a/packages/connector/src/main.ts b/packages/connector/src/main.ts
+index 3b6961b..451ee8c 100644
+--- a/packages/connector/src/main.ts
++++ b/packages/connector/src/main.ts
+@@ -72,7 +72,10 @@ export async function run<T extends InstanceConfig>(
+           adapter.available,
+           adapter.version,
+           backend.revision(instance),
+-          backend.executionPolicy?.execution,
++          (
++            backend.executionPolicyForConfig?.(instance) ??
++            backend.executionPolicy
++          )?.execution,
+         ),
+       );
+     }
+diff --git a/tests/codex-handoff-probe.test.ts b/tests/codex-handoff-probe.test.ts
+new file mode 100644
+index 0000000..faf8b1d
+--- /dev/null
++++ b/tests/codex-handoff-probe.test.ts
+@@ -0,0 +1,327 @@
++import test from "node:test";
++import assert from "node:assert/strict";
++import { CodexAdapter } from "../apps/codex-app-server/src/codex.js";
++import { instanceConfigSchema } from "../apps/codex-app-server/src/config.js";
++import { executionParams } from "../apps/codex-app-server/src/codex-execution.js";
++
++function fixture() {
++  const calls: any[] = [],
++    writes: any[] = [],
++    events: any[] = [];
++  let receive!: (p: any) => void;
++  let disconnect!: () => void;
++  let failUnsubscribe = false;
++  const config = instanceConfigSchema.parse({
++    id: "probe",
++    label: "Probe",
++    kind: "codex",
++    cwd: process.cwd(),
++    home: process.cwd(),
++    endpoint: "unix:///fixture/no-server.sock",
++    handoffProbeThreadId: "test-thread",
++  });
++  const transport: any = {
++    isOpen: true,
++    open: async () => {},
++    close: () => {},
++    write: (p: any) => writes.push(p),
++    rpc: async (method: string, params: any) => {
++      calls.push({ method, params });
++      if (method === "initialize")
++        return { userAgent: "fixture/0.164.0", codexHome: process.cwd() };
++      if (method === "thread/unsubscribe" && failUnsubscribe)
++        throw Error("unknown unsubscribe");
++      if (method === "thread/unsubscribe") return { status: "unsubscribed" };
++      if (method === "thread/read" || method === "thread/resume")
++        return { thread: { id: "test-thread", status: { type: "idle" } } };
++      return {};
++    },
++  };
++  const adapter = new CodexAdapter(config, ((_c: any, r: any, d: any) => {
++    receive = r;
++    disconnect = d;
++    return transport;
++  }) as any);
++  return {
++    adapter,
++    calls,
++    writes,
++    events,
++    config,
++    send: (p: any) => receive(p),
++    disconnect: () => disconnect(),
++    failUnsubscribe: () => {
++      failUnsubscribe = true;
++    },
++  };
++}
++const resume = {
++  threadId: "test-thread",
++  sandbox: "read-only",
++  approvalPolicy: "never",
++  excludeTurns: true,
++};
++const turn = {
++  threadId: "test-thread",
++  approvalPolicy: "never",
++  sandboxPolicy: { type: "readOnly", networkAccess: false },
++  input: [{ type: "text", text: "Return only fixture marker." }],
++};
++
++test("scoped methods cannot create, list all threads, answer requests, or target another thread", async (t) => {
++  const f = fixture();
++  t.after(() => f.adapter.close());
++  await f.adapter.init();
++  const names = f.adapter.methods().map((m) => m.name);
++  assert.deepEqual(names, [
++    "thread/read",
++    "thread/turns/list",
++    "thread/items/list",
++    "thread/resume",
++    "turn/start",
++    "thread/unsubscribe",
++    "notifications.list",
++  ]);
++  for (const method of [
++    "thread/start",
++    "thread/list",
++    "thread/loaded/list",
++    "model/list",
++    "requests.respond",
++    "requests.list",
++    "turn/interrupt",
++  ]) {
++    await assert.rejects(f.adapter.call(method, { threadId: "test-thread" }), {
++      code: "unsupported_method",
++    });
++  }
++  for (const method of names)
++    await assert.rejects(f.adapter.call(method, { threadId: "other-thread" }), {
++      code: "invalid_params",
++    });
++  assert.deepEqual(
++    f.calls.map((c) => c.method),
++    ["initialize"],
++  );
++});
++test("resume and submit preserve explicit readonly permissions and reject override channels", async (t) => {
++  const f = fixture();
++  t.after(() => f.adapter.close());
++  await f.adapter.init();
++  await f.adapter.call("thread/resume", resume);
++  await f.adapter.call("turn/start", turn);
++  assert.deepEqual(f.calls.at(-2).params, resume);
++  assert.deepEqual(f.calls.at(-1).params, turn);
++  for (const params of [
++    { ...resume, sandbox: "danger-full-access" },
++    { ...resume, config: { sandbox_mode: "danger-full-access" } },
++    { threadId: "test-thread" },
++    { ...resume, approvalsReviewer: "auto_review" },
++  ])
++    await assert.rejects(f.adapter.call("thread/resume", params), {
++      code: "invalid_params",
++    });
++  for (const params of [
++    { ...turn, sandboxPolicy: { type: "workspaceWrite" } },
++    { ...turn, sandboxPolicy: { type: "readOnly", networkAccess: true } },
++    { ...turn, approvalPolicy: "on-request" },
++    { ...turn, cwd: "/other" },
++    { ...turn, config: {} },
++  ])
++    await assert.rejects(f.adapter.call("turn/start", params), {
++      code: "invalid_params",
++    });
++  assert.equal(f.calls.length, 3);
++});
++test("watcher and transport reconnect never auto-resume even after explicit resume/unsubscribe unknown", async (t) => {
++  t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
++  const f = fixture();
++  t.after(() => f.adapter.close());
++  await f.adapter.init();
++  f.adapter.watchEvents((e) => f.events.push(e));
++  t.mock.timers.tick(10000);
++  await Promise.resolve();
++  assert.deepEqual(
++    f.calls.map((c) => c.method),
++    ["initialize"],
++  );
++  await f.adapter.call("thread/resume", resume);
++  f.failUnsubscribe();
++  await assert.rejects(
++    f.adapter.call("thread/unsubscribe", { threadId: "test-thread" }),
++    /unknown unsubscribe/,
++  );
++  const ready = new Promise<void>((resolve) => {
++    f.adapter.onAvailabilityChange = () => {
++      if (f.adapter.available) resolve();
++    };
++  });
++  const before = f.calls.length;
++  f.disconnect();
++  t.mock.timers.tick(1000);
++  await ready;
++  assert.deepEqual(
++    f.calls.slice(before).map((c) => c.method),
++    ["initialize"],
++  );
++  assert.equal(f.adapter.available, true);
++});
++test("unsubscribe exposes native status only, no ownership claim or fallback", async (t) => {
++  const f = fixture();
++  t.after(() => f.adapter.close());
++  await f.adapter.init();
++  const r = await f.adapter.call("thread/unsubscribe", {
++    threadId: "test-thread",
++  });
++  assert.deepEqual(r.result, { status: "unsubscribed" });
++  assert.equal(f.calls.at(-1).method, "thread/unsubscribe");
++});
++test("foreign packets never record, emit, autoapprove, or enter interactions; scoped requests fail closed", async (t) => {
++  const f = fixture();
++  t.after(() => f.adapter.close());
++  await f.adapter.init();
++  f.adapter.watchEvents((e) => f.events.push(e));
++  for (const method of [
++    "turn/completed",
++    "item/permissions/requestApproval",
++    "item/commandExecution/requestApproval",
++    "item/tool/call",
++  ]) {
++    f.send({
++      id:
++        method.includes("Approval") || method.endsWith("/call")
++          ? "foreign-request"
++          : undefined,
++      method,
++      params: {
++        threadId: "other-thread",
++        permissions: { filesystem: { write: ["/"] } },
++      },
++    });
++  }
++  f.send({
++    id: "untagged",
++    method: "account/chatgptAuthTokens/refresh",
++    params: {},
++  });
++  assert.equal(f.writes.length, 1); // initialized notification only
++  assert.equal(f.events.length, 0);
++  for (const method of [
++    "item/permissions/requestApproval",
++    "item/commandExecution/requestApproval",
++    "item/fileChange/requestApproval",
++    "item/tool/call",
++  ]) {
++    f.send({
++      id: method,
++      method,
++      params: {
++        threadId: "test-thread",
++        permissions: { filesystem: { write: ["/"] } },
++      },
++    });
++    assert.equal(f.writes.at(-1).result, undefined);
++    assert.equal(f.writes.at(-1).error.code, -32000);
++  }
++  const observations: any = (
++    await f.adapter.call("notifications.list", { threadId: "test-thread" })
++  ).result;
++  assert.equal(JSON.stringify(observations).includes("other-thread"), false);
++  assert.equal(
++    JSON.stringify(observations).includes("permission.submitted"),
++    false,
++  );
++  f.send({
++    method: "turn/completed",
++    params: {
++      threadId: "test-thread",
++      turn: { id: "turn-a", status: "completed" },
++    },
++  });
++  assert.equal(f.events.length, 1);
++});
++test("bounded metadata reads and explicit permission contract reject missing scope/limits", async (t) => {
++  const f = fixture();
++  t.after(() => f.adapter.close());
++  await f.adapter.init();
++  await f.adapter.call("thread/read", {
++    threadId: "test-thread",
++    includeTurns: false,
++  });
++  for (const method of ["thread/turns/list", "thread/items/list"]) {
++    for (const limit of [undefined, 0, 51])
++      await assert.rejects(
++        f.adapter.call(method, { threadId: "test-thread", limit }),
++        { code: "invalid_params" },
++      );
++    await f.adapter.call(method, { threadId: "test-thread", limit: 1 });
++  }
++  await assert.rejects(
++    f.adapter.call("thread/read", {
++      threadId: "test-thread",
++      includeTurns: true,
++    }),
++    { code: "invalid_params" },
++  );
++});
++test("legacy defaults remain full access; new scoped config is explicit", () => {
++  const f = fixture();
++  const legacy = { ...f.config };
++  delete legacy.handoffProbeThreadId;
++  assert.equal(
++    executionParams(legacy, "thread/resume", resume).sandbox,
++    "danger-full-access",
++  );
++  assert.deepEqual(executionParams(legacy, "turn/start", turn).sandboxPolicy, {
++    type: "dangerFullAccess",
++  });
++  assert.equal(
++    instanceConfigSchema.safeParse({ ...legacy, handoffProbeThreadId: "" })
++      .success,
++    false,
++  );
++});
++
++test("probe CLI config maps scope and descriptor fingerprints cannot reuse approval", async () => {
++  const { backend } = await import("../apps/codex-app-server/src/backend.js");
++  const { descriptor } = await import("@agenvo/connector/config");
++  const config = await backend.configure(
++    {
++      id: "probe",
++      home: process.cwd(),
++      cwd: process.cwd(),
++      endpoint: "unix:///fixture/no-server.sock",
++      "handoff-probe-thread-id": "test-thread",
++    },
++    process.cwd(),
++  );
++  assert.equal(config.handoffProbeThreadId, "test-thread");
++  assert.equal(backend.revision(config), "codex-0.164.0-handoff-probe-v1");
++  const policy = backend.executionPolicyForConfig!(config);
++  assert.equal(policy?.execution, "read-only-handoff-probe");
++  const first = await descriptor(
++    config,
++    false,
++    "fixture",
++    "probe",
++    policy?.execution,
++  );
++  const changed = { ...config, handoffProbeThreadId: "different-thread" };
++  const second = await descriptor(
++    changed,
++    false,
++    "fixture",
++    "probe",
++    policy?.execution,
++  );
++  assert.notEqual(first.fingerprint, second.fingerprint);
++  assert.equal(first.scope.execution, "read-only-handoff-probe");
++  assert.equal(first.scope.handoffProbeThreadId, "test-thread");
++  const legacy = { ...config };
++  delete legacy.handoffProbeThreadId;
++  assert.equal(backend.executionPolicyForConfig!(legacy), undefined);
++  assert.equal(backend.revision(legacy), "codex-0.160.1-attach-native-v1");
++  const old = await descriptor(legacy, false, "fixture", "probe");
++  assert.equal(old.scope.execution, "full-access");
++  assert.notEqual(first.fingerprint, old.fingerprint);
++});
