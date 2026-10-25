@@ -2,6 +2,16 @@
 
 实现、评审或验收前先读相关条目；用户纠正、返工或漏验暴露了可复用的教训后补记。格式见 xw-tooling 的 lessons 模板。
 
+### Cloudflare 交互走 `cf` CLI
+
+**与 Cloudflare 交互时用 `cf` CLI；项目若仍有 Wrangler 配置文件（wrangler.jsonc／wrangler.toml）且无 cloudflare.config.ts，则该项目继续用 Wrangler；有 Wrangler 配置时不要对该项目跑 cf dev／build／deploy，先 cf migrate。**
+
+- 起因与后果：用户 2026-10-25 定正道（亚里士多德派工）；舰队 agenvo fork 仍有 wrangler.jsonc、无 cloudflare.config.ts，部署步骤继续 Wrangler。
+- 修复与证据：正本写入 `docs/runbook.md`「Cloudflare CLI」；全局技能 `cloudflare-cf-cli`（grokbot-skills）。
+- 正确做法：有 `cloudflare.config.ts` → `cf`；仅 Wrangler 配置 → 继续 Wrangler，迁时先 `cf migrate`；账号／DNS／Zones／隧道等非仓库构建 → `cf`。
+- 验证点：`rg -n 'Cloudflare CLI|cf migrate' docs/runbook.md` 有本节；部署段仍含 `npx wrangler`。
+- 复发记录：Seen 1x (2026-10-25)。
+
 ### 生产环境的 OAuth 批准返回 HTML 页，不是 303
 
 **脚本化 OAuth 时，同时支持 Location 头和页面里回到 client 的链接。**
