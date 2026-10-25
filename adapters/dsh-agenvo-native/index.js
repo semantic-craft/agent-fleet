@@ -2,6 +2,13 @@ import {createCredentialAuth,credentialBindingId} from './oauth.js';
 import {connectScoped} from './transport.js';
 export const name='agent-fleet-agenvo-native';
 export const inject=['tools','credentials'];
+// Bound network time while the credential backend holds its refresh lock.
+export function boundedAuthFetch(fetchImpl=globalThis.fetch){
+ return (input,init={})=>fetchImpl(input,{...init,signal:AbortSignal.any([
+  AbortSignal.timeout(15000), ...(init.signal?[init.signal]:[]),
+  ...(input instanceof Request?[input.signal]:[]),
+ ])});
+}
 function bindingFrom(config){
  if(!config || Object.keys(config).some(k=>!['serverUrl','issuer','resource','scope'].includes(k)))throw new Error('unsupported_native_config');
  return Object.freeze({...config});
@@ -10,7 +17,7 @@ function bindingFrom(config){
 export async function createHostAuthorization(ctx,config){
  const binding=bindingFrom(config);
  const [sdk,{credentialKey}]=await Promise.all([import('@modelcontextprotocol/client'),import('@deepseek-ai/dsh-credentials')]);
- return createCredentialAuth({credentials:ctx.credentials,key:credentialKey(name,credentialBindingId(binding)),binding,refreshAuthorization:sdk.refreshAuthorization,fetchFn:globalThis.fetch});
+ return createCredentialAuth({credentials:ctx.credentials,key:credentialKey(name,credentialBindingId(binding)),binding,refreshAuthorization:sdk.refreshAuthorization,fetchFn:boundedAuthFetch()});
 }
 export async function apply(ctx,config){
  const binding=bindingFrom(config);

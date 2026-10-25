@@ -27,3 +27,8 @@ test('unexpected catalogue and partial registration fail closed',async()=>{
 test('lost connection unregisters all tools; no reconnect or new submit',async()=>{
  const f=fixture();await connectScoped(f.ctx,f.input,f.deps);f.client.onclose();assert.equal(f.defs.size,0);assert.equal(f.calls,0);
 });
+
+test('host auth fetch preserves cancellation and supplies a bounded signal',async()=>{
+ const {boundedAuthFetch}=await import('../index.js');const controller=new AbortController();controller.abort();
+ await boundedAuthFetch(async(_input,init)=>{assert.equal(init.signal.aborted,true);assert.equal(init.method,'POST');})('https://fixture.invalid/token',{method:'POST',signal:controller.signal});
+});
