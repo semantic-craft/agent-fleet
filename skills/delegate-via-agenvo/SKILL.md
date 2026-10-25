@@ -27,7 +27,7 @@ description: Hand work to another coding agent (Codex Desktop, DeepSeek Harness/
 
 - 派 Codex／默认编码 → **Codex Desktop**（见下节）。
 - 用户点名 Claude Code／agy／DSH headless（或同类 CLI／pane）→ **Herdr**（承接用户指定的这类模型线，与 Codex Desktop 默认编码线分开）。
-- 桌面可见且自动开跑 → **DSH** 实例。Codex Desktop 走下节四步（释放写锁且 Desktop 可见后再 `turn/start`）。
+- 桌面可见且自动开跑 → **DSH** 实例。Codex Desktop 走下节四步（通过创建前门槛、完成原生交接且 Desktop 可见后再 `turn/start`）。
 - Codex 不可用（额度用尽、离线、报错）→ 改 DSH；DSH 与 Codex 同级，能新建、追问、中断。
 - Antigravity 桌面版（2.25.0）调不出 `agy -p` 的会话，`--new-project` 只生成空项目；需要桌面可见时不选 agy。
 - 要长时间运行、不怕笔记本合盖：选常开那台 Mac 上的实例。
@@ -48,10 +48,10 @@ description: Hand work to another coding agent (Codex Desktop, DeepSeek Harness/
 
 按[Codex Desktop 交接契约](../../docs/codex-desktop-handoff.md)执行：
 
-1. 从 discovery 选定 Codex 的 `deviceId` / `instanceId`，用该设备的 context/overlay 解析 home、cwd；brief 写到**同一 deviceId** 上经过授权的目录，并从目标机器回读确认可读。找不到同机文件写入入口就阻断，不借另一台机器代写。对 `codex-helios`（或当前 Codex 实例）调 `thread/start`（`cwd`、`model`、`modelProvider`、`sandbox`、`approvalPolicy`）→ `threadId`。
-2. 释放该 connector 写锁（Helios 上常见：`launchctl kickstart -k gui/$(id -u)/io.agenvo.connector.<codex>`），或走已证实的原生交接，让 Desktop 接手。
-3. 在**目标机器**打开 `codex://threads/<threadId>?prompt=<URL 编码任务>`，正文引用该机已回读的 brief 路径；确认 Desktop 可见。若当前界面在另一台机器，仅提供目标机操作链接，不声称已打开正确会话。
-4. 经 agenvo 对同一线程 `turn/start` 提交；回报带 deep link 与 turn 结果。
+1. **创建前门槛**：先按交接契约核验目标版本组合的受支持 native ownership 路径与完整 canary 证据；当前未验证，报告 `blocked_native_writer_release` 并停止，不能先调 `thread/start`。connector 重启不释放独立 native writer。
+2. 门槛通过后，从 discovery 选定 Codex 的 `deviceId` / `instanceId`，用该设备的 context/overlay 解析 home、cwd；brief 写到**同一 deviceId** 上经过授权的目录，并从目标机器回读确认可读。找不到同机文件写入入口就阻断，不借另一台机器代写。仅对选定实例调 `thread/start`（参数按实时 schema）→ `threadId`，再按已验证路径完成本线程原生交接。
+3. 在**目标机器**打开 `codex://threads/<threadId>?prompt=<URL 编码任务>`，正文引用该机已回读的 brief 路径；确认 Desktop 可见。若当前界面在另一台机器，仅提供目标机操作链接，不声称已打开正确会话。可见性不等于控制权。
+4. 同一线程的 ownership 与 Desktop 可见证据均成立，且 canary 已验证后续 agent 提交的控制权行为，才经 agenvo `turn/start`。unknown 只回读，不重发；回报带 deep link 与 turn 结果。
 
 Brief 落目标机；prompt／turn 输入写「读 brief 再动手」。
 

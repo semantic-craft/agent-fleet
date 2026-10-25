@@ -28,8 +28,9 @@
 
 **Codex Desktop**（默认编码线）：
 
+0. **创建前门槛**：缺目标组合原生交接及后续 agent 提交的完整 canary 证据时，报告 `blocked_native_writer_release`，不创建线程；connector 重启不释放独立 native writer。
 1. discovery 选定 Codex deviceId/instanceId，brief 与 cwd 均在该目标机器，回读确认可用；`thread/start` 建空线程 → `threadId`。
-2. 释放 connector 写锁（或已证实的原生交接），Desktop 接手；见[交接契约](codex-desktop-handoff.md)。
+2. 按已验证路径完成原生 ownership 交接，Desktop 接手；见[交接契约](codex-desktop-handoff.md)。
 3. 在目标机器打开 `codex://threads/<threadId>?prompt=…`，确认 Desktop 可见。
 4. 经 agenvo 对同一线程 `turn/start` 提交；Desktop 可见与 turn 结果分别验收。
 
