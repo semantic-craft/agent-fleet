@@ -30,7 +30,7 @@
 
 先按调用方区分：dot 原生平台任务的创建／执行／读回，在连接授权及环境发现完成后独立验收，不以外部 writer handoff 为前提；缺平台工具就报告能力缺失。以下步骤只验 DSH／GrokBot 经 Agenvo 的外部 Codex Desktop 路线，不是全部 Codex 的准入条件。
 
-遵循[Codex Desktop 交接契约](codex-desktop-handoff.md)和[派活技能的 Codex Desktop 步骤](../skills/delegate-via-agenvo/SKILL.md#codex-desktop)。这不是 Herdr CLI 模板验收。
+遵循[Codex Desktop 交接契约](codex-desktop-handoff.md)和[派活技能的 Codex Desktop 步骤](https://github.com/semantic-craft/xw-stack/blob/main/skills/delegate-via-agenvo/SKILL.md#codex-desktop)。这不是 Herdr CLI 模板验收。
 
 **Desktop 交互控制交还门槛**：独立同 host 执行基线不以退订能力为创建前置，Desktop 项保持未验；仅当完成交还时，确认 connector 暴露 `thread/unsubscribe` 且 watcher 不抢其他 loaded 线程，否则 `blocked_native_writer_release`。同 host 共享 app-server 与 Desktop 自带 backend 也要交还 writer；本次 turn 终态后由同一 connector 退订，再截图核实项目下可见且无横幅。connector 重启不释放独立 native writer。目标仍为 Desktop 可见后 agent `turn/start`，见[交接契约](codex-desktop-handoff.md)。
 1. discovery 固定目标 deviceId/instanceId；确认目标机器上的 cwd 与 brief 可读，核对当前模型/权限和 schema。

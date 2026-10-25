@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 const read=p=>readFileSync(new URL('../'+p,import.meta.url),'utf8');
 test('entry points distinguish native capability from the required external route',()=>{
- for(const path of ['README.md','AGENTS.md','docs/architecture.md','docs/runbook.md','docs/new-mac.md','skills/delegate-via-agenvo/SKILL.md','prompts/acceptance-codex.md','prompts/operator.md']) {
+ for(const path of ['README.md','AGENTS.md','docs/architecture.md','docs/runbook.md','docs/new-mac.md','prompts/acceptance-codex.md','prompts/operator.md']) {
   const text=read(path);
   assert.match(text,/原生平台任务|原生任务工具/,path);
   assert.match(text,/DSH[／→]|DSH、GrokBot/,path);

@@ -36,7 +36,7 @@
 ## 外部调用方与迁移
 
 DSH、GrokBot 的 Codex Desktop 派活需求明确保留。它们有 Agenvo MCP 访问时按
-[技能](../skills/delegate-via-agenvo/SKILL.md)发现方法；不能引导它们调用未提供的
+[技能](https://github.com/semantic-craft/xw-stack/blob/main/skills/delegate-via-agenvo/SKILL.md)发现方法；不能引导它们调用未提供的
 平台专属任务 API。外部创建／（仅跨 backend 的原生交接）／Desktop 可见／同线程 agent `turn/start`
 必须逐项验证；当前未通过就只报告该路线阻断，不废弃需求、不改写其他路线状态。
 
