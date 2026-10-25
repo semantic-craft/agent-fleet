@@ -6,7 +6,7 @@
 
 ## 先弄清用户要什么
 
-- **Codex 是主力。** 默认目标为 Desktop 空线程交接；先核实原生 writer 释放条件，满足后才创建线程、预填并由用户发送。未满足就记录阻断，不改用 CLI 冒充通过。
+- **Codex 是主力。** 默认目标为 Desktop 空线程交接；先核实原生 writer 释放条件，满足后才创建线程、确认 Desktop 可见并由 agent 经 `turn/start` 提交。未满足就记录阻断，不改用 CLI 冒充通过。
 - **DSH（DeepSeek Harness）是同等能力的后备**，防止 Codex 额度用完或出故障：它必须有和 Codex 同级的原生能力，任务出现在 DSH 桌面左栏、可以在桌面里接手；派活、追问、中断都走 DSH 的原生会话，不退回 headless。
 - Herdr 用于同机任务目录/brief 准备及明确选择的 CLI 通道；它不是 Codex Desktop 的模型执行者，也不负责释放 native writer。
 - 一律 full access，访问控制靠 relay 授权。
@@ -30,8 +30,9 @@
 
 遵循[Codex Desktop 交接契约](codex-desktop-handoff.md)和[派活技能的 Codex Desktop 步骤](../skills/delegate-via-agenvo/SKILL.md#codex-desktop)。这不是 Herdr CLI 模板验收。
 
+0. **创建前门槛**：按契约核验受支持 native ownership 路径及完整 canary 证据；缺失就 `blocked_native_writer_release`，不创建线程。connector 重启不释放独立 native writer。
 1. discovery 固定目标 deviceId/instanceId；确认目标机器上的 cwd 与 brief 可读，核对当前模型/权限和 schema。
-2. `thread/start` 建空线程 → `threadId`；释放 connector 写锁（或已证实的原生交接），让 Desktop 接手。
+2. `thread/start` 建空线程 → `threadId`；按已验证路径完成原生 ownership 交接，让 Desktop 接手。
 3. 在目标机器打开 `codex://threads/<threadId>?prompt=…`。核对正确 threadId、cwd、brief；Desktop 可见且无占用横幅。
 4. 经 agenvo 对同一线程 `turn/start` 提交后，核对唯一只读标记、实际模型和同一 threadId 的终态；再 `turn/start` 第二轮并核对两轮历史。只打开或预填、Desktop 未见可见会话不算执行。
 5. 记录证据和未验项；只清理本次确认为空闲且无消费者的测试资源，另按授权操作，不自动删除分支或任务资料。
