@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | dot → Codex，当前调用方已有原生平台任务工具和电脑连接授权 | 优先原生平台任务通道，创建／执行／读回 | 不能推断 DSH、GrokBot 或任意 agent 也有这些工具 |
 | dot 或其他已授权 MCP 调用方 → DSH／Herdr | Agenvo，发现实例与 schema 后调用 | 不证明 Codex writer handoff 通过 |
-| DSH → Agenvo → Codex Desktop；GrokBot → Agenvo → Codex Desktop | 保留且需要实现的外部派活路线 | 不能用 dot 原生通道替代，同 host 执行基线已验，调用方与 Desktop 可见仍未验 |
+| DSH → Agenvo → Codex Desktop；GrokBot → Agenvo → Codex Desktop | 保留且需要实现的外部派活路线 | 不能用 dot 原生通道替代，直接及 DSH 同 host 文本执行已验；GrokBot 发起与 Desktop 可见仍未验 |
 
 用户目标仍是 Codex Desktop 可见后由 agent 提交，不退回 exec 或用户 Send。
 [交接契约](codex-desktop-handoff.md)和[probe 候选](codex-handoff-probe.md)的
@@ -47,7 +47,7 @@ DSH／Herdr 回读；外部 Codex 交接。账号、版本、平台工具和模�
 | 调用方路线 | 实际派活 | 目标会话可见与关联 | 同会话继续 | 结果返回 | 当前结论 |
 | --- | --- | --- | --- | --- | --- |
 | dot → 原生平台 → Codex | 当前维护委托已有执行事实 | 有原生任务关联；本轮未单独做逐轮 UI 可见性验收 | 本轮未单列独立验收证据 | 当前维护任务已有结果回读 | 日常通道已使用，四项专项矩阵尚未全部验收 |
-| DSH → Agenvo → Codex Desktop | 未验 | 未验 writer／Desktop 关联 | 未验 | 未验 | 外部需求待解决，非完成 |
+| DSH → Agenvo → Codex Desktop | 已验：原生 MCP 发起纯文本任务 | 未验 Desktop 可见／控制权 | 已验：同 thread 两轮 | 已验：持久历史精确答案回到 DSH | 同 host 文本闭环通过；Desktop 项仍待解决，非完成 |
 | GrokBot → Agenvo → Codex Desktop | 未验 | 未验 writer／Desktop 关联 | 未验 | 未验 | 外部需求待解决，非完成 |
 
 两条外部路线即使共用 connector，也要从各自调用方的真实授权入口分别验证。
@@ -71,3 +71,11 @@ DSH／Herdr 回读；外部 Codex 交接。账号、版本、平台工具和模�
 `npm run lint:routes` 校验表与跨文件禁用的旧路由表述，包含在 `npm test` 中。lint 只检查明确规则，不声称理解任意自然语言矛盾。
 
 同 host 的[脱敏直接基线](evidence/codex-same-host.json)独立于上述三调用方验收，不填充 DSH/GrokBot 成功格。
+
+## DSH 原生调用方的真实文本闭环
+
+[脱敏回执](evidence/dsh-codex-same-host.json)记录一次真实 DSH Agent 调用 Agenvo search/execute，创建一个 Codex thread、串行提交两轮、读取完整持久历史，再把结果返回 DSH。不是 dot 直接调用代证。两轮均 completed 且精确命中不同标记，模型工具项为 0；宿主既有 hooks/MCP 启动仍会运行，不能称整个进程零文件活动。通知读取出现 gap，成功依据是完整持久历史，不是主动推送。
+
+复用步骤：核对现有专用 caller 的 fleet-agenvo、空闲和 commands/list；只读 agenvo-status 已 connected 时不要重开 OAuth。让该 DSH Agent 使用已授权的 Agenvo MCP 发现目标 schema；创建一次隔离 thread，第一轮完成回读后才在同 thread 提交第二轮。保存每次 native ID 和 envelope requestId，unknown 先查原 ID，不能重复创建。用 thread/turns/list 的 full items 和 nextCursor 核对最终文本及工具项，再核对 DSH 自身终态。只保留脱敏证据，不发布完整通知或 hooks 内容。
+
+本次未更改模型默认值、权限或服务。Codex 回执的 provider=openai 不是底层供应商/协议证明。Desktop UI、交回控制权、GrokBot 发起和新机迁移仍需各自验收；机器可读完整 Desktop 路由状态继续 unverified。
