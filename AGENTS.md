@@ -28,6 +28,10 @@
 
 ## 验收与交付
 
+| 原生独立会话显式选模约束 | 执行机制 |
+| --- | --- |
+| 选择归单次创建参数，回读核对同线程模型/档位；类型不混用 | [native-thread-selection](docs/native-thread-selection.md) 的 prepare / check-request / check-observation；npm test 回归、lint 检查入口。宿主直接调用不在本仓拦截范围 |
+
 - 生产验收走真实入口：OAuth → relay `/mcp` → connector → 原生服务；只看 `/health` 不算。`fleet.mjs check` 是最小基线。
 - 区分"输入已接受""原生轮次完成""业务目标完成"。
 - 改实例 `source`、endpoint 等 scope 字段后要在 relay 重新批准；只改 `context` 不需要。
