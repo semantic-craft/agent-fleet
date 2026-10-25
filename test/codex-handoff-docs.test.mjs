@@ -9,7 +9,7 @@ test('Desktop handoff retains agent submission but gates creation',()=>{
  assert.match(desktop,/thread\/start/);
  assert.match(desktop,/turn\/start/);
  assert.doesNotMatch(desktop,/kickstart|释放该 connector 写锁/);
- assert.ok(desktop.indexOf('创建前门槛') < desktop.indexOf('→ `threadId`'));
+ assert.match(desktop,/同 host 执行无需 writer 交接/);
  assert.match(desktop,/blocked_native_writer_release/);
  assert.match(desktop,/确认 Desktop 可见|Desktop 可见/);
  assert.doesNotMatch(desktop,/用户按发送|由用户在 Desktop 按发送|不调 `turn\/start`/);

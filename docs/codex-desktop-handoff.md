@@ -1,41 +1,26 @@
-# 外部 Agenvo → Codex Desktop 空线程交接契约
+# Agenvo → Codex：执行、桌面可见与跨 backend 交接
 
-适用者：DSH→Agenvo→Codex Desktop、GrokBot→Agenvo→Codex Desktop，都是明确需要保留的需求。dot 已有原生平台任务通道时不经过本交接；本页 blocked 不表示 Codex 整体不可用，见[调用方路由](caller-routing.md)。
+适用者：DSH→Agenvo→Codex Desktop、GrokBot→Agenvo→Codex Desktop。dot 有原生平台任务工具时仍优先原生通道。这里 blocked 不表示 Codex 整体不可用，见[调用方路由](caller-routing.md)。
 
-本外部路线目标（先通过下述创建前门槛）：`thread/start` 建空线程 → 按已验证原生 ownership 路径交接→ 目标机打开 `codex://threads/<id>?prompt=…` 使 Desktop 可见 → 经 agenvo `turn/start` 提交。不是改回 exec；会话仍须 Desktop 可见。
+## 三种证据
 
-## 当前支持边界
+- 同 host 执行：在同一已授权 backend 创建 thread、提交 turn、读回完成结果并继续。无需先释放 writer。宿主通过 discovery/schema 与实际观察固定目标身份；socket 路径不能单独证明官方 Desktop backend。
+- 官方 Desktop 可见：受支持 UI 入口中看见相同 thread 的实际会话。loaded、共享 CODEX_HOME、历史回读、deep link 都不能单独证明可见或控制权。
+- 跨 backend handoff：只有确实要转移 writer 时才需要原生 ownership 交接证据。**创建前门槛**：没有目标版本/设备组合的受支持交接 canary 就 `blocked_native_writer_release`，不尝试创建再迁移。connector 重启不释放独立 native writer。
 
-当前路线为 **experimental / blocked_native_writer_release**。本仓 runbook 的 connector 与共享 native app-server 是独立进程；connector 重启不释放独立 native writer，不能用作交接步骤。已核对的 adapter 暴露 thread/turn 方法，但没有已验证的单线程 ownership 交接接口。
+目标仍是 Desktop 可见后 agent `turn/start`。获准的同 host 基线允许独立验证执行，不当作完整桌面路线通过，不退回 exec 或用户 Send。跨 backend 仍 experimental。
 
-**创建前门槛**：在 `thread/start` 之前，必须已有适用于目标 deviceId/instanceId、runtime/adapter/Desktop 版本组合的受支持原生交接路径，以及获准隔离 canary 的完整证据。证据须覆盖创建 → 原生 ownership 交接 → 目标 Desktop 可见 → agent 对同一线程 `turn/start` → 结果回读及 Desktop 仍可接手。没有证据就阻断，不先创建“试试看”。本轮没有这类 live 证据。
+## 状态与提交
 
-可见性、控制权、提交者是三个独立条件。connector online、transport close、loaded 列表变化、空闲、预填链接或占用横幅消失，都不能单独证明 writer 归属；Desktop 可见也不证明之后 agent 提交不会重新争抢 writer。不要把 archive/unarchive、interrupt 或重启共享 app-server 猜成释放接口；不自动降级到 exec 或用户 Send。若需研发交接路径，应另做明确获准的隔离 canary，不以普通派活绕过创建前门槛；本契约不授权停止服务。
+`not_submitted` → `created` →（仅跨 backend：`handoff_verified`）→ `desktop_visible` → `submitted` → 原生终态与业务结果。
+独立执行基线可没有 desktop_visible，但其结果必须显式保留 Desktop 未验。ACK/accepted 不是完成。unknown 创建或提交只回读原关联，不重发。取消只作用于有归属证据的本轮，不以 timeout 伪装 cancelled。
 
-离线调用方可使用 `scripts/codex-handoff.mjs` 的 `checkCodexHandoff` 校验创建/提交门槛。它只验证由可信验收提供者输入的证据完整性与关联，不探测服务、不证明证据真实性，也未接管现有 dispatch。技能的人工调用必须遵守同一门槛；不得为通过校验填造证据。
+`checkCodexHandoff` 仅接受 topology=cross-backend；其他输入返回 handoff_not_applicable，不能用它批准或阻断普通同 host 执行。它是可信输入的离线完整性校验，不认证证据真实性，不替代 dispatch 授权。host router 仅表示能力已注册，任务 JSON 的 boolean 不构成 live 证据。
 
-## 同机 brief 与所有权
+新机/升级须重新观察身份和行为；迁移服务不等于恢复在途请求。保留 PR57–59 的 unknown 不重发及版本兼容契约。
 
-- discovery 决定目标 `deviceId` / `instanceId`。Herdr 写文件入口必须与 Codex **同一 deviceId**，不能按实例名字相似或固定主机名配对。
-- home、projectsRoot、cwd 取该目标的 context/overlay，不能用调用方的 `$HOME`。brief 的绝对路径只属于该目标文件系统。
-- 仅写经任务授权的目标目录，回读确认内容与路径。缺同机文件入口、授权或可读证据时停止，不跨机器复制私人正文。
-- 若用户客户端不在目标机器，交付“需在目标机器打开”的链接；本机打开同名 URI 不证明远端会话可见。
+## 当前证据
 
-## 状态与验收
+见[脱敏同 host 回执](evidence/codex-same-host.json)：2026-10-25 直接 Agenvo 两轮纯文本、同 thread、均 completed、0 工具。不是 DSH 或 GrokBot 发起；Desktop 可见和跨 backend handoff 未验。当前 DSH scope 无 Agenvo 工具，OAuth 接入与后台生命周期均 pending。
 
-1. `prepared`：创建前门槛已通过；同机 cwd/brief 已回读，模型/权限符合授权。
-2. `created`：一次 `thread/start` 获得 threadId；unknown 只查原生状态，不再创建。没有可靠关联结果就标未确定。
-3. `handoff_verified`：按受支持路径完成本线程原生交接并取得关联证据（deviceId/instanceId/threadId）；Desktop 可见性另验。观察期间避免 `thread/resume` 等可能重新取 writer 的调用。
-4. `desktop_visible`：deep link 已在目标机打开，Desktop 可见该线程（含预填 prompt）；尚未提交不算任务已运行。
-5. `submitted`：当前线程 ownership 与 Desktop 可见证据均成立，且组合 canary 已证明 agent 提交后的控制权行为，才经 agenvo 对同一线程 `turn/start`；unknown 只回读，不重复提交。回报带 deep link 与 turn 结果。
-6. `completed`：回读匹配 thread/turn、实际输出和终态，按任务验收。占用横幅消失或空闲状态不是业务成功。
-
-新机器/升级组合须重新验收，不能沿用其他版本/机器的交接证据。沿用 PR57–59 原则：版本与行为证据分离、unknown 不重发、迁移服务不等于恢复在途任务，未验证能力不得自动降级。Herdr Claude JSON/session_id/--resume 与 Codex thread/turn 是不同消费者。
-
-## 本轮证据
-
-只读核对现有源码、文档和派活技能；没有重启服务、真实 thread/start、跨机写 brief 或模型请求。本轮回归只防文档入口、模板和验收契约再次漂移，不证明 native writer 已能交接。
-
-## 隔离候选准备
-
-已参数化的测试 connector 源码与运行边界见[隔离 handoff probe](codex-handoff-probe.md)。它不改变现役默认、不创建测试线程、不证明 writer 已交接。尤其不能让候选连接带有默认自动 resume watcher 的生产 app-server。隔离 Desktop 接入尚未确认，不能据补丁存在启动实验。
+[隔离 probe 候选](codex-handoff-probe.md)仅研究跨 backend，不是同 host 基线的必需前置；未部署，不启动它或重启服务来补证据。

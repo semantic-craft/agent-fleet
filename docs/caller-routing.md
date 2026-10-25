@@ -6,11 +6,11 @@
 | --- | --- | --- |
 | dot → Codex，当前调用方已有原生平台任务工具和电脑连接授权 | 优先原生平台任务通道，创建／执行／读回 | 不能推断 DSH、GrokBot 或任意 agent 也有这些工具 |
 | dot 或其他已授权 MCP 调用方 → DSH／Herdr | Agenvo，发现实例与 schema 后调用 | 不证明 Codex writer handoff 通过 |
-| DSH → Agenvo → Codex Desktop；GrokBot → Agenvo → Codex Desktop | 保留且需要实现的外部派活路线 | 不能用 dot 原生通道替代，当前 writer handoff 尚未验通 |
+| DSH → Agenvo → Codex Desktop；GrokBot → Agenvo → Codex Desktop | 保留且需要实现的外部派活路线 | 不能用 dot 原生通道替代，同 host 执行基线已验，调用方与 Desktop 可见仍未验 |
 
 用户目标仍是 Codex Desktop 可见后由 agent 提交，不退回 exec 或用户 Send。
 [交接契约](codex-desktop-handoff.md)和[probe 候选](codex-handoff-probe.md)的
-`blocked_native_writer_release` 只约束第三条，不能用于阻断第一条日常派活。
+`blocked_native_writer_release` 只约束实际跨 backend writer 转移，不能阻断同 host 执行或第一条日常派活。
 
 ## dot 原生任务通道
 
@@ -32,7 +32,7 @@
 
 DSH、GrokBot 的 Codex Desktop 派活需求明确保留。它们有 Agenvo MCP 访问时按
 [技能](../skills/delegate-via-agenvo/SKILL.md)发现方法；不能引导它们调用未提供的
-平台专属任务 API。外部创建／原生交接／Desktop 可见／同线程 agent `turn/start`
+平台专属任务 API。外部创建／（仅跨 backend 的原生交接）／Desktop 可见／同线程 agent `turn/start`
 必须逐项验证；当前未通过就只报告该路线阻断，不废弃需求、不改写其他路线状态。
 
 新机器验收分开记录：原生任务工具、连接授权、目标发现、任务结果；Agenvo 的
@@ -58,7 +58,7 @@ DSH／Herdr 回读；外部 Codex 交接。账号、版本、平台工具和模�
 
 ## 机器可读路由
 
-唯一结构源是 `scripts/caller-routes.mjs`；`createCallerRouter` 仅从宿主注入的函数能力判定可用入口，任务 JSON 的 true/verified 不能启用外部 writer 路线。`fleet check` 的 DSH 分支调用此 resolver 后进入 Harness。原生平台工具仍由平台宿主提供，resolver 不代理或认证平台权限，也不构成真实验收。
+唯一结构源是 `scripts/caller-routes.mjs`；`createCallerRouter` 仅从宿主注入的函数能力判定可用入口，任务 JSON 的 true/verified 不能启用外部 writer 路线。宿主可注册 same-host 的 observeTarget/create/read/startTurn 函数能力，resolver 返回 available 仅表示入口可用且要求派活前真实观察，不代表调用方或 Desktop 已验。没有注册就明确能力缺失，不推定必须交接。`fleet check` 的 DSH 分支调用此 resolver 后进入 Harness。原生平台工具仍由平台宿主提供，resolver 不代理或认证平台权限，也不构成真实验收。
 
 <!-- caller-routes:start -->
 | Caller | Target | Route | Acceptance |
@@ -69,3 +69,5 @@ DSH／Herdr 回读；外部 Codex 交接。账号、版本、平台工具和模�
 <!-- caller-routes:end -->
 
 `npm run lint:routes` 校验表与跨文件禁用的旧路由表述，包含在 `npm test` 中。lint 只检查明确规则，不声称理解任意自然语言矛盾。
+
+同 host 的[脱敏直接基线](evidence/codex-same-host.json)独立于上述三调用方验收，不填充 DSH/GrokBot 成功格。

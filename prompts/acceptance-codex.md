@@ -12,7 +12,7 @@
 - 已批准的实例（全部 full access）：
   - <dsh 实例>：DSH 桌面版（DeepSeek Harness）@ <主力 Mac>，原生方法 session/list、workspace/create、session/create、session/prompt、session/follow、session/cancel 等
   - <第二台的 dsh 实例>：DSH 桌面版 @ <第二台 Mac>，同 <dsh 实例>
-  - <codex 实例>：Codex app-server，Desktop 空线程交接遵循 docs/codex-desktop-handoff.md；按已验证原生 ownership 路径交接且 Desktop 可见后再 turn/start
+  - <codex 实例>：Codex app-server，Desktop 空线程交接遵循 docs/codex-desktop-handoff.md；同 host 无需交接；仅跨 backend 核验 ownership；Desktop 可见后再 turn/start
   - <herdr 实例>：Herdr 终端工作区，worktree.create、workspace.create、tab.create、pane.run、pane.get、pane.read、session.list；Claude Code、agy 按实例 context 的 execute 脚本一轮一个 tab 运行
 - 管理员密钥在 ~/.config/agenvo/admin-secret。它只能粘贴到 <RELAY> 的登录页，不能贴进 ChatGPT 对话，也不能出现在截图、日志或报告里。
 
@@ -26,9 +26,9 @@
    - 以下 DSH／Herdr 目标可从已授权 ChatGPT Agenvo 入口测试；外部 Codex 项则分别在 DSH、GrokBot 发起，各保存独立调用方证据。不能进入任一调用方时该项未验。
    - 「让 <dsh 实例> 在 ~/Projects/_forks/agenvo 新建会话，只读地列出 apps/ 下的子目录名，等完成后把结果给我；再在同一个会话里追问一句"哪个是 DSH 的 connector"。」
    - 「让 <第二台的 dsh 实例> 在 project=agenvo 里只读地读 FORK.md 第一行，等完成后给我结果。」
-   - 分别由 DSH 和 GrokBot 发出：「为 <codex 实例> 按 docs/codex-desktop-handoff.md 准备同机 brief 与 cwd。创建前门槛：缺少目标组合 native ownership 完整 canary 证据时报告 blocked_native_writer_release，不调 thread/start；connector 重启不释放独立 native writer。门槛通过后 thread/start 建空线程，再按已验证路径完成原生交接，在目标机打开预填链接并确认 Desktop 可见，再经 agenvo turn/start 提交只读标记任务。核对实际模型、threadId、终态和答案；同线程再 turn/start 第二轮并回读。不要用 Herdr Claude 模板作为 Codex 验收。」
+   - 分别由 DSH 和 GrokBot 发出：「为 <codex 实例> 按 docs/codex-desktop-handoff.md 准备同机 brief 与 cwd。仅跨 backend 的创建前门槛：缺原生 ownership canary 时报告 blocked_native_writer_release；同 host 无需交接，先观察目标与权限再 thread/start。connector 重启不释放独立 native writer。Desktop 可见性独立确认后，在同 thread 经 agenvo turn/start 提交。获准同 host 基线可先验执行，但不得称桌面路线完成。核对实际模型、threadId、终态和答案；同线程再 turn/start 第二轮并回读。不要用 Herdr Claude 模板作为 Codex 验收。」
    - 「在 <herdr 实例> 用同一脚本、agent 换成 agy 的命令（write = false，仓库 _forks/agenvo，任务名 agenvo-acceptance-<时间>），只读地列出 tests/ 下的文件；轮次结束后读 result-1.json 的 status、response，把 conversation_id 告诉我；再 n = 2、加 --conversation <conversation_id> 追问一句“其中哪个和 dispatch 有关”，把两轮结果给我。」
-   每个任务截两张图：各真实调用方的结果界面；对应桌面 app 或终端里的会话。DSH（<主力 Mac> 和 <第二台 Mac>）的会话应出现在左栏 agenvo 工作区下，两轮对话都在；Codex 用 codex://threads/<id> 打开线程，截图需显示两轮历史、正常输入框且没有 “This is open in another app” 横幅；仅外部 Codex 项是 Desktop 空线程交接，不引用旧 exec 历史充当该项证据；Herdr 的会话用终端 `herdr` 查看；agy 截 Herdr pane 里两轮的结果，Antigravity 桌面版目前调不出 CLI 会话，不作为验收项。<第二台的 dsh 实例> 的会话在 Mac mini 上，无法截图就写明，以 ChatGPT 返回的 completed 结果为准。
+   每个任务截两张图：各真实调用方的结果界面；对应桌面 app 或终端里的会话。DSH（<主力 Mac> 和 <第二台 Mac>）的会话应出现在左栏 agenvo 工作区下，两轮对话都在；Codex 用 codex://threads/<id> 打开线程，截图需显示两轮历史、正常输入框且没有 “This is open in another app” 横幅；仅实际跨 backend 项需要 writer 交接，不引用旧 exec 历史充当该项证据；Herdr 的会话用终端 `herdr` 查看；agy 截 Herdr pane 里两轮的结果，Antigravity 桌面版目前调不出 CLI 会话，不作为验收项。<第二台的 dsh 实例> 的会话在 Mac mini 上，无法截图就写明，以 ChatGPT 返回的 completed 结果为准。
 5. 事件与 dots：在 ChatGPT 里尝试创建一个 dot，让它订阅 Agenvo 的 runtime.changed 事件（DSH 的 turn/end，以及 <herdr 实例> 的 pane_exited）。然后给 <dsh 实例> 派一个只读小任务，再按步骤 4 的 Herdr CLI 流程给 Claude Code 派一轮只读小任务（它产生 pane_exited，不是 Codex 事件），观察 dot 是否在任务完成后自动收到事件并告诉我结果。如果 ChatGPT 账号里没有 dots 功能或找不到入口，写明并跳过。
 5b. Grok：打开 grok.com/connectors（用我已登录的账号），添加自定义连接器，URL 填 <RELAY>/mcp，按提示走 OAuth：在 Agenvo 登录页粘贴管理员密钥，然后点 Allow。如果成功，在 Grok 新对话里让它用 search 列出实例，再给 <dsh 实例> 派只读任务并读回结果。如果失败（例如报 invalid_client、或要求付费），记下原文，不要尝试绕过。
 6. 不做清理：保留 ChatGPT 连接器和授权，这就是正式要用的授权。

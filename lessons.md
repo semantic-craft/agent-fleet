@@ -36,11 +36,11 @@
 
 dot 原生平台任务通道不受本节阻断；DSH／GrokBot→Agenvo→Codex Desktop 是需保留的外部目标，不能互相替代，见[调用方路由](docs/caller-routing.md)。
 
-**agenvo → Codex 实例 `thread/start` 建空桌面会话 → 按已验证原生 ownership 路径交接→ 打开 `codex://threads/<thread_id>?prompt=…` 确认 Desktop 可见 → 经 agenvo 对同一线程 `turn/start` 提交。**
+**agenvo → Codex 实例 `thread/start` 建空桌面会话 → 仅跨 backend 时按已验证原生 ownership 路径交接 → 打开 `codex://threads/<thread_id>?prompt=…` 确认 Desktop 可见 → 经 agenvo 对同一线程 `turn/start` 提交。**
 
 - 起因与后果：用户要任务出现在 Codex Desktop，并由 agent 经 agenvo 提交开跑；会话仍须 Desktop 可见（2026-10-25 10:18 经图灵纠正）。
 - 修复与证据：正本改写于 `skills/delegate-via-agenvo/SKILL.md`「Codex Desktop」；外部技能副本是否同步须另核，不能由本仓修改推断。
-- 正确做法：创建前门槛缺失就 `blocked_native_writer_release`，不创建；connector 重启不释放独立 native writer。保留 Desktop 可见后由 agent `turn/start` 的目标，另验控制权；Brief 在 discovery 选定的同一 deviceId 上回读；prompt／turn 输入引用该目标路径；回报带 deep link 与 turn 结果。完整流程见[派活技能](skills/delegate-via-agenvo/SKILL.md)与[交接契约](docs/codex-desktop-handoff.md)。
+**仅跨 backend 的创建前门槛**：需要迁移原生 writer 时才要求受支持交接及完整 canary；否则 `blocked_native_writer_release`。同 host 执行不要求 writer 交接，须观察实际目标并绑定 thread/turn；Desktop 可见性独立验收。connector 重启不释放独立 native writer。目标仍为 Desktop 可见后 agent `turn/start`，见[交接契约](docs/codex-desktop-handoff.md)。
 - 验证点：`test/codex-handoff-docs.test.mjs` 检查所有入口的前置阻断与提交者一致；`test/codex-handoff.test.mjs` 检查目标/版本/线程关联、证据缺失与 unknown 不重发；离线文档回归不证明实际 writer 已释放。
 - 复发记录：Seen 3x（2026-10-25 保留 agent 提交目标，修复控制权前提）。
 
@@ -267,7 +267,7 @@ dot 原生平台任务通道不受本节阻断；DSH／GrokBot→Agenvo→Codex 
 
 ### 桌面项目下自动开跑用 DSH
 
-**外部 DSH／GrokBot 经 Agenvo 派 Codex 走 Desktop 四步（通过创建前门槛、完成原生交接且 Desktop 可见后再 `turn/start`）；要在桌面**项目下**自动开跑时选 DSH。**
+**仅跨 backend 的创建前门槛**：需要迁移原生 writer 时才要求受支持交接及完整 canary；否则 `blocked_native_writer_release`。同 host 执行不要求 writer 交接，须观察实际目标并绑定 thread/turn；Desktop 可见性独立验收。connector 重启不释放独立 native writer。目标仍为 Desktop 可见后 agent `turn/start`，见[交接契约](docs/codex-desktop-handoff.md)。
 
 - 起因与后果：用户有时要左栏项目下直接跑起来的会话。
 - 修复与证据：DSH 经 `workspace/create {path: <任务目录>}` 的会话在桌面左栏对应项目下（2026-10-20 验收）。

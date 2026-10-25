@@ -30,9 +30,9 @@ description: Hand work to another coding agent (Codex Desktop, DeepSeek Harness/
 ## 选哪个 agent
 
 - dot 有原生平台任务工具且已授权 → Codex 走原生平台任务通道（见调用方路由），不绕经外部交接。
-- DSH／GrokBot 派 Codex → **外部 Codex Desktop**（见下节）；该需求保留，当前 writer 交接未验通，不影响 dot 原生路线。
+- DSH／GrokBot 派 Codex → **外部 Codex Desktop**（见下节）；该需求保留，同 host 基线已验，调用方及 Desktop 仍未验，不影响 dot 原生路线。
 - 用户点名 Claude Code／agy／DSH headless（或同类 CLI／pane）→ **Herdr**（承接用户指定的这类模型线，与 按调用方选择的 Codex 路线分开）。
-- 桌面可见且自动开跑 → **DSH** 实例。外部 DSH／GrokBot 经 Agenvo 的 Codex Desktop 走下节四步（通过创建前门槛、完成原生交接且 Desktop 可见后再 `turn/start`）。
+- 桌面可见且自动开跑 → **DSH** 实例。外部 DSH／GrokBot 经 Agenvo 的 Codex Desktop 走下节四步（同 host 无需交接，跨 backend 才核交接；Desktop 可见后再 `turn/start`）。
 - Codex 不可用（额度用尽、离线、报错）→ 改 DSH；DSH 与 Codex 同级，能新建、追问、中断。
 - Antigravity 桌面版（2.25.0）调不出 `agy -p` 的会话，`--new-project` 只生成空项目；需要桌面可见时不选 agy。
 - 要长时间运行、不怕笔记本合盖：选常开那台 Mac 上的实例。
@@ -55,12 +55,10 @@ description: Hand work to another coding agent (Codex Desktop, DeepSeek Harness/
 
 按[Codex Desktop 交接契约](../../docs/codex-desktop-handoff.md)执行：
 
-1. **创建前门槛**：先按交接契约核验目标版本组合的受支持 native ownership 路径与完整 canary 证据；当前未验证，报告 `blocked_native_writer_release` 并停止，不能先调 `thread/start`。connector 重启不释放独立 native writer。
-2. 门槛通过后，从 discovery 选定 Codex 的 `deviceId` / `instanceId`，用该设备的 context/overlay 解析 home、cwd；brief 写到**同一 deviceId** 上经过授权的目录，并从目标机器回读确认可读。找不到同机文件写入入口就阻断，不借另一台机器代写。仅对选定实例调 `thread/start`（参数按实时 schema）→ `threadId`，再按已验证路径完成本线程原生交接。
-3. 在**目标机器**打开 `codex://threads/<threadId>?prompt=<URL 编码任务>`，正文引用该机已回读的 brief 路径；确认 Desktop 可见。若当前界面在另一台机器，仅提供目标机操作链接，不声称已打开正确会话。可见性不等于控制权。
-4. 同一线程的 ownership 与 Desktop 可见证据均成立，且 canary 已验证后续 agent 提交的控制权行为，才经 agenvo `turn/start`。unknown 只回读，不重发；回报带 deep link 与 turn 结果。
-
-Brief 落目标机；prompt／turn 输入写「读 brief 再动手」。
+1. 先从宿主实际能力、discovery 与实时 schema 确定目标 deviceId/instanceId 和 backend。同 host 执行无需 writer 交接；仅跨 backend 的创建前门槛缺失时返回 `blocked_native_writer_release`，不创建。connector 重启不释放独立 native writer。
+2. 需要 brief 时写入同一 deviceId 的授权目录并从目标机器回读；纯文本验收不要求文件。`thread/start` → `threadId`，保存目标关联；unknown 只回读，不重建。
+3. 在目标机器通过受支持入口打开同一 thread，独立确认 Desktop 可见。共享路径、历史回读或 loaded 列表不能代替 UI 证据。未确认就保留 Desktop 未验；获准同 host 基线可独立进行，不冒称完整桌面派活。
+4. 完整桌面流程仍在可见后由 agent 对同一 thread `turn/start`，保存 turnId、结果及终态，再同线程续接。跨 backend 时另须原生 ownership 证据；不改成 exec 或用户 Send。未知提交只回读，不重复发送。
 
 ## 一轮一个 tab（Herdr 里的 Claude Code、agy、dsh headless）
 

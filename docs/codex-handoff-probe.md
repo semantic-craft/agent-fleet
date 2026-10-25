@@ -5,7 +5,7 @@ It does not gate dot’s available, authorized native platform task route; that 
 cannot replace external callers’ needs. See [caller routing](caller-routing.md).
 
 This is offline preparation for one explicitly authorized canary, not a working
-Desktop handoff route. Keep the [PR64 admission gate](codex-desktop-handoff.md).
+Desktop handoff route. Apply the [handoff gate](codex-desktop-handoff.md) only to cross-backend transfer, never ordinary same-host execution.
 The desired UX remains Desktop visibility followed by agent `turn/start` on the
 same thread. A source patch, a successful unsubscribe, or elapsed time is not
 writer ownership evidence.

@@ -15,7 +15,7 @@
 
 ## 决策规则（按优先级）
 
-0. **先按调用方能力选择入口。** dot 有原生平台任务工具且电脑连接已授权时优先原生 Codex 通道；DSH／GrokBot→Agenvo→Codex Desktop 是需保留的外部路线，writer 未验通只阻断这条路线，不能泛化为 Codex 不可用，也不能以 dot 工具替代外部需求。跨机先环境发现，见 [调用方路由](docs/caller-routing.md)。
+0. **先按调用方能力选择入口。** dot 有原生平台任务工具且电脑连接已授权时优先原生 Codex 通道；DSH／GrokBot→Agenvo→Codex Desktop 是需保留的外部路线，同 host 执行不以 writer 交接为前提；仅跨 backend 转移需交接证据，Desktop 可见性另验，不能泛化为 Codex 不可用，也不能以 dot 工具替代外部需求。跨机先环境发现，见 [调用方路由](docs/caller-routing.md)。
 
    **Codex 是主力，DSH 是同等能力的后备。** 默认把活交给 Codex；DSH 必须保持和 Codex 同级的原生能力（列出、读输出、新建、追问、中断、事件，任务在 DSH 桌面可见），以便 Codex 不可用（额度、故障）时无缝顶上。任何改动都不能让 DSH 退回到只能派任务的程度。
 

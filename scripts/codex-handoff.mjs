@@ -1,10 +1,12 @@
+// Cross-backend transfer only; never the same-host execution admission gate.
 // Pure preflight for trusted, independently collected evidence. No RPC or persistence.
 // A true result is not a capability probe or authorization to stop any service.
 const nonempty = value => typeof value === 'string' && value.trim().length > 0;
 const identityKeys = ['deviceId', 'instanceId', 'runtimeVersion', 'adapterRevision', 'desktopVersion'];
 const same = (a, b, keys) => keys.every(k => nonempty(a?.[k]) && a[k] === b?.[k]);
-export function checkCodexHandoff({phase, target, capability, brief, threadId, ownership, desktop, admission} = {}) {
+export function checkCodexHandoff({topology, phase, target, capability, brief, threadId, ownership, desktop, admission} = {}) {
   const blocked = reason => ({allowed: false, reason});
+  if (topology !== 'cross-backend') return blocked('handoff_not_applicable');
   if (!['create', 'submit'].includes(phase)) return blocked('invalid_phase');
   if (!same(target, capability, identityKeys) || capability?.supported !== true ||
       capability?.status !== 'verified' || !nonempty(capability?.nativeMethod) ||
