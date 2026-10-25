@@ -8,7 +8,8 @@ const desktop=section(skill,'## Codex Desktop','## 一轮一个 tab');
 test('Desktop handoff retains agent submission but gates creation',()=>{
  assert.match(desktop,/thread\/start/);
  assert.match(desktop,/turn\/start/);
- assert.doesNotMatch(desktop,/kickstart|释放该 connector 写锁/);
+ assert.match(desktop,/connector 重启不释放独立 native writer/);
+ assert.match(desktop,/不能把 kickstart 成功当作跨 backend ownership 证据/);
  assert.match(desktop,/同 host 执行无需 writer 交接/);
  assert.match(desktop,/blocked_native_writer_release/);
  assert.match(desktop,/确认 Desktop 可见|Desktop 可见/);

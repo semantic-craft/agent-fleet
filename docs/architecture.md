@@ -54,3 +54,5 @@ connector 与 relay 之间是会断开重连的长连接（2026-10-23 实测：r
 - relay 运营方（Cloudflare）能看到流量，不是端到端加密。高度敏感的项目不要经它派活。
 - 同一 macOS 用户下 full access 能触及该用户能访问的一切；这是有意的取舍，见 [ADR-0004](decisions/0004-desktop-strict-and-full-access.md)。
 
+
+Agenvo 默认 Codex Desktop 四步显式使用 magpie／gpt-6-astra；回程以原生终态＋业务验收＋收据收口，Herdr codex exec 仅用户点名 CLI 时使用，详见[派活技能](../skills/delegate-via-agenvo/SKILL.md)。

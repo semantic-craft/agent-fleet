@@ -29,3 +29,5 @@
 - 连接会断开重连，断线期间的事件不会补发：有订阅也要按 60 秒、之后每 2–3 分钟查一次。返回 unknown 的写操作可能已经执行，不要重发，先读状态（pane.get、exit 文件、session/list）；收到 agenvo.resync_required 时重新读状态。
 - 汇报格式：一句话结论；做了什么；没做或没验证的部分；需要我决定的事。
 ```
+
+Agenvo 默认 Codex Desktop 四步显式使用 magpie／gpt-6-astra；回程以原生终态＋业务验收＋收据收口，Herdr codex exec 仅用户点名 CLI 时使用，详见[派活技能](../skills/delegate-via-agenvo/SKILL.md)。
