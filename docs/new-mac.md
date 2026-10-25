@@ -31,9 +31,9 @@
 遵循[Codex Desktop 交接契约](codex-desktop-handoff.md)和[派活技能的 Codex Desktop 步骤](../skills/delegate-via-agenvo/SKILL.md#codex-desktop)。这不是 Herdr CLI 模板验收。
 
 1. discovery 固定目标 deviceId/instanceId；确认目标机器上的 cwd 与 brief 可读，核对当前模型/权限和 schema。
-2. 创建前确认 native writer 的释放路径。共享 app-server 未提供已验证操作时，记录 `blocked_native_writer_release`，本项未通过，不重启 connector、不重发 `thread/start`。
-3. 前置通过后创建一个空线程并完成原生交接，在目标机器打开预填链接。核对正确 threadId、cwd、brief；Desktop 可接手且无占用横幅。
-4. **用户按发送**后，核对唯一只读标记、实际模型和同一 threadId 的终态；在 Desktop 同线程发送第二轮并核对两轮历史。只打开或预填不算执行。
+2. `thread/start` 建空线程 → `threadId`；释放 connector 写锁（或已证实的原生交接），让 Desktop 接手。
+3. 在目标机器打开 `codex://threads/<threadId>?prompt=…`。核对正确 threadId、cwd、brief；Desktop 可见且无占用横幅。
+4. 经 agenvo 对同一线程 `turn/start` 提交后，核对唯一只读标记、实际模型和同一 threadId 的终态；再 `turn/start` 第二轮并核对两轮历史。只打开或预填、Desktop 未见可见会话不算执行。
 5. 记录证据和未验项；只清理本次确认为空闲且无消费者的测试资源，另按授权操作，不自动删除分支或任务资料。
 
 Herdr 的模板目前默认 **Claude Code**：验收读取 `result-1.json`、`session_id` 与退出码，续接使用 `--resume <session_id>`；不得期待 Codex 的 `thread.started` 或 `result-1.md`。`node scripts/fleet.mjs check --dispatch --instance <herdr 实例>` 不调模型，只验 tab/退出/回读，既不是 Claude 模型验收，也不是 Codex Desktop 验收。

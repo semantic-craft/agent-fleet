@@ -34,13 +34,13 @@
 
 ### Codex 派活走 Desktop 空会话
 
-**agenvo → Codex 实例只 `thread/start` 建空桌面会话 → 经已证实的原生路径交接 writer → 打开 `codex://threads/<thread_id>?prompt=…` 预填 → 用户在 Codex Desktop 按发送。**
+**agenvo → Codex 实例 `thread/start` 建空桌面会话 → 释放写锁（或已证实的原生交接）→ 打开 `codex://threads/<thread_id>?prompt=…` 确认 Desktop 可见 → 经 agenvo 对同一线程 `turn/start` 提交。**
 
-- 起因与后果：用户要任务出现在 Codex Desktop，并由本人按发送开跑（2026-10-25 纠正）。
+- 起因与后果：用户要任务出现在 Codex Desktop，并由 agent 经 agenvo 提交开跑；会话仍须 Desktop 可见（2026-10-25 10:18 经图灵纠正）。
 - 修复与证据：正本改写于 `skills/delegate-via-agenvo/SKILL.md`「Codex Desktop」；外部技能副本是否同步须另核，不能由本仓修改推断。
-- 正确做法：先按[交接契约](docs/codex-desktop-handoff.md)确认原生释放路径，缺失则创建前 blocked_native_writer_release；connector 重启不算释放。Brief 在 discovery 选定的同一 deviceId 上回读；prompt 引用该目标路径；回报带 deep link。完整流程见[派活技能](skills/delegate-via-agenvo/SKILL.md)。
-- 验证点：`test/codex-handoff-docs.test.mjs` 检查所有权、目标机与新机/界面验收消费者；离线文档回归不证明实际 writer 已释放。
-- 复发记录：Seen 1x (2026-10-25，纠正 herdr-exec 误抄)。
+- 正确做法：释放写锁且 Desktop 可见后再 `turn/start`；Brief 在 discovery 选定的同一 deviceId 上回读；prompt／turn 输入引用该目标路径；回报带 deep link 与 turn 结果。完整流程见[派活技能](skills/delegate-via-agenvo/SKILL.md)与[交接契约](docs/codex-desktop-handoff.md)。
+- 验证点：`test/codex-handoff-docs.test.mjs` 检查四步含 `turn/start`、不含「用户按发送」；离线文档回归不证明实际 writer 已释放。
+- 复发记录：Seen 2x（2026-10-25 纠正提交方式）。
 
 ### Herdr 常驻要用 `herdr server`
 
@@ -265,7 +265,7 @@
 
 ### 桌面项目下自动开跑用 DSH
 
-**Codex 走 Desktop 空会话（用户按发送）；要在桌面**项目下**自动开跑时选 DSH。**
+**Codex 走 Desktop 四步（释放写锁且 Desktop 可见后再 `turn/start`）；要在桌面**项目下**自动开跑时选 DSH。**
 
 - 起因与后果：用户有时要左栏项目下直接跑起来的会话。
 - 修复与证据：DSH 经 `workspace/create {path: <任务目录>}` 的会话在桌面左栏对应项目下（2026-10-20 验收）。
