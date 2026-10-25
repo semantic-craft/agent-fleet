@@ -34,12 +34,12 @@
 
 ### Codex 派活走 Desktop 空会话
 
-**agenvo → Codex 实例只 `thread/start` 建空桌面会话 → 释放 connector 写锁 → 打开 `codex://threads/<thread_id>?prompt=…` 预填 → 用户在 Codex Desktop 按发送。**
+**agenvo → Codex 实例只 `thread/start` 建空桌面会话 → 经已证实的原生路径交接 writer → 打开 `codex://threads/<thread_id>?prompt=…` 预填 → 用户在 Codex Desktop 按发送。**
 
 - 起因与后果：用户要任务出现在 Codex Desktop，并由本人按发送开跑（2026-10-25 纠正）。
-- 修复与证据：正本改写于 `skills/delegate-via-agenvo/SKILL.md`「Codex Desktop」；全局 Grok 技能同文案。
-- 正确做法：同上四步；Brief 落 Helios 本机；prompt 写「读 brief 再动手」；回报带 deep link。完整流程见[派活技能](skills/delegate-via-agenvo/SKILL.md)。
-- 验证点：`rg -n 'Codex Desktop|thread/start' skills/delegate-via-agenvo/SKILL.md` 有 Desktop 一节；派活回报含 `codex://threads/<id>?prompt=`。
+- 修复与证据：正本改写于 `skills/delegate-via-agenvo/SKILL.md`「Codex Desktop」；外部技能副本是否同步须另核，不能由本仓修改推断。
+- 正确做法：先按[交接契约](docs/codex-desktop-handoff.md)确认原生释放路径，缺失则创建前 blocked_native_writer_release；connector 重启不算释放。Brief 在 discovery 选定的同一 deviceId 上回读；prompt 引用该目标路径；回报带 deep link。完整流程见[派活技能](skills/delegate-via-agenvo/SKILL.md)。
+- 验证点：`test/codex-handoff-docs.test.mjs` 检查所有权、目标机与新机/界面验收消费者；离线文档回归不证明实际 writer 已释放。
 - 复发记录：Seen 1x (2026-10-25，纠正 herdr-exec 误抄)。
 
 ### Herdr 常驻要用 `herdr server`

@@ -1,6 +1,6 @@
 # ADR-0003：CLI 型 agent 一律经 Herdr
 
-状态：已采纳（2026-10-19）
+状态：CLI 通道仍采纳（2026-10-19）；Codex 默认路径已由 PR60 的 Desktop 空线程交接替代，见[交接契约](../codex-desktop-handoff.md)。下述 Codex exec 记录只适用于明确选择 CLI 的历史/可选通道，不是默认派活或新机验收。
 
 ## 决定
 
