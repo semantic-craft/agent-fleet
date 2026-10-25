@@ -1,0 +1,47 @@
+{
+  "agenvo": {
+    "repository": "Xuanwo/agenvo",
+    "revision": "9ec5643610ab8408503adc79a9e37f42eeb8e6e2",
+    "paths": [
+      "docs/usage.md",
+      "docs/chatgpt.md",
+      "packages/relay/src/mcp.ts"
+    ],
+    "use": "standard search/execute and OAuth contract",
+    "license": "Apache-2.0"
+  },
+  "dsh": {
+    "repository": "deepseek-ai/deepseek-harness",
+    "revision": "1f81c047fc48fa190a683e469daa699857e9afe8",
+    "license": "MIT",
+    "paths": [
+      "packages/mcp/mcp-client/src/index.ts",
+      "packages/mcp/mcp-client/src/tools.ts",
+      "packages/core/scope/src/index.ts"
+    ],
+    "use": "official scoped lifecycle; source baseline, not installed desktop provenance"
+  },
+  "mcpRemote": {
+    "repository": "punkpeye/mcp-remote",
+    "tag": "v0.1.38",
+    "revision": "02619aff36e79803d7c894e8c8ae7b34b2d11f8c",
+    "license": "MIT",
+    "paths": [
+      "src/lib/utils.ts",
+      "src/lib/node-oauth-client-provider.ts",
+      "src/lib/mcp-auth-config.ts"
+    ],
+    "use": "reuse OAuth, dedicated config directory; not installed or executed"
+  },
+  "yobiru": {
+    "repository": "chekusu/yobiru",
+    "revision": "e8cc0c5640d520a7f37f0134cec432bbb81ff9a1",
+    "license": "MIT",
+    "paths": [
+      "docs/GROK_BOT.md",
+      "docs/DISPATCHER_SESSIONS.md",
+      "tests/test_requests.py"
+    ],
+    "use": "ACK/result distinction and uncertain-dispatch reconciliation only; no Tailscale adoption"
+  }
+}

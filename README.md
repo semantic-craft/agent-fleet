@@ -66,3 +66,7 @@ node scripts/fleet.mjs release agenvo|dsh     # 把已推送的提交装进固�
 ```
 
 License: Apache-2.0。
+
+### DSH 作为 Agenvo 调用方
+
+[可选 scoped 客户端源码](adapters/dsh-agenvo/README.md)复用 DSH 官方 MCP client 与标准 OAuth transport，提供 Agenvo 原生 search/execute；已做官方客户端＋本地 fixture 验证，尚未安装或授权。它与入站 `agent-fleet-dsh` 分开，不新增 relay，不把 raw execute 冒称持久幂等调度器。真实接入所需用户授权、范围、迁移与撤销步骤见该说明。
