@@ -9,7 +9,7 @@ description: Hand work to another coding agent (Codex Desktop, DeepSeek Harness/
 
 ## 先选入口
 
-先读[调用方路由](../../docs/caller-routing.md)。dot 当前拥有原生平台任务工具且电脑已连接／授权时，Codex 派活优先该通道，不适用下文外部 writer 创建前门槛。DSH→Agenvo→Codex Desktop、GrokBot→Agenvo→Codex Desktop 是需要保留的外部需求，不能用 dot 专属 API 替代；第三方工具缺失时不得假定可用。跨机先做环境发现。下文只描述 Agenvo 路线。
+先读[调用方路由](../../docs/caller-routing.md)。dot 当前拥有原生平台任务工具且电脑已连接／授权时，Codex 派活优先该通道，不适用下文 Agenvo 的 Desktop 交还要求。DSH→Agenvo→Codex Desktop、GrokBot→Agenvo→Codex Desktop 是需要保留的外部需求，不能用 dot 专属 API 替代；第三方工具缺失时不得假定可用。跨机先做环境发现。下文只描述 Agenvo 路线。
 
 ## 步骤
 
@@ -58,14 +58,16 @@ description: Hand work to another coding agent (Codex Desktop, DeepSeek Harness/
 
 目标：任务出现在 **Codex Desktop** 左栏（会话可见），由 agent 经 agenvo 提交开跑。
 
-按[Codex Desktop 交接契约](../../docs/codex-desktop-handoff.md)执行：
+独立同 host 执行基线只要求已授权的同一 backend 具备观察、创建、提交和回读能力，不以 `thread/unsubscribe` 或 watcher 交接检查作为创建前置；该基线不证明 Desktop 可见或交互控制已交还。仅跨 backend 转移需要 writer 交接证据。
 
-1. **建线程**：从 discovery/schema 固定 deviceId/instanceId/backend；创建前门槛：确认目标 connector 暴露 `thread/unsubscribe` 且事件观察不会收养其他 loaded 线程；缺失时报 `blocked_native_writer_release`，不创建。brief 放同一 deviceId 的授权目录并从目标机器回读；纯文本无需文件。`thread/start {cwd, model: "gpt-6-astra", modelProvider: "magpie"}`，保存 threadId 和模型回执，unknown 只回读。
+以下是完整 Desktop 路线，按[Codex Desktop 交接契约](../../docs/codex-desktop-handoff.md)执行：
+
+1. **建线程**：从 discovery/schema 固定 deviceId/instanceId/backend；若本次要求完成 Desktop 交互控制交还，先确认目标 connector 暴露 `thread/unsubscribe` 且事件观察不会收养其他 loaded 线程；缺失时仅该交接项报 `blocked_native_writer_release`，不能报告完整 Desktop 验收通过。独立同 host 基线仍可按已授权范围创建、提交和回读，Desktop 项保持未验。brief 放同一 deviceId 的授权目录并从目标机器回读；纯文本无需文件。`thread/start {cwd, model: "gpt-6-astra", modelProvider: "magpie"}`，保存 threadId 和模型回执，unknown 只回读。
 2. **核对连接**：brief 的 kickstart 步骤只作用于已发现的目标 connector launchd label：`launchctl kickstart -k gui/<uid>/<connector-label>`。先核对它没有本轮之外的在途调用；不能重启 Desktop/native host。connector 重启不释放独立 native writer，不能把 kickstart 成功当作跨 backend ownership 证据。常规流程不需要 kickstart；若 brief 要求，后续须显式 `thread/resume` 重新取得本连接订阅，才能由这条连接退订。
 3. **桌面可见**：目标机器打开 `codex://threads/<threadId>?prompt=<URL 编码的正文>`，独立确认同一会话 Desktop 可见。链接只预填，不是提交；共享路径、loaded 或历史不能替代 UI。UI 被拒绝或看不到时停止完整烟雾并保留未验，不换工具绕过拒绝。
 4. **提交并回程**：可见后对同一 thread `turn/start`，显式 `model: "gpt-6-astra", effort: "medium"`，继承已核对的 magpie provider。保存 turnId，按上文轮询至原生终态、读实际回答、写收据；unknown 只回读，不重发。不得静默换 Herdr exec 或直连 ChatGPT 冒充 Desktop 成功。
 
-5. **交还 Desktop**：确认本次 turn 达终态、读到结果后（或用户明确要求把 UI 交给 Desktop 输入时），经同一 connector 对同一 thread 调 `thread/unsubscribe {threadId}`。记录原生 status；`notSubscribed` 只表示该连接没有订阅，不能证明其他连接放锁。重新打开 deep link，截图必须同时含左栏项目下的会话及主区，确认没有 `writerConflict`／“This is open in another app”／“Fork chat”／“open in new chat”。退订后 notifications 可能停止；完成判据须在退订前读取，之后只用 `thread/read`／`thread/turns/list` 读持久历史。只有明确续接执行时才 `thread/resume`，结束后再次退订。
+5. **交还 Desktop**：确认本次 turn 达终态、读到结果后，经同一 connector 对同一 thread 调 `thread/unsubscribe {threadId}`。记录原生 status；`notSubscribed` 只表示该连接没有订阅，不能证明其他连接放锁。重新打开 deep link，截图必须同时含左栏项目下的会话及主区，确认没有 `writerConflict`／“This is open in another app”／“Fork chat”／“open in new chat”。用户中途要求交还输入时，先按授权中断并核实终态；退订不等于取消。退订后 notifications 可能停止；完成判据须在退订前读取，之后只用 `thread/read`／`thread/turns/list` 读持久历史。只有明确续接执行时才 `thread/resume`，结束后再次退订。
 
 只读烟雾正文限定只回复唯一 `MAGPIE_CODEX_OK_<标记>`，不调用工具、不改文件。权限以原生回执为准：connector 可能强制 full access，即使请求 read-only 也不能声称沙箱已只读；收据分别记录任务只读和实际权限。
 

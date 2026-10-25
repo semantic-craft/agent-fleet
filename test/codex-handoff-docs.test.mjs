@@ -5,7 +5,7 @@ const read=p=>readFileSync(new URL('../'+p,import.meta.url),'utf8');
 const skill=read('skills/delegate-via-agenvo/SKILL.md');
 const section=(s,start,end)=>s.slice(s.indexOf(start),end?s.indexOf(end,s.indexOf(start)):undefined);
 const desktop=section(skill,'## Codex Desktop','## 一轮一个 tab');
-test('Desktop handoff retains agent submission but gates creation',()=>{
+test('Desktop handoff retains agent submission and scopes control handback checks',()=>{
  assert.match(desktop,/thread\/start/);
  assert.match(desktop,/turn\/start/);
  assert.match(desktop,/connector 重启不释放独立 native writer/);
@@ -47,11 +47,12 @@ test('downstream UI prompt and historical ADR do not revive the old default',()=
  assert.match(read('docs/decisions/0003-herdr-for-cli-agents.md'),/不是默认派活或新机验收/);
 });
 
-test('all consumer instructions retain the same precreation gate and no personal target',()=>{
+test('all consumers distinguish independent execution from Desktop handback without personal targets',()=>{
  const paths=['docs/codex-desktop-handoff.md','docs/architecture.md','docs/runbook.md','docs/new-mac.md','prompts/acceptance-codex.md','lessons.md'];
  for(const p of paths){
   const s=read(p);
-  assert.match(s,/创建前门槛/,p);
+  assert.match(s,/独立同 host 执行基线/,p);
+  assert.doesNotMatch(s,/创建前门槛[^\n。]*thread\/unsubscribe/,p);
   assert.match(s,/blocked_native_writer_release/,p);
   assert.doesNotMatch(s,/释放 connector 写锁|由用户发送|用户按发送/,p);
  }

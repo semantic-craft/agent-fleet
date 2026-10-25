@@ -32,7 +32,7 @@
 
 **外部 Codex Desktop**（DSH／GrokBot 经 Agenvo 的明确需求，尚未验通）：
 
-**创建前门槛**：目标 connector 支持 `thread/unsubscribe`，watchEvents 不收养其他 loaded 线程；否则 `blocked_native_writer_release`。同 host 的共享 app-server 与 Desktop 自带 backend 也必须交还 writer。connector 重启不释放独立 native writer。
+**Desktop 交互控制交还门槛**：独立同 host 执行基线不以退订能力为创建前置，Desktop 项保持未验；仅当完成交还时，目标 connector 支持 `thread/unsubscribe`，watchEvents 不收养其他 loaded 线程；否则 `blocked_native_writer_release`。同 host 的共享 app-server 与 Desktop 自带 backend 也必须交还 writer。connector 重启不释放独立 native writer。
 1. discovery 选定 deviceId/instanceId，brief 与 cwd 均在该目标机器；`thread/start` 保存 threadId。
 2. 在目标机器打开 `codex://threads/<threadId>`，确认 Desktop 项目下可见。
 3. 经 Agenvo `turn/start`，读本次 turn 终态与实际输出。

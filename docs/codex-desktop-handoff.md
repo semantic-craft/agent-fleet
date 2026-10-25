@@ -2,9 +2,11 @@
 
 适用者：DSH→Agenvo→Codex Desktop、GrokBot→Agenvo→Codex Desktop；blocked 不表示 Codex 整体不可用。dot 原生平台任务仍按[调用方路由](caller-routing.md)。操作步骤以[派活技能](../skills/delegate-via-agenvo/SKILL.md#codex-desktop)为正本。
 
-## 创建前门槛与交接
+## 独立执行与 Desktop 交接门槛
 
-目标 connector 必须暴露 `thread/unsubscribe`，且 `watchEvents` 不再对未明确订阅的 loaded 线程自动 resume；否则 `blocked_native_writer_release`。固定 discovery 的 deviceId/instanceId/backend、cwd 和模型后才建线程。新机和升级重新验收。
+独立同 host 执行基线只要求已授权的同一 backend 具备观察、创建、提交和回读能力，不以 `thread/unsubscribe` 或 watcher 交接检查作为创建前置；Desktop 可见性和交互控制保持未验。固定 discovery 的 deviceId/instanceId/backend、cwd 和模型后，才在该范围建线程。
+
+交还 Desktop 交互控制前，目标 connector 必须暴露 `thread/unsubscribe`，且 `watchEvents` 不再对未明确订阅的 loaded 线程自动 resume；缺失时仅该交接项报 `blocked_native_writer_release`，不否定独立执行能力。仅跨 backend 转移需要另行证明 writer 交接。新机和升级重新验收，不能把源码合并当作当前部署能力。
 
 共享 app-server 与 Desktop 自带 app-server 即使在同 host、共用 CODEX_HOME，也属于不同连接。共享端保持 loaded/subscribed 时，Desktop 可出现 `localConversation.writerConflict`。仅共享路径、loaded、历史回读或 deep link 不能单独证明 Desktop 可见或 writer 已交还。
 
