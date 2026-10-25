@@ -18,6 +18,12 @@ cd ~/Projects/_forks/agenvo && npm ci && npm run build
 npm link --workspace @agenvo/codex-app-server --workspace @agenvo/herdr --workspace @agenvo/dsh --workspace @agenvo/dispatch
 ```
 
+## Cloudflare CLI
+
+与 Cloudflare 交互时用 `cf` CLI；项目若仍有 Wrangler 配置文件（wrangler.jsonc／wrangler.toml）且无 cloudflare.config.ts，则该项目继续用 Wrangler；有 Wrangler 配置时不要对该项目跑 cf dev／build／deploy，先 cf migrate。
+
+agenvo fork 目前仍有 `wrangler.jsonc`、无 `cloudflare.config.ts` → **该项目继续用现有 Wrangler 步骤**（下方「2. 部署 relay」里的 `npx wrangler …` 命令保留）。迁到 `cf` 时先在该项目跑 `cf migrate`。未确认已有 `cloudflare.config.ts` 前，部署仍走 Wrangler。
+
 ## 2. 部署 relay（只做一次）
 
 在 agenvo checkout 里执行：
