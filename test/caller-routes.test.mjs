@@ -78,6 +78,8 @@ test('lint rejects the exact unconditional unsubscribe gates even when topology 
   ['skills/delegate-via-agenvo/SKILL.md','创建前门槛：确认目标 connector 暴露 `thread/unsubscribe` 且事件观察不会收养其他 loaded 线程；缺失时报 blocked，不创建。'],
   ['docs/codex-desktop-handoff.md','目标 connector 必须暴露 `thread/unsubscribe`，否则 blocked。']
  ]) assert.ok(lintRoutes(p=>read(p)+(p===path?'\n'+bad:'')).includes(path+':blanket_unsubscribe_gate'));
- for(const path of ['skills/delegate-via-agenvo/SKILL.md','docs/codex-desktop-handoff.md'])
+ for(const path of ['skills/delegate-via-agenvo/SKILL.md','docs/codex-desktop-handoff.md','docs/architecture.md','docs/runbook.md','docs/new-mac.md','lessons.md','prompts/operator.md','prompts/acceptance-codex.md']) {
+  assert.ok(lintRoutes(p=>read(p)+(p===path?'\n**创建前门槛**：确认 thread/unsubscribe，否则不创建。':'')).includes(path+':blanket_unsubscribe_gate'));
   assert.ok(lintRoutes(p=>p===path?read(p).replace('独立同 host 执行基线','执行'):read(p)).includes(path+':same_host_baseline_missing'));
+ }
 });

@@ -40,7 +40,7 @@ dot 原生平台任务通道不受本节阻断；DSH／GrokBot→Agenvo→Codex 
 
 - 起因与后果：用户要任务出现在 Codex Desktop，并由 agent 经 agenvo 提交开跑；会话仍须 Desktop 可见（2026-10-25 10:18 经图灵纠正）。
 - 修复与证据：正本改写于 `skills/delegate-via-agenvo/SKILL.md`「Codex Desktop」；外部技能副本是否同步须另核，不能由本仓修改推断。
-**创建前门槛**：确认 connector 暴露 `thread/unsubscribe` 且 watcher 不抢其他 loaded 线程，否则 `blocked_native_writer_release`。同 host 共享 app-server 与 Desktop 自带 backend 也要交还 writer；本次 turn 终态后由同一 connector 退订，再截图核实项目下可见且无横幅。connector 重启不释放独立 native writer。目标仍为 Desktop 可见后 agent `turn/start`，见[交接契约](docs/codex-desktop-handoff.md)。
+**Desktop 交互控制交还门槛**：独立同 host 执行基线不以退订能力为创建前置，Desktop 项保持未验；仅当完成交还时，确认 connector 暴露 `thread/unsubscribe` 且 watcher 不抢其他 loaded 线程，否则 `blocked_native_writer_release`。同 host 共享 app-server 与 Desktop 自带 backend 也要交还 writer；本次 turn 终态后由同一 connector 退订，再截图核实项目下可见且无横幅。connector 重启不释放独立 native writer。目标仍为 Desktop 可见后 agent `turn/start`，见[交接契约](docs/codex-desktop-handoff.md)。
 - 验证点：`test/codex-handoff-docs.test.mjs` 检查所有入口的前置阻断与提交者一致；`test/codex-handoff.test.mjs` 检查目标/版本/线程关联、证据缺失与 unknown 不重发；离线文档回归不证明实际 writer 已释放。
 - 复发记录：Seen 3x（2026-10-25 保留 agent 提交目标，修复控制权前提）。
 
@@ -267,7 +267,7 @@ dot 原生平台任务通道不受本节阻断；DSH／GrokBot→Agenvo→Codex 
 
 ### 桌面项目下自动开跑用 DSH
 
-**创建前门槛**：确认 connector 暴露 `thread/unsubscribe` 且 watcher 不抢其他 loaded 线程，否则 `blocked_native_writer_release`。同 host 共享 app-server 与 Desktop 自带 backend 也要交还 writer；本次 turn 终态后由同一 connector 退订，再截图核实项目下可见且无横幅。connector 重启不释放独立 native writer。目标仍为 Desktop 可见后 agent `turn/start`，见[交接契约](docs/codex-desktop-handoff.md)。
+**Desktop 交互控制交还门槛**：独立同 host 执行基线不以退订能力为创建前置，Desktop 项保持未验；仅当完成交还时，确认 connector 暴露 `thread/unsubscribe` 且 watcher 不抢其他 loaded 线程，否则 `blocked_native_writer_release`。同 host 共享 app-server 与 Desktop 自带 backend 也要交还 writer；本次 turn 终态后由同一 connector 退订，再截图核实项目下可见且无横幅。connector 重启不释放独立 native writer。目标仍为 Desktop 可见后 agent `turn/start`，见[交接契约](docs/codex-desktop-handoff.md)。
 
 - 起因与后果：用户有时要左栏项目下直接跑起来的会话。
 - 修复与证据：DSH 经 `workspace/create {path: <任务目录>}` 的会话在桌面左栏对应项目下（2026-10-20 验收）。

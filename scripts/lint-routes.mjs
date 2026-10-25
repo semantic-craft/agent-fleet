@@ -20,7 +20,12 @@ export function lintRoutes(read) {
   for (const path of ['skills/delegate-via-agenvo/SKILL.md','docs/codex-desktop-handoff.md']) {
     const text = read(path);
     if (!text.includes('独立同 host 执行基线') || !text.includes('不以 `thread/unsubscribe` 或 watcher 交接检查作为创建前置')) errors.push(`${path}:same_host_baseline_missing`);
-    if (/创建前门槛：确认目标 connector 暴露 `thread\/unsubscribe`|^目标 connector 必须暴露 `thread\/unsubscribe`/m.test(text)) errors.push(`${path}:blanket_unsubscribe_gate`);
+
+  }
+  for (const path of ['skills/delegate-via-agenvo/SKILL.md','docs/codex-desktop-handoff.md','docs/architecture.md','docs/runbook.md','docs/new-mac.md','lessons.md','prompts/operator.md','prompts/acceptance-codex.md']) {
+    const text = read(path);
+    if (/创建前门槛[^\n。]*thread\/unsubscribe|^目标 connector 必须暴露 `thread\/unsubscribe`/m.test(text)) errors.push(`${path}:blanket_unsubscribe_gate`);
+    if (!text.includes('独立同 host 执行基线')) errors.push(`${path}:same_host_baseline_missing`);
   }
   return errors;
 }
