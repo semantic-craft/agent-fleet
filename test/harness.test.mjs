@@ -19,7 +19,7 @@ function fixture({ events = transcript(), onCall, sendError = false, initial = 0
     calls.push({ method, request });
     const override = await onCall?.(method, request, calls);
     if (override !== undefined) return override;
-    if (method === 'session/projections') return { result: { kind: 'sequenced', values: { agentPreset: 'standard', modelSelection: { next: model } } } };
+    if (method === 'session/projections') return { result: { kind: 'sequenced', values: { permissions: { currentValue: 'read-only' }, agentPreset: 'standard', modelSelection: { next: model } } } };
     if (method === 'session/prompt') { sent = true; if (sendError) throw Error('private-secret'); return { execution: 'accepted', result: {} }; }
     if (method === 'session/follow') return { result: { cursor: sent ? events.at(-1)?.seq ?? initial : initial, records: [] } };
     if (method === 'session/page') return { result: { records: events.filter(e => e.seq < request.beforeSeq).slice(-1).map(event => ({ event })) } };
@@ -44,7 +44,7 @@ test('unknown mutation is not retried; same rpcId resumes readback', async () =>
 for (const status of [429, 503]) test(`read ${status} retries boundedly`, async () => {
   let n = 0;
   const f = fixture({ onCall: m => m === 'session/projections' && ++n <= 2 ? { error: { status } } : undefined });
-  assert.equal((await f.runner.run(task(), context())).status, 'success'); assert.equal(n, 4);
+  assert.equal((await f.runner.run(task(), context())).status, 'success'); assert.equal(n, 5);
 });
 test('exhausted read retries do not submit', async () => {
   const f = fixture({ onCall: () => ({ error: { status: 503, message: 'secret' } }) });
@@ -82,7 +82,7 @@ test('transport timeout returns unknown mutation and cannot replay', async () =>
 });
 test('configuration/preset checked before and after turn', async () => {
   let reads = 0;
-  const f = fixture({ onCall: m => m === 'session/projections' && ++reads > 1 ? { result: { values: { agentPreset: 'ptc', modelSelection: { next: model } } } } : undefined });
+  const f = fixture({ onCall: m => m === 'session/projections' && ++reads > 1 ? { result: { values: { permissions: { currentValue: 'read-only' }, agentPreset: 'ptc', modelSelection: { next: model } } } } : undefined });
   assert.equal((await f.runner.run(task(), context())).code, 'preset_drift');
   const ctx = new RunContext({ ...context(), expected: { ...model, model: 'different' } });
   const g = fixture(); assert.equal((await g.runner.run(task(), ctx)).code, 'model_drift'); assert.equal(g.calls.length, 1);
@@ -142,7 +142,7 @@ test('shared journal prevents concurrent duplicate submissions across runner ins
   const journal = new Map(); let release;
   const gate = new Promise(r => { release = r; }); let prompts = 0;
   const call = async method => {
-    if (method === 'session/projections') { await gate; return { result: { values: { agentPreset: 'standard', modelSelection: { next: model } } } }; }
+    if (method === 'session/projections') { await gate; return { result: { values: { permissions: { currentValue: 'read-only' }, agentPreset: 'standard', modelSelection: { next: model } } } }; }
     if (method === 'session/follow') return { result: { cursor: 0 } };
     if (method === 'session/prompt') { prompts++; return { result: {} }; }
   };
@@ -156,7 +156,7 @@ test('late configuration completion cannot claim success beyond deadline', async
   let now = 0, projections = 0;
   const events = transcript(); let sent = false;
   const call = async (method, { request }) => {
-    if (method === 'session/projections') { if (++projections === 2) now = 101; return { result: { values: { agentPreset: 'standard', modelSelection: { next: model } } } }; }
+    if (method === 'session/projections') { if (++projections === 2) now = 101; return { result: { values: { permissions: { currentValue: 'read-only' }, agentPreset: 'standard', modelSelection: { next: model } } } }; }
     if (method === 'session/prompt') { sent = true; return { result: {} }; }
     if (method === 'session/follow') return { result: { cursor: sent ? 5 : 0 } };
     return { result: { records: events.filter(e => e.seq < request.beforeSeq).slice(-1).map(event => ({ event })) } };
@@ -188,11 +188,11 @@ test('session-wide cancellation requires exclusive caller ownership', async () =
 });
 test('empty projection inherits read-only catalog default; never selects model', async () => {
   const f = fixture({ onCall: m => {
-    if (m === 'session/projections') return { result: { values: { agentPreset: 'standard', modelSelection: { next: null, lastUsed: null } } } };
+    if (m === 'session/projections') return { result: { values: { permissions: { currentValue: 'read-only' }, agentPreset: 'standard', modelSelection: { next: null, lastUsed: null } } } };
     if (m === 'session/modelCatalog') return { result: { default: model } };
   } });
   assert.equal((await f.runner.run(task(), context())).status, 'success');
-  assert.equal(f.calls.filter(c => c.method === 'session/modelCatalog').length, 2);
+  assert.equal(f.calls.filter(c => c.method === 'session/modelCatalog').length, 3);
   assert.ok(f.calls.filter(c => c.method === 'session/modelCatalog').every(c => c.request === undefined));
   assert.equal(f.calls.filter(c => c.method === 'session/selectModel').length, 0);
 });
@@ -200,7 +200,7 @@ test('populated selection does not consult catalog; missing default blocks', asy
   const f = fixture(); await f.runner.run(task(), context());
   assert.equal(f.calls.filter(c => c.method === 'session/modelCatalog').length, 0);
   const g = fixture({ onCall: m => {
-    if (m === 'session/projections') return { result: { values: { modelSelection: { next: null, lastUsed: null } } } };
+    if (m === 'session/projections') return { result: { values: { permissions: { currentValue: 'read-only' }, modelSelection: { next: null, lastUsed: null } } } };
     if (m === 'session/modelCatalog') return { result: {} };
   } });
   assert.equal((await g.runner.run(task(), context())).code, 'configuration_unavailable');
@@ -241,14 +241,14 @@ test('external rpc input proves accepted without claiming completed', async () =
 test('inherited catalog selection becoming explicit is not configuration drift', async () => {
   let projections = 0;
   const f = fixture({ onCall: m => {
-    if (m === 'session/projections' && ++projections === 1) return { result: { values: { agentPreset: 'standard', modelSelection: { next: null, lastUsed: null } } } };
+    if (m === 'session/projections' && ++projections === 1) return { result: { values: { permissions: { currentValue: 'read-only' }, agentPreset: 'standard', modelSelection: { next: null, lastUsed: null } } } };
     if (m === 'session/modelCatalog') return { result: { default: { ...model, displayLabel: 'synthetic label' } } };
   } });
   assert.equal((await f.runner.run(task(), context())).status, 'success');
 });
 test('wrong catalog default blocks reservation before any prompt', async () => {
   const f = fixture({ onCall: m => {
-    if (m === 'session/projections') return { result: { values: { agentPreset: 'standard', modelSelection: { next: null, lastUsed: null } } } };
+    if (m === 'session/projections') return { result: { values: { permissions: { currentValue: 'read-only' }, agentPreset: 'standard', modelSelection: { next: null, lastUsed: null } } } };
     if (m === 'session/modelCatalog') return { result: { default: { ...model, model: 'other' } } };
   } });
   assert.equal((await f.runner.prepareExternalRun(task(), context())).result.code, 'model_drift');
@@ -257,7 +257,7 @@ test('wrong catalog default blocks reservation before any prompt', async () => {
 
 test('private dispatch descriptor is separate from sanitized result and recovery journal', async () => {
   const journal = new Map();
-  const adapter = new DshProviderAdapter(async method => ({ result: method === 'session/projections' ? { values: { agentPreset: 'standard', modelSelection: { next: model } } } : { cursor: 0 } }));
+  const adapter = new DshProviderAdapter(async method => ({ result: method === 'session/projections' ? { values: { permissions: { currentValue: 'read-only' }, agentPreset: 'standard', modelSelection: { next: model } } } : { cursor: 0 } }));
   const runner = new HarnessRunner(adapter, { journal });
   const prepared = await runner.prepareExternalRun(task({ objective: 'PRIVATE_SYNTHETIC_OBJECTIVE' }), context());
   assert.equal(prepared.descriptor.params.request.content[0].text, 'PRIVATE_SYNTHETIC_OBJECTIVE');
@@ -303,11 +303,11 @@ for (const [name, modify] of [
   ['extra notification content', e => { e[4].data.content.push({ type: 'text', text: 'Extra instruction' }); }],
 ]) test(`policy exemption rejects ${name}`, async () => {
   const events = permissionTranscript(); modify(events);
-  assert.equal((await fixture({ events }).runner.run(task(), context())).code, 'foreign_input');
+  assert.equal((await fixture({ events }).runner.run(task(), context())).code, ['broad sandbox','wrong approval policy'].includes(name) ? 'permission_drift' : 'foreign_input');
 });
 test('permission exemption rejects a later permission expansion', async () => {
   const events = permissionTranscript(); events.splice(7, 0, event(8, 'sandbox/mode', { mode: 'danger-full-access' })); events[8].seq = 9; events[9].seq = 10;
-  assert.equal((await fixture({ events }).runner.run(task(), context())).code, 'foreign_input');
+  assert.equal((await fixture({ events }).runner.run(task(), context())).code, 'permission_drift');
 });
 
 function secondTurnEvents() {
@@ -367,4 +367,55 @@ for (const shape of ['overlap', 'duplicate', 'conflicting-duplicate']) test(`inv
   assert.equal(r.code, 'incomplete_history'); assert.equal(r.status, 'blocked');
   assert.equal(f.calls.filter(c => c.method === 'session/prompt').length, 1);
   assert.equal(f.calls.filter(c => c.method === 'session/cancel').length, 0);
+});
+
+for (const permission of [undefined, 'full-access', 'workspace-write']) test(`read-only blocks observed ${permission} before submission`, async () => {
+  const f = fixture({ onCall: m => m === 'session/projections' ? { result: { values: { agentPreset: 'standard', modelSelection: { next: model }, permissions: { currentValue: permission } } } } : undefined });
+  assert.equal((await f.runner.run(task(), context())).code, 'permission_drift');
+  assert.equal(f.calls.some(c => c.method === 'session/prompt'), false);
+});
+test('transient permission expansion cannot be hidden by restoring final projection', async () => {
+  const events = transcript();
+  events.splice(3, 0, event(4, 'sandbox/mode', { mode: 'workspace-write' }), event(5, 'sandbox/mode', { mode: 'read-only' }));
+  events.forEach((e,i) => e.seq = i+1);
+  assert.equal((await fixture({ events }).runner.run(task(), context())).code, 'permission_drift');
+});
+test('adapter rejects policy-changing raw methods before transport', async () => {
+  let calls = 0; const adapter = new DshProviderAdapter(async () => { calls++; });
+  for (const method of ['session/selectModel','user-approval/respond','workspace/create','arbitrary']) await assert.rejects(adapter.invoke(method, {}), /unsupported_method/);
+  assert.equal(calls, 0);
+});
+test('omitting routeProfile cannot admit observed known failure in production', async () => {
+  const selected = { provider: 'magpie-responses', model: 'codex/gpt-6.1-sol', reasoningEffort: 'high' };
+  const f = fixture({ onCall: m => m === 'session/projections' ? { result: { values: { permissions: { currentValue: 'read-only' }, agentPreset: 'standard', modelSelection: { next: selected } } } } : undefined });
+  const ctx = new RunContext({ sessionId: 'synthetic-session', requestId: 'synthetic-request', lessonsVersion: 'test' });
+  assert.equal((await f.runner.run(task(), ctx)).code, 'route_profile_known_failure');
+  assert.equal(f.calls.some(c => c.method === 'session/prompt'), false);
+});
+test('native envelope session binding rejects cross-session response', async () => {
+ const adapter = new DshProviderAdapter(async()=>({result:{cursor:1},nativeIds:{sessionId:'other'}}));
+ await assert.rejects(adapter.invoke('session/follow',{address:{sessionId:'ours'}}),/foreign_session_envelope/);
+});
+test('native identity and capability schema reject truthy objects',()=>{
+ assert.throws(()=>new RunContext({...context(),requestId:{verified:true}}),/invalid_frozen_context/);
+ assert.throws(()=>task({requiredCapabilities:'observe'}),/invalid_capabilities/);
+});
+
+test('permission expansion straddling turn boundaries is not verified', async()=>{
+ const events=transcript();
+ events.unshift(event(0,'sandbox/mode',{mode:'workspace-write'}));
+ events.push(event(7,'sandbox/mode',{mode:'read-only'}));
+ events.forEach((e,i)=>e.seq=i+1);
+ assert.equal((await fixture({events}).runner.run(task(),context())).code,'permission_drift');
+});
+test('same native IDs on different discovered targets cannot reuse a journal receipt',async()=>{
+ const journal=new Map();
+ const call=async m=>({result:m==='session/projections'?{values:{permissions:{currentValue:'read-only'},agentPreset:'standard',modelSelection:{next:model}}}:{cursor:0}});
+ const ctx=context(), t=task();
+ const a=new HarnessRunner(new DshProviderAdapter(call,{target:{deviceId:'device-a',instanceId:'dsh'}}),{journal});
+ assert.equal((await a.prepareExternalRun(t,ctx)).dispatchAllowed,true);
+ let calls=0;
+ const b=new HarnessRunner(new DshProviderAdapter(async(...args)=>{calls++;return call(...args);},{target:{deviceId:'device-b',instanceId:'dsh'}}),{journal});
+ assert.equal((await b.run(t,ctx)).code,'idempotency_conflict');
+ assert.equal(calls,0);
 });

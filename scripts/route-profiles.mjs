@@ -43,3 +43,12 @@ export function routeProfileEvidenceMatches(id, evidence) {
     ? evidence.toolContractMatched === true && evidence.toolEvents === 2
     : profile?.status === 'verified-marker-only' && evidence.toolEvents === 0;
 }
+
+/** Known failures cannot be bypassed by omitting the optional named profile. */
+export function observedRouteError(selection, preset, phase) {
+  if (phase !== 'production') return null; // explicit isolated discovery remains possible
+  return Object.values(ROUTE_PROFILES).some(p => p.status === 'known-failure'
+    && p.expected.preset === preset
+    && ['provider','model','reasoningEffort'].every(k => p.expected[k] === selection?.[k]))
+    ? 'route_profile_known_failure' : null;
+}

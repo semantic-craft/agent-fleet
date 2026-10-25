@@ -18,7 +18,7 @@ function fake({ reason = 'completed', answer = 'Synthetic project', override } =
     if (replacement !== undefined) return replacement;
     if (method === 'workspace/create') return { execution: 'accepted', result: { workspace: { workspaceId: 'synthetic-workspace' } } };
     if (method === 'session/create') return { execution: 'accepted', nativeIds: { sessionId: 'synthetic-created' }, result: { sessionId: 'synthetic-created' } };
-    if (method === 'session/projections') return { result: { values: { agentPreset: 'standard', modelSelection: { next: config } } } };
+    if (method === 'session/projections') return { result: { values: { permissions: { currentValue: 'read-only' }, agentPreset: 'standard', modelSelection: { next: config } } } };
     if (method === 'session/follow') return { result: { cursor: requestId ? 5 : 0 } };
     if (method === 'session/prompt') { requestId = params.request.requestId; return { execution: 'accepted', result: {} }; }
     if (method === 'session/page') return { result: { records: events().filter(e => e.seq < params.request.beforeSeq).map(event => ({ event })) } };
@@ -42,6 +42,7 @@ test('new-session wrapper creates workspace/session then waits for its own termi
   assert.equal(r.ok, true); assert.equal(r.sessionId, 'synthetic-created');
   assert.deepEqual(f.calls.slice(0, 2).map(c => c.method), ['workspace/create', 'session/create']);
   assert.equal(f.calls[0].params.request.path, '/synthetic-projects/fixture');
+  assert.equal(f.calls[1].params.permission, 'read-only');
 });
 for (const reason of ['max-tokens', 'error', 'completed']) test(`${reason} with empty output is not successful`, async () => {
   const f = fake({ reason, answer: '' }); const r = await dshTurn(f.call, { sessionId: 'synthetic-existing' });

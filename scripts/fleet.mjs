@@ -207,7 +207,7 @@ async function check() {
     if (opt.dispatch || opt.session) {
       const targets = items.filter((x) => x.online && x.kind === "dsh" && (!opt.instance || x.instanceId === opt.instance));
       await Promise.all(targets.map(async (i) => {
-        const r = await dshTurn((m, p) => call(i, m, p), { root: rootOf(i), project, sessionId: opt.session });
+        const r = await dshTurn((m, p) => call(i, m, p), { root: rootOf(i), project, sessionId: opt.session, target: { deviceId: i.deviceId, instanceId: i.instanceId } });
         if (!r.ok) failures++;
         console.log(`  ${i.instanceId} session ${r.sessionId ?? "-"}: ${r.ok ? "turn/end completed" : "FAILED"} :: ${r.text}`);
       }));

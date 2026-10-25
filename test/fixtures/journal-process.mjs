@@ -64,7 +64,7 @@ const nativeCall = async (method, { request }) => {
   if (method === 'session/projections') {
     if (mode === 'hold') { emit({ phase: 'held' }); await new Promise(() => {}); }
     if (mode === 'lose-helper') { helper.kill('SIGKILL'); await once(helper, 'exit'); }
-    return { result: { values: { agentPreset: 'standard', modelSelection: { next: config } } } };
+    return { result: { values: { permissions: { currentValue: 'read-only' }, agentPreset: 'standard', modelSelection: { next: config } } } };
   }
   if (method === 'session/follow') return { result: { cursor: read().at(-1)?.seq ?? 0 } };
   if (method === 'session/page') return { result: { records: read().filter(e => e.seq < request.beforeSeq).map(event => ({ event })) } };

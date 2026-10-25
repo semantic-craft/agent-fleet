@@ -13,7 +13,7 @@
 | Agent runtime | 官方 `deepseek-ai/deepseek-harness`；2026-10-24 线路证据 DSH 0.2.1-rc.3、安装依赖 pi-ai 1.1.0 | rc.3 tag `1f81c047fc48fa190a683e469daa699857e9afe8` 只供源码比较，不宣称等于已装二进制。Codex/Herdr 精确可重建版本本表 unknown，需从各官方发行及实际安装取证 |
 | Provider gateway | Magpie；模型路线已通过本机独立部署运行 | 实际已部署源码/构建/签名关系 unknown，必须补其正式发行来源、包哈希、补丁来源和版本；不能据历史测试源码冒认二进制 |
 | 模型 | `scripts/route-profiles.mjs`：provider、model、effort、preset 分开记录 | 模型别名同名也可能换后端，版本字符串不能证明行为不变 |
-| Harness / 存储 | `bounded-dsh-v3`、FileJournal format 1、稳定 native request ID；本仓依赖由 package-lock.json 固定 | 新契约不能直接读取旧在途保留项；保留原 observer，不自动迁移/重发 |
+| Harness / 存储 | `bounded-dsh-v4`、FileJournal format 1、稳定 native request ID；本仓依赖由 package-lock.json 固定 | 新契约不能直接读取旧在途保留项；保留原 observer，不自动迁移/重发 |
 
 历史已验组合与升级候选分别保存，不能把 unknown 填成 latest 或“兼容”。当前证据仅覆盖：Argon medium PTC 单次只读工具和 standard 标记；MiniMax low standard 单文件 read；Sol low/high PTC 标记。Sol standard low/high 为已知失败，high PTC 工具失败。MiniMax 桌面路线已取消；CLI 与模型仍可保留，不需要桌面 app 作为此路线依赖。
 

@@ -1,16 +1,17 @@
 /** Bounded caller-side policy over native DSH endpoints; no credentials or scheduler. */
 import { createHash } from 'node:crypto';
-import { routeProfileError, routeProfileEvidenceMatches } from './route-profiles.mjs';
+import { routeProfileError, routeProfileEvidenceMatches, observedRouteError } from './route-profiles.mjs';
 const clone = x => JSON.parse(JSON.stringify(x));
 const freeze = x => { if (x && typeof x === 'object') { Object.values(x).forEach(freeze); Object.freeze(x); } return x; };
 const digest = x => createHash('sha256').update(JSON.stringify(x)).digest('hex');
 const fault = code => Object.assign(new Error(code), { code });
-export const HARNESS_VERSION = 'bounded-dsh-v3';
+export const HARNESS_VERSION = 'bounded-dsh-v4';
 export class TaskSpec {
   constructor({ objective, acceptance, sideEffects = 'read-only', budget = {}, requiredCapabilities = [], toolContract }) {
     if (typeof objective !== 'string' || !objective.trim()) throw fault('objective_required');
     if (!['read-only', 'sandbox', 'write'].includes(sideEffects)) throw fault('invalid_side_effects');
     if (!acceptance || !['exact-text', 'nonempty-text'].includes(acceptance.kind) || (acceptance.kind === 'exact-text' && typeof acceptance.text !== 'string')) throw fault('acceptance_required');
+    if (!Array.isArray(requiredCapabilities) || requiredCapabilities.some(c => typeof c !== 'string' || !c.trim())) throw fault('invalid_capabilities');
     const limits = { timeoutMs: 600000, maxCalls: 256, maxPages: 128, maxPolls: 60, pollMs: 10000, readRetries: 2, ...budget };
     if (Object.values(limits).some(v => !Number.isSafeInteger(v) || v < 0) || !limits.timeoutMs || !limits.maxCalls) throw fault('invalid_budget');
     if (toolContract !== undefined && (!toolContract || Object.keys(toolContract).sort().join(',') !== 'filePath,kind' || toolContract.kind !== 'single-read-fixture' || typeof toolContract.filePath !== 'string' || !toolContract.filePath.trim() || acceptance.kind !== 'exact-text' || !acceptance.text.trim() || /[\r\n]/.test(acceptance.text))) throw fault('invalid_tool_contract');
@@ -28,7 +29,7 @@ export function createReadOnlyFixtureTask({ filePath, expectedLine, budget = {} 
 }
 export class RunContext {
   constructor({ requestId, sessionId, harnessVersion = HARNESS_VERSION, lessonsVersion, phase = 'production', expected = {}, routeProfile }) {
-    if (!requestId || !sessionId || !lessonsVersion || harnessVersion !== HARNESS_VERSION || !['discovery', 'heldout', 'production'].includes(phase)) throw fault('invalid_frozen_context');
+    if (![requestId, sessionId, lessonsVersion].every(x => typeof x === 'string' && x.trim().length > 0) || !lessonsVersion || harnessVersion !== HARNESS_VERSION || !['discovery', 'heldout', 'production'].includes(phase)) throw fault('invalid_frozen_context');
     if (routeProfile !== undefined && typeof routeProfile !== 'string') throw fault('invalid_route_profile');
     Object.assign(this, clone({ requestId, sessionId, harnessVersion, lessonsVersion, phase, expected, ...(routeProfile === undefined ? {} : { routeProfile }) })); freeze(this);
   }
@@ -41,14 +42,21 @@ export class ProviderAdapter {
 }
 export class DshProviderAdapter extends ProviderAdapter {
   #call;
-  constructor(call) { super(); this.#call = call; }
+  constructor(call, { target } = {}) {
+    super(); this.#call = call;
+    if (target !== undefined && (!target || Object.keys(target).sort().join(',') !== 'deviceId,instanceId' || ![target.deviceId, target.instanceId].every(x => typeof x === 'string' && x.trim()))) throw fault('invalid_transport_target');
+    Object.defineProperty(this, 'target', { value: target === undefined ? null : freeze(clone(target)), enumerable: true });
+  }
   async invoke(method, request) {
+    if (!['session/projections', 'session/modelCatalog', 'session/follow', 'session/page', 'session/prompt', 'session/cancel'].includes(method)) throw fault('unsupported_method');
     const envelope = await this.#call(method, method === 'session/modelCatalog' ? {} : { request });
     if (envelope?.error) {
       // Never expose remote errors: they may contain headers or private prompt content.
       const status = envelope.error.status ?? envelope.error.statusCode;
       throw Object.assign(fault('remote_error'), { status, remoteCode: envelope.error.code });
     }
+    const sessionId = request?.sessionId ?? request?.address?.sessionId;
+    if (sessionId && envelope?.nativeIds?.sessionId !== undefined && envelope.nativeIds.sessionId !== sessionId) throw fault('foreign_session_envelope');
     if (!envelope || !Object.hasOwn(envelope, 'result')) throw fault('invalid_envelope');
     return envelope.result;
   }
@@ -117,6 +125,10 @@ function correlate(events, context, snapshot, selectedModel, toolContract, accep
   const range = events.filter(e => e.seq >= start.seq && e.seq <= end.seq);
   if (range.some(e => e.type === 'user/message' && e.seq !== own.seq && !systemSources.has(e.data?.source?.kind) && !readOnlyPolicyNotice(e, events.filter(x => x.seq <= end.seq), own))) throw fault('foreign_input');
   if (range.some(e => e.type === 'turn/start' && e.seq !== start.seq)) throw fault('ambiguous_turn');
+  if (context.expected.permission === 'read-only' && range.some(e =>
+    (e.type === 'permission/preset' && e.data?.preset !== 'read-only') ||
+    (e.type === 'sandbox/mode' && e.data?.mode !== 'read-only') ||
+    (e.type === 'approval/policy' && e.data?.policy !== 'ask'))) throw fault('permission_drift');
   const headers = range.filter(e => e.type === 'request/header');
   const prior = events.filter(e => e.type === 'request/header' && e.seq < start.seq).at(-1);
   const inherited = prior ? { originSeq: prior.seq, config: modelFields(prior.data?.header?.config) } : snapshot;
@@ -164,7 +176,7 @@ export class HarnessRunner {
   }
   async #execute(task, context, { harness = new BaseHarness(), signal, requestCancellation = false, exclusiveSession = false } = {}, prepareExternal = false, startedAt = this.#now()) {
     const key = JSON.stringify([context.sessionId, context.requestId]);
-    const fingerprint = digest({ task, context, policy: harness.constructor.name });
+    const fingerprint = digest({ task, context, target: this.#adapter.target ?? null, policy: harness.constructor.name });
     const result = (status, code, extra = {}) => new RunResult({ status, code, requestId: context.requestId, sessionId: context.sessionId, harnessVersion: context.harnessVersion, lessonsVersion: context.lessonsVersion, phase: context.phase, accepted: entry?.accepted === true, completed: false, ...extra });
     let entry = this.#journal.get(key);
     if ((!entry && this.#journal instanceof Map && this.#journal.has(`${context.sessionId}:${context.requestId}`)) || (entry && entry.harnessVersion !== context.harnessVersion)) return result('blocked', 'journal_version_mismatch');
@@ -207,6 +219,7 @@ export class HarnessRunner {
     try {
       if (!(task instanceof TaskSpec) || !(context instanceof RunContext) || ![BaseHarness.prototype, ReadOnlyVerificationHarness.prototype].includes(Object.getPrototypeOf(harness))) throw fault('unreviewed_policy');
       if (task.requiredCapabilities.some(c => !this.#adapter.capabilities.includes(c))) throw fault('unsupported_capability');
+      if (task.sideEffects === 'read-only' && context.expected.permission !== undefined && context.expected.permission !== 'read-only') throw fault('permission_drift');
       const policy = harness.policy(task);
       const profileError = routeProfileError(context.routeProfile, task, context.expected, policy.requireTool);
       if (profileError) return result('blocked', profileError);
@@ -215,6 +228,7 @@ export class HarnessRunner {
         const projection = await invoke('session/projections', { sessionId: context.sessionId });
         const values = projection?.values;
         if (!values) throw fault('configuration_unavailable');
+        if (task.sideEffects === 'read-only' && values.permissions?.currentValue !== 'read-only') throw fault('permission_drift');
         let selection = values.modelSelection?.next ?? values.modelSelection?.lastUsed;
         if (values.modelSelection?.next === null && values.modelSelection?.lastUsed === null) {
           const catalog = await invoke('session/modelCatalog', {});
@@ -224,9 +238,12 @@ export class HarnessRunner {
         for (const k of ['provider', 'model', 'reasoningEffort']) if (context.expected[k] !== undefined && selection?.[k] !== context.expected[k]) throw fault('model_drift');
         if (context.expected.preset !== undefined && values.agentPreset !== context.expected.preset) throw fault('preset_drift');
         if (context.expected.permission !== undefined && values.permissions?.currentValue !== context.expected.permission) throw fault('permission_drift');
-        const normalized = selection ? modelFields(selection) : null;
+        if (!selection || ['provider', 'model'].some(k => typeof selection[k] !== 'string' || !selection[k].trim()) || typeof values.agentPreset !== 'string') throw fault('configuration_unavailable');
+        const observedError = observedRouteError(selection, values.agentPreset, context.phase);
+        if (observedError) throw fault(observedError);
+        const normalized = modelFields(selection);
         selectedModel = normalized;
-        const fingerprint = digest({ preset: values.agentPreset ?? null, selection: normalized, ...(context.expected.permission === undefined ? {} : { permission: values.permissions.currentValue }) });
+        const fingerprint = digest({ preset: values.agentPreset ?? null, selection: normalized, permission: values.permissions?.currentValue ?? null });
         if (entry?.configuration && entry.configuration !== fingerprint) throw fault('configuration_drift');
         if (context.expected.configurationFingerprint && context.expected.configurationFingerprint !== fingerprint) throw fault('configuration_drift');
         return fingerprint;
@@ -252,6 +269,8 @@ export class HarnessRunner {
         entry = { ...(headerSnapshot ? { headerSnapshot } : {}), requestId: context.requestId, sessionId: context.sessionId, harnessVersion: context.harnessVersion, lessonsVersion: context.lessonsVersion, fingerprint, base: first.cursor, attempted: false, accepted: false, configuration };
         this.#journal.set(key, entry);
       }
+      // Recheck after baseline capture: a permission/model change during paging must not admit a prompt.
+      await inspectConfiguration();
       if (prepareExternal) {
         if (requestCancellation || (entry.attempted && !entry.external)) return result('blocked', 'already_submitted_locally');
         const dispatchAllowed = !entry.attempted;
@@ -284,10 +303,15 @@ export class HarnessRunner {
           before = batch[0].seq;
         }
         events.reverse();
+        // Include administrative changes before turn/start and after turn/end, not only the answer window.
+        if (task.sideEffects === 'read-only' && events.some(e =>
+          (e.type === 'permission/preset' && e.data?.preset !== 'read-only') ||
+          (e.type === 'sandbox/mode' && e.data?.mode !== 'read-only') ||
+          (e.type === 'approval/policy' && e.data?.policy !== 'ask'))) throw fault('permission_drift');
         if (events.some(e => e.type === 'user/message' && e.data?.source?.rpcId === context.requestId)) {
           entry.accepted = true; this.#journal.set(key, entry);
         }
-        const evidence = correlate(events, context, entry.headerSnapshot, selectedModel, task.toolContract, task.acceptance);
+        const evidence = correlate(events, task.sideEffects === 'read-only' ? { ...context, expected: { ...context.expected, permission: 'read-only' } } : context, entry.headerSnapshot, selectedModel, task.toolContract, task.acceptance);
         if (!evidence && requestCancellation) {
           const own = events.find(e => e.type === 'user/message' && e.data?.source?.rpcId === context.requestId);
           const header = own && events.find(e => e.seq > own.seq && e.type === 'request/header');
@@ -315,7 +339,7 @@ export class HarnessRunner {
       }
       return result('timeout', 'poll_budget');
     } catch (e) {
-      const code = e.code?.startsWith('journal_') ? e.code : ['observation_aborted', 'deadline', 'call_budget', 'page_budget', 'model_drift', 'foreign_input', 'ambiguous_turn', 'missing_turn_identity', 'header_provenance_missing', 'header_history_budget', 'unreviewed_policy', 'unsupported_capability', 'configuration_unavailable', 'configuration_drift', 'preset_drift', 'permission_drift', 'verification_requires_read_only', 'invalid_cursor', 'cursor_regression', 'incomplete_history'].includes(e.code) ? e.code : 'read_unavailable';
+      const code = e.code?.startsWith('journal_') ? e.code : ['observation_aborted', 'deadline', 'call_budget', 'page_budget', 'model_drift', 'foreign_input', 'ambiguous_turn', 'missing_turn_identity', 'header_provenance_missing', 'header_history_budget', 'unreviewed_policy', 'unsupported_capability', 'configuration_unavailable', 'configuration_drift', 'preset_drift', 'permission_drift', 'route_profile_known_failure', 'verification_requires_read_only', 'invalid_cursor', 'cursor_regression', 'incomplete_history'].includes(e.code) ? e.code : 'read_unavailable';
       return result(code === 'deadline' ? 'timeout' : code === 'observation_aborted' || code === 'read_unavailable' ? 'unknown' : 'blocked', code);
     } finally { this.#active.delete(key); }
   }
