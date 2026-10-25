@@ -1,5 +1,7 @@
 # agent-fleet
 
+迁移与升级先读[兼容来源、模型选择保护及在途恢复门槛](docs/migration-and-upgrades.md)；历史通过不代表未知新版本可用。
+
 让手机上的 ChatGPT dots（以及 Grok Bot 等任何支持 OAuth MCP 的助手）直接给你自己电脑上的编码 agent 派活：
 Codex、DSH 桌面版，以及在 Herdr 终端里运行的 Antigravity（agy）、Codex CLI 和 `dsh headless`。
 

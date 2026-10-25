@@ -1,5 +1,7 @@
 # Runbook
 
+迁移与升级先读[兼容来源、模型选择保护及在途恢复门槛](migration-and-upgrades.md)；历史通过不代表未知新版本可用。
+
 所有命令都在本仓库根目录执行。个人值从 overlay（`~/.config/agent-fleet/fleet.json`，或用 `AGENT_FLEET_CONFIG` 指定）读取，下面用 `<RELAY>` 表示 `relay.baseUrl`。
 
 ## 0. 前提
@@ -43,7 +45,7 @@ mkdir -p ~/Library/Logs/codex-app-server ~/Library/Logs/herdr-server
 for f in codex-app-server herdr-server desktop-agents-autostart; do launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.yourname.$f.plist; done
 ```
 
-DSH：每台 Mac 跑 `node scripts/fleet.mjs release dsh`，把本仓库的 [adapters/dsh](../adapters/dsh/README.md) 插件（`agent-fleet-dsh`）链进桌面版的 `desktop` profile；它在 `~/.local/state/agent-fleet-dsh/native.sock`（0600）上转发桌面 Host 的原生会话接口。每次 `release dsh` 之后都要退出并重开 DeepSeek Harness，正在运行的桌面版不会自己加载新插件。
+DSH：每台 Mac 跑 `node scripts/fleet.mjs release dsh --sha <reviewed SHA>`，把本仓库的 [adapters/dsh](../adapters/dsh/README.md) 插件（`agent-fleet-dsh`）链进桌面版的 `desktop` profile；它在 `~/.local/state/agent-fleet-dsh/native.sock`（0600）上转发桌面 Host 的原生会话接口。每次 `release dsh` 之后都要退出并重开 DeepSeek Harness，正在运行的桌面版不会自己加载新插件。
 
 ## 4. 添加实例并配对（每台机器、每种 connector）
 
@@ -63,7 +65,7 @@ agenvo-dispatch instance add --id <id> --endpoint http://HOST:PORT --key-file <Z
 node scripts/fleet.mjs contexts --apply      # 把 overlay 里的 context 写进各 connector 配置
 AGENVO_ADMIN_SECRET="$(cat ~/.config/agenvo/admin-secret)" agenvo-<connector> connect <RELAY> --name "<机器> / <connector>" --approve
 agenvo-<connector> service install
-node scripts/fleet.mjs release agenvo        # 把刚装好的 connector 改为从固定版本的发布目录运行
+node scripts/fleet.mjs release agenvo --sha <reviewed SHA> # 把刚装好的 connector 改为从固定版本的发布目录运行
 ```
 
 `service install` 生成的 plist 指向 checkout 里的 `dist/cli.js`；每次 `service install` 之后都要再跑一次 `release agenvo`。
