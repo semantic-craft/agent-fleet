@@ -1,6 +1,6 @@
 {
   "name": "agent-fleet-agenvo-native",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "type": "module",
   "main": "./index.js",
@@ -14,7 +14,8 @@
     "README.md",
     "references.json",
     "flow.js",
-    "action.js"
+    "action.js",
+    "status.js"
   ],
   "peerDependencies": {
     "@deepseek-ai/dsh-mcp-client": "0.2.1-rc.3",

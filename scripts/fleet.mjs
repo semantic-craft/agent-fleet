@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // agent-fleet CLI: doctor | contexts [--apply] | launchd NAME | check [--dispatch] [--project P] [--instance ID --session SID] | release agenvo|dsh [--sha SHA] [--rollback] [--connector codex]
+import { fleetCallerCreate } from "./dsh-native-caller.mjs";
 import { dshTurn } from "./dsh-check.mjs";
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -37,6 +38,7 @@ const { values: opt, positionals } = parseArgs({
     project: { type: "string" },
     instance: { type: "string" },
     session: { type: "string" },
+    workspace: { type: "string" },
     config: { type: "string" },
     sha: { type: "string" },
     rollback: { type: "boolean" },
@@ -350,9 +352,9 @@ function upstream() {
   process.exitCode = 1; // a pending upgrade needs attention, so the weekly job notifies
 }
 
-const commands = { doctor, contexts, launchd: () => launchd(arg), check, upstream, release: async () => (await import("./release.mjs")).release(arg, { cfg: arg === "agenvo" ? config() : {}, sha: opt.sha, rollback: opt.rollback, connector: opt.connector }) };
+const commands = { "caller-plan": () => console.log(JSON.stringify(fleetCallerCreate({sessionId:opt.session,workspaceId:opt.workspace}))), doctor, contexts, launchd: () => launchd(arg), check, upstream, release: async () => (await import("./release.mjs")).release(arg, { cfg: arg === "agenvo" ? config() : {}, sha: opt.sha, rollback: opt.rollback, connector: opt.connector }) };
 if (!commands[command]) {
-  console.error("usage: fleet.mjs doctor | contexts [--apply] | launchd NAME | check [--dispatch] [--project P] [--instance ID --session SID] | upstream [--try-merge] | release agenvo|dsh [--sha SHA] [--rollback] [--connector codex]  [--machine NAME] [--config PATH]");
+  console.error("usage: fleet.mjs caller-plan --session SID --workspace WID | doctor | contexts [--apply] | launchd NAME | check [--dispatch] [--project P] [--instance ID --session SID] | upstream [--try-merge] | release agenvo|dsh [--sha SHA] [--rollback] [--connector codex]  [--machine NAME] [--config PATH]");
   process.exit(2);
 }
 await commands[command]();

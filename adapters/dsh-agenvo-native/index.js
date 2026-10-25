@@ -1,4 +1,5 @@
 import {createCredentialAuth,credentialBindingId} from './oauth.js';
+import {registerStatus} from './status.js';
 import {connectScoped} from './transport.js';
 import {registerHostAuthorization,browserOpener} from './action.js';
 export const name='agent-fleet-agenvo-native';
@@ -29,6 +30,7 @@ export async function apply(ctx,config){
  let disposed=false;
  ctx.effect(()=>()=>{disposed=true;},'agent-fleet.authorization-owner');
  const connect=connectionGate(()=>connectScoped(ctx,{relayUrl:binding.serverUrl,authProvider:authorization.authProvider},{...sdk,scopeOf:scope.scopeOf,createMcpToolDefinition:McpClient.createMcpToolDefinition}),()=>disposed);
+ ctx.effect(()=>registerStatus(ctx,{key,connectionState:connect.state}),'agent-fleet.status-command');
  const dispose=registerHostAuthorization(ctx,{key,oauthController:authorization,auth:sdk.auth,openBrowser:browserOpener({issuer:binding.issuer,runNativeCommand}),connect,platformSupported:process.platform==='darwin',hasGrant:async()=>await ctx.credentials.readRecord(key)!==undefined});
  ctx.effect(()=>dispose,'agent-fleet.authorization-action');
  // Missing grant leaves a discoverable human command, not a failed plugin or automatic OAuth flow.
@@ -42,7 +44,7 @@ export async function apply(ctx,config){
 /** Coalesce explicit connection requests only; a closed connection never auto-retries. */
 export function connectionGate(open,isDisposed){
  let connection,connecting;
- return async()=>{
+ const ensure=async()=>{
   if(isDisposed())throw Error('authorization_owner_disposed');
   if(connection && !connection.closed)return;
   connection=undefined;
@@ -53,4 +55,6 @@ export function connectionGate(open,isDisposed){
   }).finally(()=>{connecting=undefined;});
   return connecting;
  };
+ ensure.state=()=>isDisposed()?'disposed':connecting?'connecting':connection&&!connection.closed?'connected':'disconnected';
+ return ensure;
 }
