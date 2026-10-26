@@ -43,13 +43,13 @@
 
 dot 原生平台任务通道不受本节阻断；DSH／GrokBot→Agenvo→Codex Desktop 是需保留的外部目标，不能互相替代，见[调用方路由](docs/caller-routing.md)。
 
-**agenvo → Codex 实例 `thread/start` 建空桌面会话 → 仅跨 backend 时按已验证原生 ownership 路径交接 → 打开 `codex://threads/<thread_id>?prompt=…` 确认 Desktop 可见 → 经 agenvo 对同一线程 `turn/start` 提交。**
+**agenvo → Codex 实例 `thread/start` 建空桌面会话 → 释放写锁或已证实原生交接 → 打开 `codex://threads/<thread_id>?prompt=…` 确认 Desktop 可见 → 经 agenvo 对同一线程 `turn/start` 提交 → turn 终态后同一 connector `thread/unsubscribe` 交还 Desktop。**
 
-- 起因与后果：用户要任务出现在 Codex Desktop，并由 agent 经 agenvo 提交开跑；会话仍须 Desktop 可见（2026-10-25 10:18 经图灵纠正）。
-- 修复与证据：正本改写于 `skills/delegate-via-agenvo/SKILL.md`「Codex Desktop」；外部技能副本是否同步须另核，不能由本仓修改推断。
+- 起因与后果：用户要任务出现在 Codex Desktop，并由 agent 经 agenvo 提交开跑；会话仍须 Desktop 可见，且交还后左栏可操作（2026-10-25 10:18／16:58；thc-20261026）。
+- 修复与证据：Desktop 正道正文在 [xw-stack 派活技能](https://github.com/semantic-craft/xw-stack/blob/main/skills/delegate-via-agenvo/SKILL.md#codex-desktop) 与本仓[交接契约](docs/codex-desktop-handoff.md)；合入后立刻 Skill 重载验收（全局 workflows 与仓正本一致）。派活正道只留一条。
 **Desktop 交互控制交还门槛**：独立同 host 执行基线不以退订能力为创建前置，Desktop 项保持未验；仅当完成交还时，确认 connector 暴露 `thread/unsubscribe` 且 watcher 不抢其他 loaded 线程，否则 `blocked_native_writer_release`。同 host 共享 app-server 与 Desktop 自带 backend 也要交还 writer；本次 turn 终态后由同一 connector 退订，再截图核实项目下可见且无横幅。connector 重启不释放独立 native writer。目标仍为 Desktop 可见后 agent `turn/start`，见[交接契约](docs/codex-desktop-handoff.md)。
-- 验证点：`test/codex-handoff-docs.test.mjs` 检查所有入口的前置阻断与提交者一致；`test/codex-handoff.test.mjs` 检查目标/版本/线程关联、证据缺失与 unknown 不重发；离线文档回归不证明实际 writer 已释放。
-- 复发记录：Seen 3x（2026-10-25 保留 agent 提交目标，修复控制权前提）。
+- 验证点：`test/codex-handoff-docs.test.mjs` 检查 Desktop 正道含 `thread/unsubscribe` 与可见验收句；`test/codex-handoff.test.mjs` 检查目标/版本/线程关联、证据缺失与 unknown 不重发；离线文档回归不证明实际 writer 已释放。
+- 复发记录：Seen 3x（2026-10-25 保留 agent 提交目标；thc-20261026 写清 unsubscribe 交还与 Skill 重载）。
 
 ### Herdr 常驻要用 `herdr server`
 
