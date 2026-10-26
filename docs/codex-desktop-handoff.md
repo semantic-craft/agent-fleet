@@ -10,7 +10,7 @@
 
 共享 app-server 与 Desktop 自带 app-server 即使在同 host、共用 CODEX_HOME，也属于不同连接。共享端保持 loaded/subscribed 时，Desktop 可出现 `localConversation.writerConflict`。仅共享路径、loaded、历史回读或 deep link 不能单独证明 Desktop 可见或 writer 已交还。
 
-`thread/start` → Desktop 可见性检查 → `turn/start` 真正提交 → 读本次 turn 终态和答案 → **持有订阅的 connector 连接**调用 `thread/unsubscribe {threadId}` → 重新打开 Desktop 并截图。`not_submitted` → `created` → `desktop_visible` → `submitted` → 终态 → 退订 → 无横幅验收；任一 UI 步骤受限，执行基线可独立验证，但 Desktop 项仍未验。
+默认目标（Desktop 正道）：`thread/start` → 释放写锁或已证实原生交接 → Desktop 可见性检查 → `turn/start` 真正提交 → 读本次 turn 终态和答案 → **持有订阅的 connector 连接**调用 `thread/unsubscribe {threadId}` 交还 Desktop → 重新打开并截图验收。状态机：`not_submitted` → `created` → `desktop_visible` → `submitted` → 终态 → 退订 → 无横幅验收。交还后可见验收：左栏项目下出现同一会话，主区无 `writerConflict`／“This is open in another app”／“Fork chat”／“open in new chat”。任一 UI 步骤受限，执行基线可独立验证，但 Desktop 项仍未验。
 
 退订原生结果为 `unsubscribed`、`notSubscribed` 或 `notLoaded`；connector 对成功响应移除 resumeTargets，重连不再自动 resume。最后订阅者离开后原生服务经过宽限期 unload，并可发 `thread/closed`。`notSubscribed` 不证明其他连接没有订阅。若仍有横幅，检查其他订阅者及旧 watcher；不要反复发送输入。
 
@@ -28,4 +28,4 @@ connector `kickstart` 不等于放锁，也不证明 native writer 已释放。�
 
 overlay 是实例 context 正本。安装修复后的 connector 后，在目标机运行 `node scripts/fleet.mjs contexts --apply`，仅重启变更的 connector，随后 `contexts` 和 Agenvo discovery 回读确认；context 不改变 scope，无需重新批准。回滚 context 时恢复私有备份再执行相同命令。
 
-全局 Grok／Magpie 消费方对齐本仓派活技能的第 5 步；不把消费者副本当成正本。分别从 DSH、GrokBot 发起的端到端验收独立记录，直接 Agenvo 烟雾不代替它们。
+全局 Grok／Magpie 消费方对齐 [xw-stack 派活技能](https://github.com/semantic-craft/xw-stack/blob/main/skills/delegate-via-agenvo/SKILL.md#codex-desktop) Desktop 正道五步（含 `thread/unsubscribe`）；不把消费者副本当成正本。合入后立刻 Skill 重载，使全局 workflows 与仓正本一致。分别从 DSH、GrokBot 发起的端到端验收独立记录，直接 Agenvo 烟雾不代替它们。

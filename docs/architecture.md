@@ -34,9 +34,10 @@
 
 **Desktop 交互控制交还门槛**：独立同 host 执行基线不以退订能力为创建前置，Desktop 项保持未验；仅当完成交还时，目标 connector 支持 `thread/unsubscribe`，watchEvents 不收养其他 loaded 线程；否则 `blocked_native_writer_release`。同 host 的共享 app-server 与 Desktop 自带 backend 也必须交还 writer。connector 重启不释放独立 native writer。
 1. discovery 选定 deviceId/instanceId，brief 与 cwd 均在该目标机器；`thread/start` 保存 threadId。
-2. 在目标机器打开 `codex://threads/<threadId>`，确认 Desktop 项目下可见。
-3. 经 Agenvo `turn/start`，读本次 turn 终态与实际输出。
-4. 同一 connector `thread/unsubscribe` 后重新打开 Desktop，截图核实左栏项目和无 writerConflict；完整五步与 kickstart 的可选处理见[交接契约](codex-desktop-handoff.md)。
+2. 释放写锁或已证实原生交接（kickstart 不等于放锁，见交接契约）。
+3. 在目标机器打开 `codex://threads/<threadId>`，确认 Desktop 项目下可见。
+4. 经 Agenvo `turn/start`，读本次 turn 终态与实际输出。
+5. 同一 connector `thread/unsubscribe` 交还 Desktop 后重新打开，截图核实左栏项目可见且无 writerConflict／Fork chat／open in new chat／another app；Desktop 正道五步详见[交接契约](codex-desktop-handoff.md)。
 
 **Claude Code、agy、dsh headless** 在 Herdr 里跑：
 

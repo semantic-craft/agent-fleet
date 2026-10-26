@@ -3,10 +3,16 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 const read=p=>readFileSync(new URL('../'+p,import.meta.url),'utf8');
 const section=(s,start,end)=>s.slice(s.indexOf(start),end?s.indexOf(end,s.indexOf(start)):undefined);
-test('Desktop handoff retains agent submission and scopes control handback checks',()=>{
+test('Desktop five-step handoff documents unsubscribe and visible acceptance',()=>{
  const contract=read('docs/codex-desktop-handoff.md');
- for(const required of ['unknown','desktop_visible','submitted','turn/start','不能单独证明']) assert.ok(contract.includes(required), required);
- assert.doesNotMatch(contract,/awaiting_user_send|由用户按 Send/);
+ for(const required of ['unknown','desktop_visible','submitted','turn/start','不能单独证明','thread/unsubscribe']) assert.ok(contract.includes(required), required);
+ assert.match(contract,/unsubscribe/);
+ assert.match(contract,/Fork chat|open in new chat|another app/);
+ assert.doesNotMatch(contract,/awaiting_user_send|由用户按 Send|用户按发送/);
+ const lesson=section(read('lessons.md'),'### Codex 派活走 Desktop 空会话','\n### ');
+ assert.match(lesson,/thread\/unsubscribe|unsubscribe/);
+ assert.match(lesson,/Skill 重载/);
+ assert.doesNotMatch(lesson,/用户按发送|由本人按发送/);
 });
 test('target machine and brief follow discovery rather than personal hostnames',()=>{
  for(const p of ['docs/architecture.md']) {
