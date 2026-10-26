@@ -6,6 +6,8 @@
 
 所有命令都在本仓库根目录执行。个人值从 overlay（`~/.config/agent-fleet/fleet.json`，或用 `AGENT_FLEET_CONFIG` 指定）读取，下面用 `<RELAY>` 表示 `relay.baseUrl`。
 
+故障恢复先读[运行时、控制面与回流诊断](runtime-recovery.md)：connector 在线不等于 runtime 可用，轮询不等于主动完成事件。
+
 ## 0. 前提
 
 - macOS，Node 24.13 以上。

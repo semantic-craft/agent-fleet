@@ -338,3 +338,9 @@ dot 原生平台任务通道不受本节阻断；DSH／GrokBot→Agenvo→Codex 
 - 修复：仅恢复明确订阅的 resumeTargets，暴露 thread/unsubscribe，成功后移除目标；完成回读后由同一连接退订。
 - 验证：agenvo 的 codex-attach 回归检查 orphan loaded 不被收养、退订后重连不再 resume；桌面必须另验左栏项目与无横幅，原生成功不代替截图。
 - 复发记录：Seen 1x (2026-10-25)。
+
+### 控制面故障必须按层恢复
+
+- connector online、native available、调用方 OAuth、任务终态和主动事件是不同证据。DSH app 停止可使 socket 消失而 connector 仍在线；普通启动可恢复，无须先发布插件或重新授权。
+- Cloudflare 浏览器签名403不等于 Access 登录失败；按 Ray 查证，安全规则变更另批。模型网关和任务控制入口分开，不强制所有调用方经额外转发层。
+- 2026-10-26 新的 DSH 发起、两轮同 Codex thread、原会话回执已验；主动推送、GrokBot和桌面可见性未由此证明。见 [恢复流程](docs/runtime-recovery.md)。既有 FileJournal 回归保护未知准入只读恢复及跨进程去重；不要通过重放真实写操作测试去重。
