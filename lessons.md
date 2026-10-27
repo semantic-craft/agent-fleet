@@ -344,3 +344,12 @@ dot 原生平台任务通道不受本节阻断；DSH／GrokBot→Agenvo→Codex 
 - connector online、native available、调用方 OAuth、任务终态和主动事件是不同证据。DSH app 停止可使 socket 消失而 connector 仍在线；普通启动可恢复，无须先发布插件或重新授权。
 - Cloudflare 浏览器签名403不等于 Access 登录失败；按 Ray 查证，安全规则变更另批。模型网关和任务控制入口分开，不强制所有调用方经额外转发层。
 - 2026-10-26 新的 DSH 发起、两轮同 Codex thread、原会话回执已验；主动推送、GrokBot和桌面可见性未由此证明。见 [恢复流程](docs/runtime-recovery.md)。既有 FileJournal 回归保护未知准入只读恢复及跨进程去重；不要通过重放真实写操作测试去重。
+
+### agy 使用桌面登录态模型 id（2026-10-27）
+
+**agy 默认显式传 `--model gemini-4-argon-medium`，不走 Magpie；禁止 `magpie/` 前缀及 `antigravity/gemini-4-argon`。DSH 经 Magpie 的模型路径不变。**
+
+- 起因与后果：agy 示例混用了 Magpie 路径，可能被拒或绕到非预期 provider；用户于 2026-10-27 明确纠正。
+- 修复与证据：Herdr context 与 operator 使用桌面 id，派活技能正本在 xw-stack 同步修改；本次核对文案和 live context，未重跑模型轮次。
+- 验证点：检查 `fleet.example.json`、`prompts/operator.md` 和 xw-stack `skills/delegate-via-agenvo/SKILL.md` 的 agy 命令均含 `--model gemini-4-argon-medium`；relay 返回的 Herdr context 同样使用此 id。
+- 复发记录：Seen 1x (2026-10-27)。

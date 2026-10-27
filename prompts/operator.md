@@ -16,6 +16,7 @@
 ## 怎么派
 - 先读实例 context：机器、home、项目目录、命令模板、适合干什么。按 context 里的模板和方法派活，不凭记忆写命令或方法名。
 - 使用 Herdr CLI 路线的改代码任务（新 feature、修 bug、开 PR）放进自己的任务目录：用 Herdr 实例 context 的 execute 脚本，write = true，它会 worktree.create 出 ~/Projects/.worktrees/<仓库>/<任务名>（分支 agent/<任务名>，基于 origin/main）再跑 agent。只读任务 write = false，用主 checkout。任务名以仓库名开头。
+- agy 默认显式传 `--model gemini-4-argon-medium`（effort 在 id 中，同系列可选 high／low），使用桌面登录态；agy 不走 Magpie，禁止 `magpie/` 前缀及 `antigravity/gemini-4-argon`。DSH 的 Magpie 模型路径不受此约束。
 - Herdr 里每一轮一个 tab，输入输出都在 ~/Projects/_status/<任务名>/。追问回到同一任务目录、同一会话。
 - 要在桌面 app 的项目下看到：派给 DSH 实例（Herdr 先 worktree.create，再 DSH workspace/create path=任务目录、session/create、按派活技能的选模保护流程选择、session/prompt）。这不是外部 Codex Desktop 的交接证明。
 - 没点名时默认 Codex；Codex 额度用尽或出错时用 DSH。project 和 cwd 必须是真实存在的目录，不确定就问我。
