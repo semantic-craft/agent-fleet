@@ -12,6 +12,7 @@
 | 判断某个 `~/Projects` 目录能否动 | [docs/landscape.md](docs/landscape.md) |
 | 改脚本 | [scripts/fleet.mjs](scripts/fleet.mjs)、[test/](test/)；`npm test` |
 | 例行维护、跟进上游、新增组件前 | [docs/maintenance.md](docs/maintenance.md) |
+| worktree／任务目录收尾 | 下文「worktree 不遗留」；布局见 [docs/landscape.md](docs/landscape.md) |
 
 ## 决策规则（按优先级）
 
@@ -25,6 +26,12 @@
 4. **个人值不进本仓库。** 域名、IP、账号、主机名、路径写在 overlay（默认 `~/.config/agent-fleet/fleet.json`，可用 `AGENT_FLEET_CONFIG` 覆盖）。如果某项改造离开个人值就没意义，先怀疑这项改造的必要性。
 5. **桌面可见、full access。** 派给 DSH 的任务必须出现在桌面 app 里，app 不在就明确失败，不退回 headless。执行权限默认 full access，访问控制靠 relay 的设备配对与 OAuth 授权。见 [ADR-0004](docs/decisions/0004-desktop-strict-and-full-access.md)。用户明确要 CLI 通道时可在 Herdr 跑 `dsh headless`，但必须按[派活技能](https://github.com/semantic-craft/xw-stack/blob/main/skills/delegate-via-agenvo/SKILL.md)登记到桌面项目，使其仍在桌面可见。
 6. **一个 relay，一个 owner。** 所有已授权客户端都能访问所有已批准实例；测试授权用完即撤，不碰用户的正式授权。
+
+## worktree 不遗留（2026-10-29 社长定）
+
+在 worktree（含 subagent 的 `.claude/worktrees/agent-*`、Herdr `~/Projects/.worktrees/<仓库>/<任务>`）里做的任务，完成时必须删除该 worktree 及其分支；专用 cargo target／`node_modules`／`.next` 等一并清。删除前二选一：已合并进 `main`；或不合并时先把未提交改动提交到该分支，打 `archive/<worktree名>` tag 存档，再 `git worktree remove` + `git branch -D`。编排 subagent 的会话负责收尾它派生的 worktree。确需保留的（待社长裁决、有冲突待解）在最终回复里点名路径与原因，不得默默留下。
+
+操作步骤与 `~/Projects` 布局见 [docs/landscape.md](docs/landscape.md)；派活侧指针见 [派活技能](https://github.com/semantic-craft/xw-stack/blob/main/skills/delegate-via-agenvo/SKILL.md)。
 
 ## 验收与交付
 
