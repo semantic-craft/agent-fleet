@@ -18,7 +18,9 @@
 
 0. **先按调用方能力选择入口。** dot 有原生平台任务工具且电脑连接已授权时优先原生 Codex 通道；DSH／GrokBot→Agenvo→Codex Desktop 是需保留的外部路线，同 host 执行不以 writer 交接为前提；仅跨 backend 转移需交接证据，Desktop 可见性另验，不能泛化为 Codex 不可用，也不能以 dot 工具替代外部需求。跨机先环境发现，见 [调用方路由](docs/caller-routing.md)。
 
-   **Codex 是主力，DSH 是同等能力的后备。** 默认把活交给 Codex；DSH 必须保持和 Codex 同级的原生能力（列出、读输出、新建、追问、中断、事件，任务在 DSH 桌面可见），以便 Codex 不可用（额度、故障）时无缝顶上。任何改动都不能让 DSH 退回到只能派任务的程度。
+   **Codex 是主力，DSH 是同等能力的后备。** 未有用户点名或审查覆盖时，默认把活交给 Codex；DSH 必须保持和 Codex 同级的原生能力（列出、读输出、新建、追问、中断、事件，任务在 DSH 桌面可见），以便 Codex 不可用（额度、故障）时无缝顶上。任何改动都不能让 DSH 退回到只能派任务的程度。
+
+   **审查／审稿／独立审**按 [xw-stack 派活技能](https://github.com/semantic-craft/xw-stack/blob/main/skills/delegate-via-agenvo/SKILL.md#审查审稿独立审)解析用户点名、项目／agent 默认及审查请求；无覆盖才用技能已有未点名默认，不因审查就默认 agy 或 `--mode plan`。
 
 1. **先用上游。** 运行时若已有 Agenvo 官方 connector（Codex app-server、Herdr、Paseo、OpenCode、Amp、Lody），直接用，不写自己的。CLI 型 agent（codex CLI、agy 等）一律放进 Herdr pane，不新增 connector。见 [ADR-0003](docs/decisions/0003-herdr-for-cli-agents.md)。
 2. **只为上游没有 connector、但用户要求在其桌面 app 里可见的运行时写 connector**。优先附着运行时自己的原生会话接口（DSH：桌面 Host 的 Typert 端点，经插件 native bridge），保留原生方法名；只有拿不到原生接口时才薄封装接收端 HTTP 契约（ZCode）。都不引入调度、队列或状态机。见 [ADR-0002](docs/decisions/0002-minimal-agenvo-fork.md)。
