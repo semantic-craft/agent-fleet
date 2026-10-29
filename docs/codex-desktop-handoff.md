@@ -18,6 +18,8 @@ connector `kickstart` 不等于放锁，也不证明 native writer 已释放。�
 
 ## 回程与验收
 
+接活方任务目录收尾遵守根 [AGENTS.md](../AGENTS.md)「worktree 不遗留」。
+
 先读本次 turnId 的 completed/failed/interrupted 和实际回答，再退订。退订后 notifications 可能停止，后续回读走 `thread/read`／`thread/turns/list` 持久历史；读取历史不恢复订阅。需要续写时才显式 resume。accepted 不是完成；unknown 只回读原 thread/turn，不重发。
 
 验收同时要求：agent 真实 `turn/start`、Desktop 左栏项目下出现同一 thread、主区无 “This is open in another app”／“Fork chat”／“open in new chat”。截图须包含两处；无截图不能报告桌面通过。cwd 必须匹配 Desktop 的 Projects 项目，projectId 可空。模型/provider、版本、threadId、turnId、退订 status 和截图路径分别记录。

@@ -118,6 +118,8 @@ node scripts/fleet.mjs check                         # 切换后经 relay 端到
 
 ## 日常操作
 
+任务 worktree／分支收尾见根 [AGENTS.md](../AGENTS.md)「worktree 不遗留」。
+
 | 要做什么 | 怎么做 |
 | --- | --- |
 | 改某个实例的 context | 改 overlay，执行 `contexts --apply`，重启对应 connector（`launchctl kickstart -k gui/$(id -u)/<label>`）；不需要重新批准 |
