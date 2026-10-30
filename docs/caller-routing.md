@@ -1,12 +1,13 @@
 # 按调用方能力选择派活入口
 
-## 三条路线，不互相冒充
+## 入口分开，不互相冒充
 
 | 调用方／目标 | 选择 | 不可外推 |
 | --- | --- | --- |
 | dot → Codex，当前调用方已有原生平台任务工具和电脑连接授权 | 优先原生平台任务通道，创建／执行／读回 | 不能推断 DSH、GrokBot 或任意 agent 也有这些工具 |
-| dot 或其他已授权 MCP 调用方 → DSH／Herdr | Agenvo，发现实例与 schema 后调用 | 不证明 Codex writer handoff 通过 |
-| DSH → Agenvo → Codex Desktop；GrokBot → Agenvo → Codex Desktop | 保留且需要实现的外部派活路线 | 不能用 dot 原生通道替代，直接及 DSH 同 host 文本执行已验；GrokBot 发起与 Desktop 可见仍未验 |
+| Grok 外环 → 节点 | CommHub MCP（hub `/mcp`：`send_task` 与需求卡） | 不证明 Codex Desktop 可见，也不证明 writer handoff |
+| 本机接收端（Herdr／Antigravity／ZCode 等） | #90 门铃桥：`/events/<alias>`、`get_inbox`、`ack_inbox`、`send_reply` | 不证明 Codex writer handoff 通过；发现 schema 后再调原生方法 |
+| DSH → Codex Desktop；GrokBot → Codex Desktop | 桌面可见性仍须各自验收 | 不能用 dot 原生通道替代；DSH 同 host 文本执行已验；GrokBot 发起与 Desktop 可见仍未验 |
 
 用户目标仍是 Codex Desktop 可见后由 agent 提交，不退回 exec 或用户 Send。
 [交接契约](codex-desktop-handoff.md)和[probe 候选](codex-handoff-probe.md)的
@@ -35,8 +36,8 @@
 
 ## 外部调用方与迁移
 
-DSH、GrokBot 的 Codex Desktop 派活需求明确保留。它们有 Agenvo MCP 访问时按
-[技能](https://github.com/semantic-craft/xw-stack/blob/main/skills/delegate-via-agenvo/SKILL.md)发现方法；不能引导它们调用未提供的
+Grok 外环走 CommHub MCP。本机接收端走 #90 门铃桥。DSH、GrokBot 的 Codex Desktop 可见性仍单独验收；有 connector 方法时按
+[技能](https://github.com/semantic-craft/xw-stack/blob/main/skills/delegate-via-agenvo/SKILL.md)发现 schema。不能引导它们调用未提供的
 平台专属任务 API。外部创建／（仅跨 backend 的原生交接）／Desktop 可见／同线程 agent `turn/start`
 必须逐项验证；当前未通过就只报告该路线阻断，不废弃需求、不改写其他路线状态。
 
@@ -74,6 +75,8 @@ DSH／Herdr 回读；外部 Codex 交接。账号、版本、平台工具和模�
 <!-- caller-routes:end -->
 
 `npm run lint:routes` 校验表与跨文件禁用的旧路由表述，包含在 `npm test` 中。lint 只检查明确规则，不声称理解任意自然语言矛盾。
+
+`agenvo-desktop` 是 Codex Desktop 交接的验收标签。Grok 外环派活用 CommHub MCP；本机接收端用 #90 门铃桥。
 
 同 host 的[脱敏直接基线](evidence/codex-same-host.json)独立于上述三调用方验收，不填充 DSH/GrokBot 成功格。
 

@@ -1,6 +1,6 @@
 # agent-fleet 维护约定
 
-本仓库是"助手经 Agenvo 给自有电脑上的 agent 派活"这套基础设施的设计原件。没有对话记忆的 agent 只要按本文件和链接的决策行事，就应能做出与原设计一致的选择。
+本仓库是「助手经 CommHub（anet）给自有电脑上的 agent 派活」的设计原件。没有对话记忆的 agent 只要按本文件和链接的决策行事，就应能做出与原设计一致的选择。控制面见 [ADR-0001](docs/decisions/0001-agenvo-as-control-plane.md)。
 
 ## 先读什么
 
@@ -16,7 +16,7 @@
 
 ## 决策规则（按优先级）
 
-0. **先按调用方能力选择入口。** dot 有原生平台任务工具且电脑连接已授权时优先原生 Codex 通道；DSH／GrokBot→Agenvo→Codex Desktop 是需保留的外部路线，同 host 执行不以 writer 交接为前提；仅跨 backend 转移需交接证据，Desktop 可见性另验，不能泛化为 Codex 不可用，也不能以 dot 工具替代外部需求。跨机先环境发现，见 [调用方路由](docs/caller-routing.md)。
+0. **先按调用方能力选择入口。** dot 有原生平台任务工具且电脑连接已授权时优先原生 Codex 通道。Grok 外环走 CommHub MCP（[prompts/grok.md](prompts/grok.md)）；本机接收端走 #90 门铃桥 `adapters/commhub/herdr-bridge.mjs`。DSH、GrokBot 的 Codex Desktop 交接仍按调用方路由验收：同 host 执行不以 writer 交接为前提；仅跨 backend 转移需交接证据，Desktop 可见性另验，不能泛化为 Codex 不可用，也不能以 dot 工具替代外部需求。跨机先环境发现，见 [调用方路由](docs/caller-routing.md)。
 
    **Codex 是主力，DSH 是同等能力的后备。** 未有用户点名或审查覆盖时，默认把活交给 Codex；DSH 必须保持和 Codex 同级的原生能力（列出、读输出、新建、追问、中断、事件，任务在 DSH 桌面可见），以便 Codex 不可用（额度、故障）时无缝顶上。任何改动都不能让 DSH 退回到只能派任务的程度。
 
@@ -41,7 +41,7 @@
 | --- | --- |
 | 选择归单次创建参数，回读核对同线程模型/档位；类型不混用 | [native-thread-selection](docs/native-thread-selection.md) 的 prepare / check-request / check-observation；npm test 回归、lint 检查入口。宿主直接调用不在本仓拦截范围 |
 
-- 生产验收走真实入口：OAuth → relay `/mcp` → connector → 原生服务；只看 `/health` 不算。`fleet.mjs check` 是最小基线。
+- 生产验收走真实入口。控制面是 CommHub `/mcp`（`fleet.mjs check`）。connector 附着另走 OAuth → relay `/mcp` → connector → 原生服务（`check --legacy-agenvo`）。只看 `/health` 不算。`fleet.mjs check` 是控制面最小基线。
 - 区分"输入已接受""原生轮次完成""业务目标完成"。
 - 改实例 `source`、endpoint 等 scope 字段后要在 relay 重新批准；只改 `context` 不需要。
 - CI：私有仓库的必过检查是常开 Mac mini 上自托管 runner 的轻任务（runner 标签与机器名见 overlay），runner 一次只跑一个 job、以低权限独立用户运行，workflow 设 `timeout-minutes`；Swift/iOS 构建和签名在开发笔记本的 runner 上跑；公开仓库用 GitHub 托管 runner。先在 xw-tooling 试点；仓库还没接 runner 时，在本机跑同一条检查命令，把结果写进 PR。

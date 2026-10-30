@@ -2,7 +2,7 @@
 
 迁移与升级先读[兼容来源、模型选择保护及在途恢复门槛](migration-and-upgrades.md)；历史通过不代表未知新版本可用。
 
-本页维护 Agenvo 路线；dot→Codex 优先可用且已授权的原生平台任务通道。DSH／GrokBot→Agenvo→Codex Desktop 的需求保留，阻断只作用于该外部路线。先读[调用方路由](caller-routing.md)，跨机先发现目标环境。
+控制面是 CommHub（anet），见 [ADR-0001](decisions/0001-agenvo-as-control-plane.md)。本页是 connector 安装步骤。dot→Codex 优先可用且已授权的原生平台任务通道。Grok 外环走 CommHub MCP。DSH、GrokBot 的 Codex Desktop 交接仍按[调用方路由](caller-routing.md)验收，阻断只作用于该外部路线。跨机先发现目标环境。
 
 所有命令都在本仓库根目录执行。个人值从 overlay（`~/.config/agent-fleet/fleet.json`，或用 `AGENT_FLEET_CONFIG` 指定）读取，下面用 `<RELAY>` 表示 `relay.baseUrl`。
 
@@ -88,12 +88,13 @@ node scripts/fleet.mjs release agenvo --sha <reviewed SHA> # 把刚装好的 con
 
 ```sh
 node scripts/fleet.mjs doctor              # 本机 launchd 服务与 connector 状态
-node scripts/fleet.mjs check               # OAuth + search + Codex／Herdr／DSH 实例各一个只读原生调用
-node scripts/fleet.mjs check --dispatch    # 另给每个 Herdr 实例跑一轮派活用的 tab（命令结束即 exit，等 pane_not_found 后经第一个 pane 读回退出码，不调模型），给每个 DSH 实例派只读任务等到 turn/end；项目取 overlay 的 check.project（每台派活机器 projectsRoot 下都有的目录），--project 可覆盖，--instance 只查一个实例
-node scripts/fleet.mjs check --instance <dsh 实例> --session <sessionId>   # 向一个已有 DSH 会话追加一轮只读输入
+node scripts/fleet.mjs check               # CommHub `/mcp`（`ANET_HUB`，否则本机 127.0.0.1:9200）
+node scripts/fleet.mjs check --legacy-agenvo               # 旧 relay：OAuth + search + Codex／Herdr／DSH 实例各一个只读原生调用
+node scripts/fleet.mjs check --legacy-agenvo --dispatch    # 另给每个 Herdr 实例跑一轮派活用的 tab（命令结束即 exit，等 pane_not_found 后经第一个 pane 读回退出码，不调模型），给每个 DSH 实例派只读任务等到 turn/end；项目取 overlay 的 check.project（每台派活机器 projectsRoot 下都有的目录），--project 可覆盖，--instance 只查一个实例
+node scripts/fleet.mjs check --legacy-agenvo --instance <dsh 实例> --session <sessionId>   # 向一个已有 DSH 会话追加一轮只读输入
 ```
 
-`check` 只撤销自己创建的测试授权。relay 上已批准、overlay 里却没有的实例会打出 `WARNING`：它们没有受管的 context，也不在检查范围内，要么补进 overlay，要么在 relay 撤销。最后在 ChatGPT 里添加连接器（Plugins → Add custom MCP server，URL 填 `<RELAY>/mcp`，认证选 OAuth），再用 [prompts/acceptance-codex.md](../prompts/acceptance-codex.md) 做界面级验收。
+`check --legacy-agenvo` 只撤销自己创建的测试授权。relay 上已批准、overlay 里却没有的实例会打出 `WARNING`：它们没有受管的 context，也不在检查范围内，要么补进 overlay，要么在 relay 撤销。Grok 外环接 CommHub，见 [prompts/grok.md](../prompts/grok.md)。界面级验收用 [prompts/acceptance-codex.md](../prompts/acceptance-codex.md)。
 
 ## 发布与回滚
 
@@ -105,7 +106,8 @@ node scripts/fleet.mjs release agenvo --connector codex [--sha SHA] # 只切换 
 node scripts/fleet.mjs release agenvo --connector codex --rollback  # 只恢复该范围的上次切换
 node scripts/fleet.mjs release dsh    [--sha SHA]   # DSH 插件（adapters/dsh）；改 releases/dsh/live 并更新桌面 profile
 node scripts/fleet.mjs release <组件> --rollback     # 恢复上一次切换前的 plist
-node scripts/fleet.mjs check                         # 切换后经 relay 端到端验收
+node scripts/fleet.mjs check --legacy-agenvo         # connector 切换后经旧 relay 端到端验收
+node scripts/fleet.mjs check                         # 控制面仍用 CommHub 检查
 ```
 
 拒绝的情况：提交不在上述远端分支上；现役发布目录被手改过（与 `release.json` 不符）；同一提交的目录不完整。旧 plist 备份在 `releases/<组件>/backups/`，`current.json` 记录当前版本。

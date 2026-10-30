@@ -9,19 +9,24 @@
 
 ## 调用方入口
 
-先按[调用方路由](caller-routing.md)区分 dot 原生 Codex 任务、Agenvo→DSH／Herdr、DSH／GrokBot→Agenvo→Codex Desktop。原生任务工具依赖调用方与连接授权；外部 writer 阻断不影响 dot 日常 Codex 路线，也不能用 dot 工具替代外部需求。
+远程控制面是 CommHub（Agent Network／anet），见 [ADR-0001](decisions/0001-agenvo-as-control-plane.md)。先按[调用方路由](caller-routing.md)区分 dot 原生平台任务、Grok 外环（CommHub MCP）、本机 #90 门铃桥，以及 DSH、GrokBot 的 Codex Desktop 交接。原生任务工具依赖调用方与连接授权；外部 writer 阻断不影响 dot 日常 Codex 路线，也不能用 dot 工具替代外部需求。
 
-## Agenvo 组件与职责
+## 组件与职责
 
 | 组件 | 运行在哪 | 职责 | 不负责 |
 | --- | --- | --- | --- |
-| 助手（ChatGPT / dots / Grok Bot） | 云端 | 理解目标、选实例、派活、读结果、订阅事件 | 执行代码 |
-| Agenvo relay | Cloudflare Worker + Durable Object | MCP 端点、OAuth、设备配对与实例审批、把调用路由到 connector、转发 `runtime.changed` 事件 | 存储任务、调度、端到端加密 |
-| connector（每种运行时一个进程） | 每台 Mac，launchd | 主动外连 relay；把 `search`/`execute` 翻成原生调用；附带实例 `context` | 启动或停止原生服务 |
+| 助手（ChatGPT / dots / Grok Bot） | 云端 | 理解目标、派活、读结果 | 执行代码 |
+| CommHub | 本机 bun，默认 `127.0.0.1:9200`；公网经 cloudflared | MCP `/mcp`、需求卡、`send_task`、SSE `/events/<alias>` | 执行 agent；保存 token |
+| 门铃桥 | 本仓 `adapters/commhub`（#90） | 收门铃、`get_inbox`、`ack_inbox`、`send_reply` | 另建调度器 |
+| connector（每种运行时一个进程） | 每台 Mac，launchd | 把桌面／Herdr 的原生调用接出来；附带实例 `context` | 控制面；启动或停止原生服务 |
 | 原生服务 | 每台 Mac | 真正跑 agent：`codex app-server`、`herdr server`、DSH 桌面版（插件在 Unix socket 上转发其原生端点） | 远程访问控制 |
 | 桌面 app | 每台 Mac | 让用户看到并接手会话 | — |
 
 ## 一次派活的路径
+
+外环：Grok 经 CommHub MCP `send_task` 到目标 alias。目标机上的 #90 门铃桥（`adapters/commhub/herdr-bridge.mjs`）从 `/events/<alias>` 醒来，`get_inbox` 排空后执行，再 `ack_inbox` 与 `send_reply`。记账用需求卡。dot 的原生平台任务不走这条。
+
+下面是桌面 DSH 的 connector 附着，不是控制面：
 
 1. 用户对 dot 说"让 DSH 在 koe 里跑一下测试"。
 2. 助手调 `search`，拿到实例列表、在线状态和每个实例的 `context`（写着项目目录、默认权限、适合干什么）。
@@ -30,7 +35,7 @@
 5. DSH 桌面在左栏该项目下建出可见会话并开始执行；connector 立即返回 session id。
 6. 轮次结束时 connector 转发原生 `turn/end`（`runtime.changed`），dot 被唤醒后调 `session/follow` 读结果，再决定下一步。
 
-**外部 Codex Desktop**（DSH／GrokBot 经 Agenvo 的明确需求，尚未验通）：
+**外部 Codex Desktop**（DSH、GrokBot 的桌面可见性，尚未验通）：
 
 **Desktop 交互控制交还门槛**：独立同 host 执行基线不以退订能力为创建前置，Desktop 项保持未验；仅当完成交还时，目标 connector 支持 `thread/unsubscribe`，watchEvents 不收养其他 loaded 线程；否则 `blocked_native_writer_release`。同 host 的共享 app-server 与 Desktop 自带 backend 也必须交还 writer。connector 重启不释放独立 native writer。
 1. discovery 选定 deviceId/instanceId，brief 与 cwd 均在该目标机器；`thread/start` 保存 threadId。

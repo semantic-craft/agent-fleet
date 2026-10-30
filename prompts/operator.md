@@ -1,12 +1,13 @@
 # 给 ChatGPT（或任何 MCP 助手）的派活规矩
 
-先按 [调用方路由](../docs/caller-routing.md)选择入口，再把下面这段交给相应助手。不要为了 dot 原生任务额外添加 Agenvo。
+先按 [调用方路由](../docs/caller-routing.md)选择入口，再把下面这段交给相应助手。不要为了 dot 原生任务额外添加控制面。Grok 外环见 [grok.md](grok.md)（CommHub MCP）。
 
 ```text
 ## 先按调用方选择入口
 - dot 已有原生平台任务工具且电脑连接已授权时，Codex 优先走原生通道；发现实际工具 schema，跨机先发现环境，保存原生任务 ID，同入口继续和回读。不要求外部 writer handoff，也不假设跨入口共享会话。
-- DSH→Agenvo→Codex Desktop、GrokBot→Agenvo→Codex Desktop 是必须保留的外部路线。调用方没有原生工具时不能借用 dot 专属 API。独立同 host 执行基线不以退订能力为创建前置，Desktop 项保持未验；完成 Desktop 交还时按 docs/codex-desktop-handoff.md 确认 thread/unsubscribe 已暴露且 watcher 不抢其他 loaded 线程；同 host 共享 backend 也在 turn 终态后退订，再截图验无横幅。Desktop 实际可见后由 agent 同线程 turn/start，不退回 exec 或用户 Send，不重启 connector 代替 writer 交接。
-- 向 DSH／Herdr 派活使用已授权 Agenvo；以下 Agenvo 发现与模板仅适用于该入口。缺少连接授权时报告前提，不自行授权。
+- Grok 外环走 CommHub MCP（hub `/mcp`：`send_task` 与需求卡）。本机接收端走 #90 门铃桥（SSE `/events/<alias>`，`get_inbox`／`ack_inbox`／`send_reply`）。
+- DSH、GrokBot 的 Codex Desktop 可见性仍按 docs/codex-desktop-handoff.md 验收。调用方没有原生工具时不能借用 dot 专属 API。独立同 host 执行基线不以退订能力为创建前置，Desktop 项保持未验；完成 Desktop 交还时确认 thread/unsubscribe 已暴露且 watcher 不抢其他 loaded 线程；同 host 共享 backend 也在 turn 终态后退订，再截图验无横幅。Desktop 实际可见后由 agent 同线程 turn/start，不退回 exec 或用户 Send，不重启 connector 代替 writer 交接。
+- 向 DSH／Herdr 的桌面或 pane 附着使用已有 connector；以下发现与模板仅适用于该附着。缺少连接授权时报告前提，不自行授权。
 - 验收分别记录 dot、DSH、GrokBot 的实际派活、目标可见与关联、同会话继续、结果返回，不能互相代替。
 
 ## 第一次使用：先验证（只读）

@@ -34,10 +34,22 @@ test('native prerequisites and three separate evidence rows prevent cross-route 
 
 test('copied prompts retain caller routing and require actual external callers',()=>{
  const operator=read('prompts/operator.md').split('```text')[1];
- for(const phrase of ['原生平台任务工具','DSH→Agenvo→Codex Desktop','GrokBot→Agenvo→Codex Desktop','同入口继续和回读']) assert.ok(operator.includes(phrase),phrase);
+ for(const phrase of ['原生平台任务工具','CommHub MCP','门铃桥','同入口继续和回读']) assert.ok(operator.includes(phrase),phrase);
  assert.doesNotMatch(operator,/Codex exec 线程|改代码的任务.*全部/);
  const acceptance=read('prompts/acceptance-codex.md').split('```text')[1];
  assert.match(acceptance,/分别由 DSH 和 GrokBot 发出/);
  assert.match(acceptance,/不能用 ChatGPT 代理测试充当通过/);
  assert.doesNotMatch(acceptance,/都在 ChatGPT 里用自然语言下达|每个任务截两张图：ChatGPT|本次是 Desktop 空线程交接/);
+ assert.match(acceptance,/CommHub/);
+});
+test('canonical control-plane wording names CommHub',()=>{
+ for(const path of ['README.md','AGENTS.md','docs/architecture.md','docs/decisions/0001-agenvo-as-control-plane.md','docs/decisions/0006-single-remote-path.md','prompts/grok.md']) {
+  const text=read(path);
+  assert.match(text,/CommHub/,path);
+  assert.doesNotMatch(text,/以 Agenvo 作为唯一的远程控制面|以上游为底座：Agenvo|助手经 Agenvo 给自有电脑|自建 MCP 远程派活统一 Agenvo|自建 MCP 远程通路统一 Agenvo/,path);
+ }
+ const grok=read('prompts/grok.md');
+ assert.match(grok,/\/mcp/);
+ assert.match(grok,/门铃/);
+ assert.doesNotMatch(grok,/<RELAY>\/mcp/);
 });

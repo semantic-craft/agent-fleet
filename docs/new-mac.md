@@ -6,11 +6,11 @@
 
 ## 先弄清用户要什么
 
-- **Codex 是主力，入口按调用方区分。** dot 有原生平台任务工具且电脑连接已授权时优先原生通道；跨机先发现环境。DSH／GrokBot→Agenvo→Codex Desktop 是另需保留的外部需求，其 writer 阻断不阻挡前者。见[调用方路由](caller-routing.md)。
+- **Codex 是主力，入口按调用方区分。** dot 有原生平台任务工具且电脑连接已授权时优先原生通道；跨机先发现环境。Grok 外环走 CommHub MCP，本机接收端走 #90 门铃桥。DSH、GrokBot 的 Codex Desktop 交接另验，其 writer 阻断不阻挡前者。见[调用方路由](caller-routing.md)。
 - **DSH（DeepSeek Harness）是同等能力的后备**，防止 Codex 额度用完或出故障：它必须有和 Codex 同级的原生能力，任务出现在 DSH 桌面左栏、可以在桌面里接手；派活、追问、中断都走 DSH 的原生会话，不退回 headless。
 - Herdr 用于同机任务目录/brief 准备及明确选择的 CLI 通道；它不是 Codex Desktop 的模型执行者，也不负责释放 native writer。
 - Agenvo 默认执行约定见实例 context；原生平台任务遵守其自身权限与用户范围，不能套用 relay 授权。
-- 自建 MCP 远程通路统一 Agenvo；不替代已有原生平台任务服务（见 [ADR-0006](decisions/0006-single-remote-path.md)）。
+- 自建 MCP 远程通路是 CommHub（anet）；不替代已有原生平台任务服务（见 [ADR-0006](decisions/0006-single-remote-path.md)）。
 - 这台机器的个人值（名字、地址、项目目录）只写进私有 overlay，不写进本仓库。
 
 ## 步骤
