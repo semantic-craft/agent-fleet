@@ -107,7 +107,7 @@ function contexts() {
 
 function launchd(name) {
   const file = join(root, "templates/launchd", `${name}.plist`);
-  if (!name || !existsSync(file)) throw new Error("usage: fleet.mjs launchd codex-app-server|herdr-server|desktop-agents-autostart|fleet-weekly-check");
+  if (!name || !existsSync(file)) throw new Error("usage: fleet.mjs launchd codex-app-server|herdr-server|desktop-agents-autostart|fleet-weekly-check|commhub-server|commhub-dashboard|commhub-cloudflared");
   const home = homedir();
   process.stdout.write(
     render(readFileSync(file, "utf8"), {

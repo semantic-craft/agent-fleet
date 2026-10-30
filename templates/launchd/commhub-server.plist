@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- CommHub Server (127.0.0.1:9200) running under bun from ~/Projects/_forks/agent-network/server -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>{{LABEL_PREFIX}}.commhub-server</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>{{HOME}}/.bun/bin/bun</string>
+    <string>run</string>
+    <string>src/index.ts</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key><string>{{HOME}}</string>
+    <key>COMMHUB_SERVER</key><string>1</string>
+    <key>PORT</key><string>9200</string>
+    <key>HOST</key><string>127.0.0.1</string>
+    <key>COMMHUB_DB</key><string>{{HOME}}/.local/share/agent-network/hub.db</string>
+    <key>PATH</key><string>{{HOME}}/.bun/bin:{{BIN}}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>WorkingDirectory</key><string>{{PROJECTS}}/_forks/agent-network/server</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>10</integer>
+  <key>StandardOutPath</key><string>{{HOME}}/Library/Logs/commhub-server/out.log</string>
+  <key>StandardErrorPath</key><string>{{HOME}}/Library/Logs/commhub-server/err.log</string>
+</dict>
+</plist>
