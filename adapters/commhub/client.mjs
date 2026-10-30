@@ -188,6 +188,21 @@ export class CommHubClient {
 
   // --- Requirements Kanban & Accounting Tools ---
 
+  static normalizePersonRef(val, defaultKind = "node") {
+    if (val === null || val === undefined) return val;
+    if (typeof val === "object") return val;
+    const str = String(val).trim();
+    if (!str) return null;
+    if (defaultKind === "user") {
+      return str.startsWith("user_") || str.startsWith("u_")
+        ? { kind: "user", id: str }
+        : { kind: "user", username: str };
+    }
+    return str.startsWith("node_") || str.startsWith("n_")
+      ? { kind: "node", id: str }
+      : { kind: "node", alias: str };
+  }
+
   async upsertRequirement({
     externalRef,
     externalUrl = null,
@@ -197,6 +212,9 @@ export class CommHubClient {
     checklist = null,
     column = null,
     status = null,
+    agentOwner = undefined,
+    agent_owner = undefined,
+    owner = undefined,
     networkId = null,
   }) {
     const args = { external_ref: externalRef, name };
@@ -206,6 +224,9 @@ export class CommHubClient {
     if (checklist !== null) args.checklist = checklist;
     const col = column ?? status;
     if (col !== null) args.status = col;
+    const ao = agent_owner !== undefined ? agent_owner : agentOwner;
+    if (ao !== undefined) args.agent_owner = CommHubClient.normalizePersonRef(ao, "node");
+    if (owner !== undefined) args.owner = CommHubClient.normalizePersonRef(owner, "user");
     if (networkId || this.networkId) args.network_id = networkId || this.networkId;
     return this.call("requirements_upsert_by_external_ref", args);
   }
@@ -221,6 +242,16 @@ export class CommHubClient {
     if (args.column && !args.status) {
       args.status = args.column;
       delete args.column;
+    }
+    if (args.agentOwner !== undefined && args.agent_owner === undefined) {
+      args.agent_owner = args.agentOwner;
+      delete args.agentOwner;
+    }
+    if (args.agent_owner !== undefined) {
+      args.agent_owner = CommHubClient.normalizePersonRef(args.agent_owner, "node");
+    }
+    if (args.owner !== undefined) {
+      args.owner = CommHubClient.normalizePersonRef(args.owner, "user");
     }
     if (networkId || this.networkId) args.network_id = networkId || this.networkId;
     return this.call("requirements_update", args);
