@@ -6,9 +6,8 @@
   <key>Label</key><string>{{LABEL_PREFIX}}.commhub-dashboard</string>
   <key>ProgramArguments</key>
   <array>
-    <string>{{HOME}}/.bun/bin/bun</string>
-    <string>run</string>
-    <string>dev</string>
+    <string>/bin/bash</string>
+    <string>{{PROJECTS}}/_forks/agent-network/deploy/dashboard/dash-start.sh</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>

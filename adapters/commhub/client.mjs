@@ -158,6 +158,24 @@ export class CommHubClient {
     });
   }
 
+  // --- Node Rules & Capabilities Tools (#131) ---
+
+  async writeNodeRulesFile({ nodeId = null, alias = null, content, networkId = null }) {
+    const args = { content: String(content) };
+    if (nodeId) args.node_id = nodeId;
+    if (alias) args.alias = alias;
+    if (networkId) args.network_id = networkId;
+    return this.call("write_node_rules_file", args);
+  }
+
+  async readNodeRulesFile({ nodeId = null, alias = null, networkId = null } = {}) {
+    const args = {};
+    if (nodeId) args.node_id = nodeId;
+    if (alias) args.alias = alias;
+    if (networkId) args.network_id = networkId;
+    return this.call("read_node_rules_file", args);
+  }
+
   // --- SSE Doorbell (/events/<alias>) ---
 
   async subscribeEvents(alias, onEvent, { signal = null } = {}) {
@@ -185,7 +203,8 @@ export class CommHubClient {
         const { value, done } = await reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n\n");
+        const normalized = buffer.replace(/\r\n/g, "\n");
+        const lines = normalized.split("\n\n");
         buffer = lines.pop() || "";
         for (const block of lines) {
           const dataLine = block.split("\n").find((l) => l.startsWith("data:"));

@@ -49,9 +49,13 @@ export class HerdrCommHubBridge {
   }
 
   async handleEvent(event) {
-    if (event.kind !== "task" && event.type !== "task") return;
+    const isTask =
+      event.kind === "task" ||
+      event.type === "task" ||
+      event.type === "new_task";
+    if (!isTask) return;
     const task = event.task || event;
-    const taskId = task.id || task.taskId || task.task_id;
+    const taskId = task.id || task.taskId || task.task_id || task.message_id;
     if (!taskId) return;
 
     // Idempotency guard: never execute or reply twice
@@ -69,7 +73,12 @@ export class HerdrCommHubBridge {
       const outcome = await this.handler(task);
 
       // Post progress comment if requirementId or card context is attached
-      const reqId = task.requirement_id || task.requirementId || task.cardId;
+      const reqId =
+        task.requirement_id ||
+        task.requirementId ||
+        task.cardId ||
+        task.meta?.requirement_id ||
+        task.meta?.cardId;
       if (reqId && outcome.comment) {
         await this.client.addComment(reqId, outcome.comment);
       }

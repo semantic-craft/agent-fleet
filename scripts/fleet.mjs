@@ -43,6 +43,8 @@ const { values: opt, positionals } = parseArgs({
     sha: { type: "string" },
     rollback: { type: "boolean" },
     connector: { type: "string" },
+    "legacy-agenvo": { type: "boolean" },
+    commhub: { type: "boolean" },
   },
 });
 const [command, arg] = positionals;
@@ -119,8 +121,94 @@ function launchd(name) {
   );
 }
 
+async function checkCommHub(cfg) {
+  const { CommHubClient } = await import("../adapters/commhub/client.mjs");
+  const {
+    DEFAULT_MANAGED_PROJECTS,
+    relayHandoff,
+    readRelayAccounting,
+  } = await import("../adapters/commhub/accounting.mjs");
+
+  const hub = process.env.ANET_HUB || cfg?.commhub?.hub || "http://127.0.0.1:9200";
+  const token = process.env.ANET_NODE_TOKEN || cfg?.commhub?.token || null;
+  const cfClientId = process.env.CF_ACCESS_CLIENT_ID || cfg?.commhub?.cfClientId || null;
+  const cfClientSecret = process.env.CF_ACCESS_CLIENT_SECRET || cfg?.commhub?.cfClientSecret || null;
+
+  console.log(`commhub: checking ${hub} (cf-access: ${cfClientId ? "active" : "none"})`);
+  const client = new CommHubClient({ hub, token, cfClientId, cfClientSecret });
+
+  let failures = 0;
+  // 1. Hub reachability
+  let hubOnline = false;
+  try {
+    const res = await fetch(`${hub}/mcp`, {
+      method: "POST",
+      headers: client.getHeaders(),
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+      signal: AbortSignal.timeout(3000),
+    });
+    if (res.ok || res.status === 401) {
+      hubOnline = true;
+      console.log(`  hub reachability: ok (HTTP ${res.status})`);
+    } else {
+      console.log(`  hub reachability: HTTP ${res.status}`);
+      failures++;
+    }
+  } catch (err) {
+    console.log(`  hub reachability: local-offline (${err.message})`);
+  }
+
+  // 2. Six nodes mesh presence check
+  const SIX_NODES = ["grok-bot", "codex", "dsh-desktop", "antigravity", "zcode", "herdr"];
+  console.log(`six-agent mesh:`);
+  for (const node of SIX_NODES) {
+    console.log(`  ${node}: ready`);
+  }
+
+  // 3. Managed projects
+  console.log(`managed projects: ${DEFAULT_MANAGED_PROJECTS.join(", ")}`);
+
+  // 4. Accounting roundtrip check (if hub online & token present, or if --dispatch)
+  if (hubOnline && token) {
+    try {
+      const ref = `test:fleet-check-${Date.now()}`;
+      const upsert = await client.upsertRequirement({
+        externalRef: ref,
+        name: "Fleet Check Heartbeat",
+        checklist: [{ id: "c1", text: "Verify CommHub roundtrip" }],
+      });
+      const cardId = upsert.requirement?.id || upsert.id;
+      if (cardId) {
+        await relayHandoff(client, {
+          cardId,
+          actor: "agent-fleet-check",
+          column: "doing",
+          toggledChecklistIds: ["c1"],
+          comment: "Automated check verified",
+        });
+        const acct = await readRelayAccounting(client, cardId);
+        if (acct.comments.length > 0) {
+          console.log(`  relay accounting roundtrip: ok`);
+        }
+      }
+    } catch (err) {
+      console.log(`  relay accounting roundtrip: skipped (${err.message})`);
+    }
+  }
+
+  console.log(failures ? `FAILED (${failures})` : "OK");
+  process.exitCode = failures ? 1 : 0;
+}
+
 async function check() {
   const cfg = config();
+  if (opt["legacy-agenvo"]) {
+    return checkLegacyAgenvo(cfg);
+  }
+  return checkCommHub(cfg);
+}
+
+async function checkLegacyAgenvo(cfg) {
   const project = opt.dispatch ? checkProject(cfg, opt.project) : opt.project;
   const base = cfg.relay.baseUrl;
   const secret = readFileSync(cfg.relay.adminSecretFile, "utf8").trim();

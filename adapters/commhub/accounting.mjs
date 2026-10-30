@@ -78,3 +78,26 @@ export async function readRelayAccounting(client, cardId) {
     events: rawEvents,
   };
 }
+
+/**
+ * Standard accounting and handoff rules for multi-agent desktop and CLI nodes (#131, #133).
+ */
+export const UNIFIED_ACCOUNTING_NODE_RULES = `# CommHub Multi-Agent Unified Accounting Rules (#128, #131, #133)
+1. 接单时必须调用 requirements_get / requirements_events 读取前任执行上下文、Checklist 状态与进展留言。
+2. 任务执行期间在各自桌面/Herdr 可见会话中执行，不静默降级为无头模式。
+3. 交接、卡住或完成时，必须调用 requirements_comment 记录分支名、改动文件、验证情况及下一棒交接对象，并调用 requirements_checklist_toggle 勾选对应项。
+4. 任务终结时调用 send_reply 回复 CommHub。
+`;
+
+/**
+ * Push the unified accounting rules to a specific node or session via write_node_rules_file.
+ */
+export async function pushAccountingRulesToNode(client, {
+  nodeId = null,
+  alias = null,
+  networkId = null,
+  content = UNIFIED_ACCOUNTING_NODE_RULES,
+} = {}) {
+  return client.writeNodeRulesFile({ nodeId, alias, networkId, content });
+}
+

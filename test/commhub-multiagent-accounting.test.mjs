@@ -7,6 +7,8 @@ import {
   filterRequirementsByProject,
   relayHandoff,
   readRelayAccounting,
+  UNIFIED_ACCOUNTING_NODE_RULES,
+  pushAccountingRulesToNode,
 } from "../adapters/commhub/accounting.mjs";
 
 test("CommHubClient builds Cloudflare Access and authorization headers correctly", () => {
@@ -279,3 +281,105 @@ test("HerdrCommHubBridge handles task, prevents duplicates, writes progress comm
   assert.ok(heartbeats.some((h) => h.status === "busy"));
   assert.ok(heartbeats.some((h) => h.status === "offline"));
 });
+
+test("HerdrCommHubBridge handles real CommHub new_task SSE event with message_id", async () => {
+  const replies = [];
+  const mockClient = {
+    reportStatus: async () => {},
+    addComment: async () => {},
+    sendReply: async (reply) => replies.push(reply),
+    subscribeEvents: async (alias, onEvent, { signal }) => {
+      // Simulate real CommHub pushEvent payload
+      onEvent({
+        type: "new_task",
+        message_id: "msg_real_commhub_042",
+        from: "grok-bot",
+        inbox_count: 1,
+        priority: "normal",
+        task: {
+          id: "msg_real_commhub_042",
+          cardId: "req_200",
+          text: "跨 Agent 门铃桥端到端测试",
+        },
+      });
+      await new Promise((resolve) => {
+        if (signal?.aborted) return resolve();
+        signal?.addEventListener("abort", resolve, { once: true });
+      });
+    },
+  };
+
+  const bridge = new HerdrCommHubBridge({
+    alias: "herdr-bridge-real",
+    agent: "herdr",
+    client: mockClient,
+    handler: async (task) => ({
+      reply: "接单完成",
+      status: "replied",
+    }),
+  });
+
+  await bridge.start();
+  await new Promise((r) => setTimeout(r, 20));
+  await bridge.stop();
+
+  assert.equal(replies.length, 1);
+  assert.equal(replies[0].taskId, "msg_real_commhub_042");
+  assert.equal(replies[0].reply, "接单完成");
+});
+
+test("writeNodeRulesFile, readNodeRulesFile, and pushAccountingRulesToNode MCP tool calls", async () => {
+  const calls = [];
+  const mockClient = {
+    call: async (tool, args) => {
+      calls.push({ tool, args });
+      return { ok: true, request_id: "req_rf_001" };
+    },
+    writeNodeRulesFile: async (args) => {
+      calls.push({ tool: "write_node_rules_file", args });
+      return { ok: true, request_id: "req_rf_001" };
+    },
+  };
+
+  assert.match(UNIFIED_ACCOUNTING_NODE_RULES, /requirements_get/);
+  assert.match(UNIFIED_ACCOUNTING_NODE_RULES, /requirements_comment/);
+  assert.match(UNIFIED_ACCOUNTING_NODE_RULES, /requirements_checklist_toggle/);
+  assert.match(UNIFIED_ACCOUNTING_NODE_RULES, /send_reply/);
+
+  // Push unified accounting rules to Codex node
+  const res = await pushAccountingRulesToNode(mockClient, {
+    alias: "codex-desktop",
+    networkId: "net_main",
+  });
+  assert.equal(res.ok, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].tool, "write_node_rules_file");
+  assert.equal(calls[0].args.alias, "codex-desktop");
+  assert.equal(calls[0].args.networkId, "net_main");
+  assert.match(calls[0].args.content, /CommHub Multi-Agent Unified Accounting Rules/);
+});
+
+test("CommHubClient subscribeEvents normalizes CRLF SSE chunks across proxies", async () => {
+  const events = [];
+  const crlfStream = new ReadableStream({
+    start(controller) {
+      const chunk = "data: {\"type\":\"ping\"}\r\n\r\ndata: {\"type\":\"pong\"}\r\n\r\n";
+      controller.enqueue(new TextEncoder().encode(chunk));
+      controller.close();
+    },
+  });
+
+  const client = new CommHubClient({
+    hub: "http://127.0.0.1:9200",
+    fetchImpl: async () => ({
+      ok: true,
+      body: crlfStream,
+    }),
+  });
+
+  await client.subscribeEvents("test-alias", (e) => events.push(e));
+  assert.equal(events.length, 2);
+  assert.equal(events[0].type, "ping");
+  assert.equal(events[1].type, "pong");
+});
+
