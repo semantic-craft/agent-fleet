@@ -39,7 +39,6 @@
 4. 经 agenvo 对同一线程 `turn/start` 提交后，核对唯一只读标记、实际模型和同一 threadId 的终态；再 `turn/start` 第二轮并核对两轮历史。只打开或预填不算执行；Desktop 未见会话不算完整桌面路线通过，但不否定已取得的同 host 执行结果。
 5. 本次 turn 终态后由同一 connector `thread/unsubscribe` 交还 Desktop；截图核实左栏项目下可见且主区无 writerConflict／Fork chat／open in new chat／another app。记录证据和未验项；只清理本次确认为空闲且无消费者的测试资源，另按授权操作，不自动删除分支或任务资料。
 
-Herdr 的模板目前默认 **Claude Code**：验收读取 `result-1.json`、`session_id` 与退出码，续接使用 `--resume <session_id>`；不得期待 Codex 的 `thread.started` 或 `result-1.md`。`node scripts/fleet.mjs check --dispatch --instance <herdr 实例>` 不调模型，只验 tab/退出/回读，既不是 Claude 模型验收，也不是 Codex Desktop 验收。
 
 ## 机器角色
 

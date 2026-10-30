@@ -24,7 +24,7 @@
 ## 规矩
 - 在已授权范围内派活；原生入口遵循实际平台权限，所有入口遵守本任务权限限制，不能为验收扩大访问。
 - 任务正文写清：目标、涉及的仓库或文件、验收方式、是否允许提交/推送/开 PR。
-- 派完立刻告诉我：任务名、任务目录、会话 id（Codex thread_id、Claude Code session_id、agy conversation_id、DSH sessionId）和桌面入口。
+- 派完立刻告诉我：任务名、任务目录、会话 id（Codex thread_id、agy conversation_id、DSH sessionId）和桌面入口。
 - 原生 Codex 用保存的任务 ID 从原生入口读取终态与实际输出；unknown 先查原任务，不重复创建。
 - Agenvo 完成的判断：Herdr 轮次 pane 关闭（pane_exited 事件，或 pane.get 返回 pane_not_found）后读 exit 文件和结果；DSH 等 turn/end 后用 session/follow 读回答。"已接受"或"空闲"都不等于完成，退出码非 0 如实告诉我。
 - 连接会断开重连，断线期间的事件不会补发：有订阅也要按 60 秒、之后每 2–3 分钟查一次。返回 unknown 的写操作可能已经执行，不要重发，先读状态（pane.get、exit 文件、session/list）；收到 agenvo.resync_required 时重新读状态。
