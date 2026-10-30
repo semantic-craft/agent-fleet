@@ -25,7 +25,6 @@ test('new-machine Codex acceptance consumes Desktop flow, not CLI artifacts',()=
  assert.doesNotMatch(s,/用户按发送/);
  const beforeCli=s.split('Herdr 的模板')[0];
  assert.doesNotMatch(beforeCli,/events-1.jsonl|result-1.md|resume <thread_id>|pane_not_found/);
- assert.match(s,/Claude Code/);assert.match(s,/result-1.json/);assert.match(s,/--resume <session_id>/);
 });
 test('downstream UI prompt and historical ADR do not revive the old default',()=>{
  const s=read('prompts/acceptance-codex.md');

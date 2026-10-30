@@ -39,11 +39,11 @@
 4. 经 Agenvo `turn/start`，读本次 turn 终态与实际输出。
 5. 同一 connector `thread/unsubscribe` 交还 Desktop 后重新打开，截图核实左栏项目可见且无 writerConflict／Fork chat／open in new chat／another app；Desktop 正道五步详见[交接契约](codex-desktop-handoff.md)。
 
-**Claude Code、agy、dsh headless** 在 Herdr 里跑：
+**agy、dsh headless** 在 Herdr 里跑：
 
 1. **任务目录**：改代码用 Herdr `worktree.create` 建 `~/Projects/.worktrees/<repo>/<任务名>`（分支 `agent/<任务名>`，基于 `origin/main`），只读用主 checkout；合并后 `worktree.remove`。
-2. **一轮一个 tab**：`tab.create` + `pane.run` 写 brief、跑 CLI（`claude -p`、`agy -p`、`dsh --profile headless`），以 `echo $? > exit-N; exit` 收尾；结束看 `pane_exited` 或 `pane.get` → `pane_not_found`。
-3. **续接**：同一任务目录新开 tab（`claude --resume`、`agy --conversation`、`dsh --session-id`）。
+2. **一轮一个 tab**：`tab.create` + `pane.run` 写 brief、跑 CLI（`agy -p`、`dsh --profile headless`），以 `echo $? > exit-N; exit` 收尾；结束看 `pane_exited` 或 `pane.get` → `pane_not_found`。
+3. **续接**：同一任务目录新开 tab（`agy --conversation`、`dsh --session-id`）。
 
 要在桌面**项目下**自动开跑：派 DSH（`workspace/create`、`session/create`、`session/prompt`、`session/follow`）。完整步骤见[派活技能](https://github.com/semantic-craft/xw-stack/blob/main/skills/delegate-via-agenvo/SKILL.md)。
 

@@ -133,15 +133,13 @@ dot 原生平台任务通道不受本节阻断；DSH／GrokBot→Agenvo→Codex 
 - 验证点：
 - 复发记录：Seen 1x (2026-10-19)。
 
-### Claude Code 在 Herdr 用无头模式并显式选模型；agy 首次确认信任
+### agy 首次确认信任
 
-**Claude Code 已登录，在 Herdr pane 里按官方 Claude Code 默认新建与续接：每轮 `--model opus --effort medium`。2026-10-28（Asia/Shanghai）起不再经 Magpie。可选第二模型只用官方别名（例如 `sonnet`），同样 `--effort medium`。交互式 agy（`agent.start`）首次进入项目可能要处理信任提示；常规派活按派活技能用无头 `agy -p`。**
+**交互式 agy（`agent.start`）首次进入项目可能要处理信任提示；常规派活按派活技能用无头 `agy -p`。**
 
-- 起因与后果：不显式传模型时 Claude Code 用设置里的默认模型，结果随设置变化，曾返回 `is_error: true`，继续等待无用；agy 遇到信任提示时 `agent.prompt` 返回 `agent_blocked`。
-- 修复与证据：2026-10-21 曾用显式模型加 `--dangerously-skip-permissions` 跑通新建和 `--resume`；当时请求经本机代理。2026-10-28（Asia/Shanghai）用户决定：交互式 Claude Code 已断开 Magpie，Herdr Claude 派活改为官方默认 `opus` + `--effort medium`。那次代理路径的实测只说明当时能跑通，不再是当前做法。agy 经 relay 用 `pane.run` 发空命令回车确认信任后可回答。
-- 正确做法：不要探测本机代理，也不要因为代理不在线就放弃本轮。按[派活技能](https://github.com/semantic-craft/xw-stack/blob/main/skills/delegate-via-agenvo/SKILL.md)「一轮一个 tab」的表格，每轮 `claude -p --dangerously-skip-permissions --model opus --effort medium --output-format json`，正文从 `~/Projects/_status/<任务名>/brief-N.md` 经 stdin 传入，结果写 `result-N.json`，读取 `result`、`session_id` 与 `is_error`。可选第二模型把 `--model opus` 换成官方别名 `sonnet`，仍带 `--effort medium`。第 2 轮起保留 `--model opus --effort medium` 并加 `--resume <session_id>`。不用交互式 `agent.start kind claude`。输入已接受不等于轮次完成。本仓命令模板在 `fleet.example.json` 的 Herdr context；派活技能源在 xw-stack，须使用同一条命令。
-- 验证点：`rg -n -- "--model opus --effort medium" fleet.example.json docs/decisions/0003-herdr-for-cli-agents.md` 有结果；Claude 续接仍含 `--resume <session_id>`，并保留同一 `--model` 与 `--effort`。`rg -n "deepseek/deepseek-flash|127.0.0.1:3425" fleet.example.json docs/decisions/0003-herdr-for-cli-agents.md` 无结果。
-- 复发记录：Seen 1x (2026-10-19)；模型与登录状态于 2026-10-21 更新；代理路径于 2026-10-28 退出。
+- 起因与后果：agy 遇到信任提示时 `agent.prompt` 返回 `agent_blocked`。
+- 修复与证据：agy 经 relay 用 `pane.run` 发空命令回车确认信任后可回答。
+- 复发记录：Seen 1x (2026-10-19)。
 
 ### 从 DSH 的 shell 启动 Electron app 要去掉 ELECTRON_RUN_AS_NODE
 
@@ -228,8 +226,8 @@ dot 原生平台任务通道不受本节阻断；DSH／GrokBot→Agenvo→Codex 
 
 - 起因与后果：2026-10-21 22:33 交代把主力 Mac 上 `~/.claude/settings.json` 的默认模型从「gemini-4-argon」换成 `deepseek/deepseek-flash`。实际文件里 5 处都是用户自己 22:16 刚设的 `minimax-code/MiniMax-M3.1-Flash`，改动照样覆盖了，改完才报「和背景对不上」；用户确认 MiniMax 是他有意设的，只好用备份还原。
 - 修复与证据：改前做了备份，按 sha256 核对还原后不带 `--model` 跑短会话，用量里是 MiniMax。派活命令每轮显式带 `--model`（#32、#35），用户自己的默认模型保持他设的值。
-- 正确做法（Done right）：动用户配置前读文件、记 mtime 与要改的字段原值，和交代不一致就停下报告；派活所用模型查决定清单，写进每条命令（Codex `-m`、Claude Code `--model`、agy `--model`、DSH `session/selectModel`），不靠改用户或实例的全局默认。2026-10-28（Asia/Shanghai）起，Herdr Claude Code 的决定清单是 `--model opus --effort medium`，续接保留这两项并加 `--resume <session_id>`。
-- 验证点：`rg -n -- "--model opus --effort medium" fleet.example.json docs/decisions/0003-herdr-for-cli-agents.md` 有结果（Claude Code 续接仍带 `--resume <session_id>`）；派活回报里写明所用模型，且没有改用户 settings 的步骤。
+- 正确做法（Done right）：动用户配置前读文件、记 mtime 与要改的字段原值，和交代不一致就停下报告；派活所用模型查决定清单，写进每条命令（Codex `-m`、agy `--model`、DSH `session/selectModel`），不靠改用户或实例的全局默认。
+- 验证点：派活回报里写明所用模型，且没有改用户 settings 的步骤。
 - 复发记录：Seen 1x (2026-10-21)。
 
 ### 修复合并、部署过不等于修好，要按原症状实测
