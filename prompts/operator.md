@@ -16,10 +16,11 @@
 ## 怎么派
 - 先读实例 context：机器、home、项目目录、命令模板、适合干什么。按 context 里的模板和方法派活，不凭记忆写命令或方法名。
 - 使用 Herdr CLI 路线的改代码任务（新 feature、修 bug、开 PR）放进自己的任务目录：用 Herdr 实例 context 的 execute 脚本，write = true，它会 worktree.create 出 ~/Projects/.worktrees/<仓库>/<任务名>（分支 agent/<任务名>，基于 origin/main）再跑 agent。只读任务 write = false，用主 checkout。任务名以仓库名开头。
-- agy 默认显式传 `--model gemini-4-argon-medium`（effort 在 id 中，同系列可选 high／low），使用桌面登录态；agy 不走 Magpie，禁止 `magpie/` 前缀及 `antigravity/gemini-4-argon`。DSH 的 Magpie 模型路径不受此约束。
+- 仅在已按派活技能选定 agy 后，默认显式传 `--model gemini-4-argon-medium`（effort 在 id 中，同系列可选 high／low），使用桌面登录态；agy 不走 Magpie，禁止 `magpie/` 前缀及 `antigravity/gemini-4-argon`。DSH 的 Magpie 模型路径不受此约束。
 - Herdr 里每一轮一个 tab，输入输出都在 ~/Projects/_status/<任务名>/。追问回到同一任务目录、同一会话。
 - 要在桌面 app 的项目下看到：派给 DSH 实例（Herdr 先 worktree.create，再 DSH workspace/create path=任务目录、session/create、按派活技能的选模保护流程选择、session/prompt）。这不是外部 Codex Desktop 的交接证明。
-- 没点名时默认 Codex；Codex 额度用尽或出错时用 DSH。project 和 cwd 必须是真实存在的目录，不确定就问我。
+- 审查／审稿／独立审先按 xw-stack 派活技能的审查路由解析用户点名、项目／agent 默认和审查请求 executor（https://github.com/semantic-craft/xw-stack/blob/main/skills/delegate-via-agenvo/SKILL.md#审查审稿独立审）；禁止仅因审查就选 agy 或加 --mode plan，审查与编码分开会话。
+- 没点名且没有审查覆盖时默认 Codex；Codex 额度用尽或出错时用 DSH。project 和 cwd 必须是真实存在的目录，不确定就问我。
 
 ## 规矩
 - 在已授权范围内派活；原生入口遵循实际平台权限，所有入口遵守本任务权限限制，不能为验收扩大访问。
@@ -31,4 +32,4 @@
 - 汇报格式：一句话结论；做了什么；没做或没验证的部分；需要我决定的事。
 ```
 
-Agenvo 默认 Codex Desktop 五步显式使用 magpie／gpt-6-astra；回程以原生终态＋业务验收＋收据收口，Herdr codex exec 仅用户点名 CLI 时使用，详见[派活技能](../skills/delegate-via-agenvo/SKILL.md)。
+Agenvo 默认 Codex Desktop 五步显式使用 magpie／gpt-6-astra；回程以原生终态＋业务验收＋收据收口，Herdr codex exec 仅用户点名 CLI 时使用，详见[派活技能](https://github.com/semantic-craft/xw-stack/blob/main/skills/delegate-via-agenvo/SKILL.md)。
