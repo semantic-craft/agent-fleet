@@ -904,6 +904,13 @@ test("E2E with isolated real CommHub server instance (bun subprocess + temp SQLi
     const toggleRes = await client.toggleChecklist(cardId, "step1", true);
     assert.equal(toggleRes.ok, true);
 
+    // Update column to done with string agent_owner (normalized to { kind: "node", alias })
+    const patchRes = await client.updateRequirement(cardId, {
+      column: "done",
+      agent_owner: "herdr-e2e",
+    });
+    assert.equal(patchRes.requirement?.column, "done");
+
     // Comment
     const commentRes = await client.addComment(cardId, "端到端门铃桥开始执行");
     assert.equal(commentRes.ok, true);
