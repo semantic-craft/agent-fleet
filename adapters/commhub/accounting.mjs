@@ -100,4 +100,3 @@ export async function pushAccountingRulesToNode(client, {
 } = {}) {
   return client.writeNodeRulesFile({ nodeId, alias, networkId, content });
 }
-
