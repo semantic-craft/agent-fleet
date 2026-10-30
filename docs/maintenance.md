@@ -7,7 +7,7 @@
 | 频率 | 做什么 | 命令 | 不通过时 |
 | --- | --- | --- | --- |
 | 每次改配置、升级、重启电脑后 | 本机自检 | `node scripts/fleet.mjs doctor` | 按缺的服务或 connector 去 [runbook](runbook.md) 对应小节处理 |
-| 每周（模板 `fleet-weekly-check`，周一 9:30，失败弹通知。主力 Mac 上这个任务在 `~/Library/LaunchAgents/_retired/`、overlay 的 services 也不列它：目前要手动跑，或用 `fleet.mjs launchd fleet-weekly-check` 重新生成并加载） | guard + doctor + 全链路检查 | `npm run guard && node scripts/fleet.mjs check --dispatch` | 先读输出里失败实例的原生状态，再修；修好后在 [lessons.md](../lessons.md) 记一条 |
+| 每周（模板 `fleet-weekly-check`，周一 9:30，失败弹通知。主力 Mac 上这个任务在 `~/Library/LaunchAgents/_retired/`、overlay 的 services 也不列它：目前要手动跑，或用 `fleet.mjs launchd fleet-weekly-check` 重新生成并加载） | guard + CommHub 检查 | `npm run guard && node scripts/fleet.mjs check` | 先读 CommHub 输出。connector 全链路另跑 `check --legacy-agenvo --dispatch`；修好后在 [lessons.md](../lessons.md) 记一条 |
 | 每周（同一个 launchd 任务） | 跟进上游：上游一出新 release，就在 `~/Projects/.worktrees/agenvo/upstream-<tag>` 里试合并，并跑 check 和 test | `node scripts/fleet.mjs upstream --try-merge` | 结果是 READY：把 `xw/dispatch-connectors` 快进到那个分支，推送，重新部署 relay，`release agenvo`，跑 `check --dispatch`，再删掉 worktree。结果是冲突：只会落在 protocol 枚举和 releases 映射，手动合并 |
 | 上游支持外部 kind 时 | 去掉 fork | 按 [ADR-0002](decisions/0002-minimal-agenvo-fork.md) 的退出条件 | — |
 | 组件没有消费者时 | 移除组件 | 按下文"移除组件" | — |

@@ -1,6 +1,6 @@
 # Runtime recovery and control-plane diagnosis
 
-Use the caller's existing authorized Agenvo client for task control. Magpie model routing and an optional Magpie MCP forwarding entry are separate dependencies. A working search/media MCP or model response does not establish dispatch health. Do not reroute a denied request to evade an edge rule, copy another client's credentials, or reauthorize as a diagnostic shortcut.
+远程任务控制面是 CommHub MCP。本页诊断 connector 与原生运行时：沿用调用方已有的授权客户端，不把模型回复当成派活健康。Magpie 模型路由与可选的 Magpie MCP 转发是另一路依赖。一次可用的搜索或模型回复不能证明控制面或 runtime 可用。不要为了绕过边缘规则改道、复制其他客户端凭据，或把重新授权当成诊断捷径。
 
 ## Diagnose before changing anything
 

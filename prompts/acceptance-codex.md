@@ -1,11 +1,11 @@
 # 给 Codex 的界面级验收提示词（computer use）
 
-先按[调用方路由](../docs/caller-routing.md)选范围：dot 原生平台任务独立验创建／执行／回读，依赖平台工具、连接授权与环境发现；不以外部交接为门槛。以下是 Agenvo 验收，DSH／GrokBot→Agenvo→Codex Desktop 的需求明确保留，blocked 只记该外部项。
+先按[调用方路由](../docs/caller-routing.md)选范围：dot 原生平台任务独立验创建／执行／回读，依赖平台工具、连接授权与环境发现；不以外部交接为门槛。控制面烟雾是 `node scripts/fleet.mjs check`（CommHub `/mcp`）。以下正文验 DSH、GrokBot 的 Codex Desktop 交接和桌面附着，blocked 只记该外部项。
 
 把下面整段交给 Codex，在 <主力 Mac> 上用 computer use 执行。
 
 ```text
-你在我的 Mac（<主力 Mac>）上做一次端到端验收：分别验证 dot 原生 Codex、DSH→Agenvo→Codex Desktop、GrokBot→Agenvo→Codex Desktop，以及 Agenvo→DSH／Herdr。按 docs/caller-routing.md 选择实际入口；外部两条必须各自从真实调用方提交，不能用 ChatGPT 代理测试充当通过。用 computer use 操作真实界面，截图存到 <EVIDENCE_DIR>/evidence/，文件名带步骤号。只验收、不修代码；发现问题写进报告。
+你在我的 Mac（<主力 Mac>）上做一次端到端验收：先跑 `node scripts/fleet.mjs check` 确认 CommHub。再分别验证 dot 原生 Codex、DSH 与 GrokBot 的 Codex Desktop 交接，以及 DSH／Herdr 桌面附着。按 docs/caller-routing.md 选择实际入口；外部两条必须各自从真实调用方提交，不能用 ChatGPT 代理测试充当通过。用 computer use 操作真实界面，截图存到 <EVIDENCE_DIR>/evidence/，文件名带步骤号。只验收、不修代码；发现问题写进报告。
 
 ## 背景事实
 - Relay：<RELAY> ，MCP 端点 <RELAY>/mcp
@@ -30,7 +30,7 @@
    - 「在 <herdr 实例> 用同一脚本、agent 换成 agy 的命令（write = false，仓库 _forks/agenvo，任务名 agenvo-acceptance-<时间>），只读地列出 tests/ 下的文件；轮次结束后读 result-1.json 的 status、response，把 conversation_id 告诉我；再 n = 2、加 --conversation <conversation_id> 追问一句“其中哪个和 dispatch 有关”，把两轮结果给我。」
    每个任务截两张图：各真实调用方的结果界面；对应桌面 app 或终端里的会话。DSH（<主力 Mac> 和 <第二台 Mac>）的会话应出现在左栏 agenvo 工作区下，两轮对话都在；Codex 用 codex://threads/<id> 打开线程，截图需显示两轮历史、正常输入框且没有 “This is open in another app” 横幅；同 host 共享 app-server 也要 writer 交接，截图必须含左栏项目下同一会话与主区无 writerConflict／Fork chat／open in new chat，不引用旧 exec 历史充当该项证据；Herdr 的会话用终端 `herdr` 查看；agy 截 Herdr pane 里两轮的结果，Antigravity 桌面版目前调不出 CLI 会话，不作为验收项。<第二台的 dsh 实例> 的会话在 Mac mini 上，无法截图就写明，以 ChatGPT 返回的 completed 结果为准。
 5. 事件与 dots：在 ChatGPT 里尝试创建一个 dot，让它订阅 Agenvo 的 runtime.changed 事件（DSH 的 turn/end，以及 <herdr 实例> 的 pane_exited）。然后给 <dsh 实例> 派一个只读小任务，观察 dot 是否在任务完成后自动收到事件并告诉我结果。如果 ChatGPT 账号里没有 dots 功能或找不到入口，写明并跳过。
-5b. Grok：打开 grok.com/connectors（用我已登录的账号），添加自定义连接器，URL 填 <RELAY>/mcp，按提示走 OAuth：在 Agenvo 登录页粘贴管理员密钥，然后点 Allow。如果成功，在 Grok 新对话里让它用 search 列出实例，再给 <dsh 实例> 派只读任务并读回结果。如果失败（例如报 invalid_client、或要求付费），记下原文，不要尝试绕过。
+5b. Grok 外环：在 Grok 的 MCP 设置里添加 CommHub `<ANET_HUB>/mcp`（token 与 Cloudflare Access 用环境变量或 overlay，不写进报告或截图）。让它 `send_task` 到一个在线 alias，并确认门铃侧收到 inbox 且 `send_reply` 回到原会话。如果失败，记下原文，不要改走旧 relay 冒充通过。
 6. 不做清理：保留 ChatGPT 连接器和授权，这就是正式要用的授权。
 
 ## 报告

@@ -1,23 +1,27 @@
-# ADR-0001：以 Agenvo 作为唯一的远程控制面
+# ADR-0001：远程控制面是 CommHub（anet）
 
-状态：已采纳（2026-10-19）
+状态：已采纳（2026-10-31）。2026-10-19 曾把 Agenvo relay 写成唯一远程控制面；现役控制面是 Agent Network 的 CommHub。
 
 ## 背景
-用户从几个入口（ChatGPT、dots、Grok Bot）指挥多台电脑上的多种运行时（Codex、DSH、ZCode、Herdr 里的 CLI agent）。
-如果每个"入口 × 运行时"组合各接一条链路，每条都要一套鉴权、账本和教训，行为也会不一致。
+
+用户从几个入口指挥多台电脑上的多种运行时。控制面只留一套鉴权、任务和记账，避免每个「入口 × 运行时」各接一条链路。
 
 ## 决定
-使用自建 MCP 路线的入口（ChatGPT、dots、Grok Bot）作为 MCP 客户端，连接同一个 Agenvo relay；每台电脑上的每种运行时只挂一个 connector。
-新增入口不写新桥，只要它支持 OAuth + Streamable HTTP 的 MCP 即可。
 
-## 理由
-- 上游已经解决出站连接、断线重连、设备配对、OAuth、事件推送和 64 KiB 帧限制这些通用问题。
-- 上游的设计原则（Thread 粒度、保留原生语义、connector 只负责连接）正好约束住我们容易越写越大的冲动。
+远程控制面是 CommHub（Agent Network／anet）。本机默认 `http://127.0.0.1:9200`，MCP 在 `/mcp`。客户端与门铃在本仓 `adapters/commhub`；服务来自 `~/Projects/_forks/agent-network`。
+
+- 外环调用方（Grok）作为 CommHub MCP 客户端派活：`send_task`，需要记账时写需求卡。
+- 本机接收端用 [#90](https://github.com/semantic-craft/agent-fleet/pull/90) 门铃桥 `HerdrCommHubBridge`：SSE `/events/<alias>`，`get_inbox`／`ack_inbox`，结束时 `send_reply`。
+- dot 已有原生平台任务工具且电脑已授权时，Codex 走原生通道，不绕经 CommHub。
+- `fleet.mjs check` 默认检查 CommHub。`--legacy-agenvo` 只检查旧 relay。
+
+hub 地址、node token、Cloudflare Access 放环境变量或 overlay，不进本仓库。
 
 ## 代价
-- 依赖一个尚在预览阶段、未经安全审计的上游项目（v0.2.0）。
-- relay 不做端到端加密。
 
-## 适用范围澄清（2026-10-25）
+- hub 可达性、token 与 Access 策略要单独保管。
+- 桌面和 CLI 的原生附着仍由 connector 与门铃桥完成；控制面不执行 agent。
 
-dot 已有原生平台任务工具和电脑授权时，Codex 优先该通道，不强制绕经 Agenvo。DSH／GrokBot→Agenvo→Codex Desktop 的外部需求仍保留；Agenvo→DSH／Herdr 不变。各调用方分别验收，见[调用方路由](../caller-routing.md)。
+## 适用范围
+
+DSH、GrokBot 的 Codex Desktop 可见性仍按[调用方路由](../caller-routing.md)各自验收。同 host 执行与跨 backend 的 writer 交接分开记录。

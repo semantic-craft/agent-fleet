@@ -8,7 +8,8 @@
 
 | 层 | 可复用来源与已知事实 | 未知 / 新机必须确认 |
 | --- | --- | --- |
-| 控制面 | `Xuanwo/agenvo`；自有 fork `semantic-craft/agenvo` 的 `xw/dispatch-connectors`；上游研究基线 `a89415e557c415faf5626354f8e87233eb69d877` | 研究 SHA 不是现役部署锁；从已批准 release.json / relay 发布记录核实实际 SHA，不能用浮动分支代替 |
+| 控制面 | CommHub／anet：`~/Projects/_forks/agent-network`（server 默认 `127.0.0.1:9200`）；本仓 `adapters/commhub` 与 #90 门铃桥 | 公网域名、node token、Cloudflare Access 在环境变量或 overlay。hub 版本以本机 checkout 与 launchd 为准 |
+| connector | `Xuanwo/agenvo`；自有 fork `semantic-craft/agenvo` 的 `xw/dispatch-connectors`；上游研究基线 `a89415e557c415faf5626354f8e87233eb69d877` | 研究 SHA 不是现役部署锁；从已批准 release.json / relay 发布记录核实实际 SHA，不能用浮动分支代替 |
 | DSH adapter | 本仓 `adapters/dsh`，由 `release dsh --sha <reviewed SHA>` 发布；本轮基础代码来自 agent-fleet `baf66e015fb89ab4876561910554444c57f7b075` | 安装后 Host 内部 Typert/workspaceRegistry 契约须再验；包的宽版本范围不代表兼容已验 |
 | Agent runtime | 官方 `deepseek-ai/deepseek-harness`；2026-10-24 线路证据 DSH 0.2.1-rc.3、安装依赖 pi-ai 1.1.0 | rc.3 tag `1f81c047fc48fa190a683e469daa699857e9afe8` 只供源码比较，不宣称等于已装二进制。Codex/Herdr 精确可重建版本本表 unknown，需从各官方发行及实际安装取证 |
 | Provider gateway | Magpie；模型路线已通过本机独立部署运行 | 实际已部署源码/构建/签名关系 unknown，必须补其正式发行来源、包哈希、补丁来源和版本；不能据历史测试源码冒认二进制 |
