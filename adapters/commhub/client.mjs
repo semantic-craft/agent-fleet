@@ -52,6 +52,7 @@ export class CommHubClient {
     this.fetch = fetchImpl;
     this.sessionId = null;
     this.rpcId = 0;
+    this._initPromise = null;
   }
 
   getHeaders(extra = {}) {
@@ -77,34 +78,42 @@ export class CommHubClient {
   }
 
   async initialize() {
-    this.sessionId = null;
-    const res = await this.fetch(`${this.hub}/mcp`, {
-      method: "POST",
-      headers: this.getHeaders(),
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: ++this.rpcId,
-        method: "initialize",
-        params: {
-          protocolVersion: PROTOCOL,
-          capabilities: {},
-          clientInfo: {
-            name: "agent-fleet",
-            version: this.clientVersion ?? "0",
-          },
-        },
-      }),
-      signal: AbortSignal.timeout(this.timeoutMs),
-    });
+    if (this._initPromise) return this._initPromise;
+    this._initPromise = (async () => {
+      this.sessionId = null;
+      try {
+        const res = await this.fetch(`${this.hub}/mcp`, {
+          method: "POST",
+          headers: this.getHeaders(),
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: ++this.rpcId,
+            method: "initialize",
+            params: {
+              protocolVersion: PROTOCOL,
+              capabilities: {},
+              clientInfo: {
+                name: "agent-fleet",
+                version: this.clientVersion ?? "0",
+              },
+            },
+          }),
+          signal: AbortSignal.timeout(this.timeoutMs),
+        });
 
-    if (!res.ok) {
-      const errText = await res.text();
-      throw new Error(`initialize: HTTP ${res.status}: ${errText.slice(0, 300)}`);
-    }
+        if (!res.ok) {
+          const errText = await res.text();
+          throw new Error(`initialize: HTTP ${res.status}: ${errText.slice(0, 300)}`);
+        }
 
-    this.sessionId = res.headers?.get?.("mcp-session-id") ?? null;
-    await res.text();
-    return this.sessionId;
+        this.sessionId = res.headers?.get?.("mcp-session-id") ?? null;
+        await res.text();
+        return this.sessionId;
+      } finally {
+        this._initPromise = null;
+      }
+    })();
+    return this._initPromise;
   }
 
   async callOnce(toolName, args) {
@@ -138,6 +147,7 @@ export class CommHubClient {
 
     // Hub restart recovery: re-initialize once and retry on 400 or 404
     if (res.status === 404 || res.status === 400) {
+      this.sessionId = null;
       await this.initialize();
       ({ res, raw } = await this.callOnce(toolName, args));
     }
@@ -217,7 +227,7 @@ export class CommHubClient {
   }
 
   async toggleChecklist(id, itemId, doneOrChecked = true, { networkId = null } = {}) {
-    const isDone = typeof doneOrChecked === "object"
+    const isDone = (doneOrChecked !== null && typeof doneOrChecked === "object")
       ? Boolean(doneOrChecked.done ?? doneOrChecked.checked ?? true)
       : Boolean(doneOrChecked);
     const args = {
@@ -260,9 +270,13 @@ export class CommHubClient {
     networkId = null,
     ...rest
   } = {}) {
+    const VALID_STATUSES = new Set(["working", "idle", "blocked", "error", "waiting_input", "offline"]);
     let mappedStatus = status;
-    if (status === "online") mappedStatus = "idle";
-    else if (status === "busy") mappedStatus = "working";
+    if (status === "online" || status === "ready" || status === "done") mappedStatus = "idle";
+    else if (status === "busy" || status === "running") mappedStatus = "working";
+    if (!VALID_STATUSES.has(mappedStatus)) {
+      mappedStatus = "idle";
+    }
 
     const destAlias = alias || this.alias || "agent-fleet";
     const resId = resumeId || this.resumeId || `fleet-${randomUUID()}`;
@@ -304,8 +318,8 @@ export class CommHubClient {
   } = {}) {
     const destAlias = alias || target;
     const taskContent = task || text;
-    if (!destAlias) throw new Error("sendTask requires alias (or target)");
-    if (!taskContent) throw new Error("sendTask requires task (or text)");
+    if (!destAlias || !String(destAlias).trim()) throw new Error("sendTask requires non-empty alias (or target)");
+    if (!taskContent || !String(taskContent).trim()) throw new Error("sendTask requires non-empty task (or text)");
 
     const args = {
       alias: String(destAlias),
@@ -339,7 +353,10 @@ export class CommHubClient {
   } = {}) {
     const id = inReplyTo ?? taskId;
     const content = text ?? reply;
-    const safeText = truncateReply(content ?? "");
+    let safeText = truncateReply(content ?? "");
+    if (!safeText || safeText.trim().length === 0) {
+      safeText = "(empty reply)";
+    }
     const args = {
       text: safeText,
       status,
@@ -417,9 +434,10 @@ export class CommHubClient {
         const lines = buffer.split(/\r?\n/);
         buffer = lines.pop() ?? "";
         for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
+          const m = line.match(/^data:\s*(.+)$/);
+          if (!m) continue;
           try {
-            yield JSON.parse(line.slice(6));
+            yield JSON.parse(m[1].trim());
           } catch {
             /* ignore malformed frame */
           }
@@ -467,7 +485,7 @@ export class CommHubClient {
           if (dataLine) {
             try {
               const data = JSON.parse(dataLine.slice(5).trim());
-              onEvent(data);
+              await onEvent(data);
             } catch {
               /* ignore parse error on keepalive or heartbeat comments */
             }
@@ -475,7 +493,11 @@ export class CommHubClient {
         }
       }
     } finally {
-      reader.releaseLock();
+      try {
+        await reader.cancel();
+      } catch {
+        /* already closed */
+      }
     }
   }
 }

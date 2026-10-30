@@ -17,6 +17,7 @@ export class HerdrCommHubBridge {
     ledgerPath = null,
     pollMs = 60_000,
     heartbeatMs = 30_000,
+    turnTimeoutMs = 30 * 60_000,
     version = "agent-fleet",
   } = {}) {
     if (!alias) throw new Error("HerdrCommHubBridge requires alias");
@@ -28,6 +29,7 @@ export class HerdrCommHubBridge {
     this.ledger = ledger || createLedger(ledgerPath);
     this.pollMs = pollMs;
     this.heartbeatMs = heartbeatMs;
+    this.turnTimeoutMs = turnTimeoutMs;
     this.version = version;
 
     this.running = false;
@@ -37,6 +39,7 @@ export class HerdrCommHubBridge {
     this.currentTask = null;
     this.timers = [];
     this.abortController = null;
+    this.listenPromise = null;
   }
 
   async heartbeat(nextStatus = null, currentTask = undefined) {
@@ -86,13 +89,17 @@ export class HerdrCommHubBridge {
         if (msg.type === "task") {
           await this.handleTask(msg);
         }
-        await this.client.ackInbox({ alias: this.alias, messageId: msg.id });
+        await this.client.ackInbox({ alias: this.alias, messageId: msg.id || msg.task_id });
       } catch {
         // Leave unacked so next drain retries; ledger prevents duplicate reply
       }
     }
     if (messages.length > 0) {
       await this.heartbeat("idle", null);
+    }
+    // If we drained a full batch of 10, drain again immediately to empty the backlog
+    if (messages.length >= 10) {
+      this.drainAgain = true;
     }
   }
 
@@ -135,7 +142,18 @@ export class HerdrCommHubBridge {
 
     let outcome;
     try {
-      outcome = await this.handler(msg);
+      let t;
+      const timeoutPromise = new Promise((_, reject) => {
+        t = setTimeout(
+          () => reject(new Error(`turn exceeded ${Math.round(this.turnTimeoutMs / 1000)}s`)),
+          this.turnTimeoutMs
+        );
+      });
+      try {
+        outcome = await Promise.race([this.handler(msg), timeoutPromise]);
+      } finally {
+        clearTimeout(t);
+      }
     } catch (err) {
       outcome = { reply: `任务执行失败: ${err.message}`, status: "failed" };
     }
@@ -166,23 +184,58 @@ export class HerdrCommHubBridge {
   async listenLoop() {
     while (this.running && !this.abortController?.signal?.aborted) {
       try {
-        await this.client.subscribeEvents(
-          this.alias,
-          async (event) => {
+        if (typeof this.client.events === "function") {
+          for await (const event of this.client.events(this.alias, this.abortController.signal)) {
+            if (!this.running) break;
             if (event.type === "connected") {
               await this.heartbeat("idle");
               void this.drain();
-            } else if (event.type === "new_task" || event.type === "new_message") {
+            } else if (
+              event.type === "new_task" ||
+              event.type === "new_message" ||
+              event.type === "new_reply" ||
+              event.type === "broadcast" ||
+              (typeof event.inbox_count === "number" && event.inbox_count > 0)
+            ) {
               void this.drain();
             } else if (
               event.kind === "task" ||
               (event.type === "task" && (event.id || event.task_id || event.task))
             ) {
               await this.handleTask(event.task || event);
+              if (event.id) {
+                await this.client.ackInbox({ alias: this.alias, messageId: event.id }).catch(() => {});
+              }
             }
-          },
-          { signal: this.abortController.signal }
-        );
+          }
+        } else {
+          await this.client.subscribeEvents(
+            this.alias,
+            async (event) => {
+              if (event.type === "connected") {
+                await this.heartbeat("idle");
+                void this.drain();
+              } else if (
+                event.type === "new_task" ||
+                event.type === "new_message" ||
+                event.type === "new_reply" ||
+                event.type === "broadcast" ||
+                (typeof event.inbox_count === "number" && event.inbox_count > 0)
+              ) {
+                void this.drain();
+              } else if (
+                event.kind === "task" ||
+                (event.type === "task" && (event.id || event.task_id || event.task))
+              ) {
+                await this.handleTask(event.task || event);
+                if (event.id) {
+                  await this.client.ackInbox({ alias: this.alias, messageId: event.id }).catch(() => {});
+                }
+              }
+            },
+            { signal: this.abortController.signal }
+          );
+        }
       } catch {
         if (!this.running || this.abortController?.signal?.aborted) break;
       }
@@ -204,7 +257,7 @@ export class HerdrCommHubBridge {
       setInterval(() => void this.drain(), this.pollMs)
     );
 
-    this.listenLoop();
+    this.listenPromise = this.listenLoop();
     void this.drain();
   }
 
@@ -217,6 +270,11 @@ export class HerdrCommHubBridge {
       clearTimeout(t);
     }
     this.timers = [];
+
+    if (this.listenPromise) {
+      await this.listenPromise.catch(() => {});
+      this.listenPromise = null;
+    }
 
     if (this.draining) {
       await this.draining.catch(() => {});

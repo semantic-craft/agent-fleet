@@ -10,7 +10,10 @@ export function createLedger(path = null) {
   let entries = {};
   if (path) {
     try {
-      entries = JSON.parse(readFileSync(path, "utf8")).tasks ?? {};
+      const parsed = JSON.parse(readFileSync(path, "utf8"));
+      if (parsed && typeof parsed.tasks === "object" && parsed.tasks !== null) {
+        entries = parsed.tasks;
+      }
     } catch {
       entries = {};
     }
@@ -32,9 +35,9 @@ export function createLedger(path = null) {
   };
 
   return {
-    get: (id) => entries[id],
+    get: (id) => entries[String(id)],
     set(id, value) {
-      entries[id] = { ...value, at: Date.now() };
+      entries[String(id)] = { ...value, at: Date.now() };
       persist();
     },
     snapshot: () => JSON.parse(JSON.stringify(entries)),

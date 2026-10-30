@@ -4,7 +4,7 @@ import { createServer } from "node:http";
 import { mkdtempSync, rmSync, statSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { CommHubClient, REPLY_MAX_CHARS, truncateReply } from "../adapters/commhub/client.mjs";
 import { HerdrCommHubBridge } from "../adapters/commhub/herdr-bridge.mjs";
 import { createLedger } from "../adapters/commhub/ledger.mjs";
@@ -138,6 +138,60 @@ test("CommHubClient initializes MCP session and retries on 400/404 hub restart",
   }
 });
 
+test("CommHubClient deduplicates concurrent initialize() calls", async () => {
+  let initCount = 0;
+  const server = createServer(async (req, res) => {
+    let body = "";
+    for await (const chunk of req) body += chunk;
+    const msg = JSON.parse(body || "{}");
+
+    if (msg.method === "initialize") {
+      initCount++;
+      await new Promise((r) => setTimeout(r, 20));
+      res.writeHead(200, {
+        "Content-Type": "application/json",
+        "mcp-session-id": "single_session",
+      });
+      res.end(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: "2025-03-26" } }));
+      return;
+    }
+
+    if (msg.method === "tools/call") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: msg.id,
+          result: { content: [{ type: "text", text: JSON.stringify({ ok: true, callId: msg.id }) }] },
+        })
+      );
+      return;
+    }
+    res.writeHead(404).end();
+  });
+
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const hubUrl = `http://127.0.0.1:${server.address().port}`;
+
+  try {
+    const client = new CommHubClient({ hub: hubUrl, token: "tok" });
+    // Fire 3 simultaneous calls before session is initialized
+    const [res1, res2, res3] = await Promise.all([
+      client.call("get_all_status"),
+      client.call("get_all_status"),
+      client.call("get_all_status"),
+    ]);
+
+    assert.equal(initCount, 1, "Must perform exactly one initialize handshake for concurrent callers");
+    assert.equal(client.sessionId, "single_session");
+    assert.equal(res1.ok, true);
+    assert.equal(res2.ok, true);
+    assert.equal(res3.ok, true);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 test("Wire-level schema enforcement: Zod validation rejects legacy parameter mismatches", async () => {
   // Exact schema enforcer matching server/src/tools.ts
   const VALID_STATUSES = new Set(["working", "idle", "blocked", "error", "waiting_input", "offline"]);
@@ -246,6 +300,21 @@ test("Wire-level schema enforcement: Zod validation rejects legacy parameter mis
     assert.equal(replyRes.echo.in_reply_to, "t123");
     assert.equal(replyRes.echo.text, "done ok");
     assert.equal(replyRes.echo.reply, undefined);
+
+    // 5. sendReply with empty string falls back to non-empty text, avoiding -32602 Zod rejection
+    const emptyReplyRes = await client.sendReply({ taskId: "t124", reply: "" });
+    assert.equal(emptyReplyRes.ok, true);
+    assert.equal(emptyReplyRes.echo.text, "(empty reply)");
+
+    // 6. toggleChecklist with null/falsy doesn't throw TypeError
+    const toggleRes3 = await client.toggleChecklist("req_1", "c3", null);
+    assert.equal(toggleRes3.ok, true);
+    assert.equal(typeof toggleRes3.echo.done, "boolean");
+
+    // 7. reportStatus with non-standard status maps to valid enum
+    const statusRes2 = await client.reportStatus({ status: "done" });
+    assert.equal(statusRes2.ok, true);
+    assert.equal(statusRes2.echo.status, "idle");
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
@@ -577,6 +646,109 @@ test("HerdrCommHubBridge durable ledger crash recovery across restarts", async (
   }
 });
 
+test("HerdrCommHubBridge drains entire backlog when inbox has >= 10 messages", async () => {
+  const tmpDir = mkdtempSync(join(tmpdir(), "backlog-ledger-"));
+  const ledgerPath = join(tmpDir, "ledger.json");
+
+  // Total 15 messages: page 1 will return 10 messages, page 2 will return 5 messages
+  const queue = Array.from({ length: 15 }, (_, i) => ({
+    id: `m_${i + 1}`,
+    type: "task",
+    task_id: `t_${i + 1}`,
+    content: `task payload ${i + 1}`,
+  }));
+
+  const handled = [];
+  const acks = [];
+
+  const mockClient = {
+    alias: "herdr-backlog",
+    reportStatus: async () => {},
+    getInbox: async ({ limit = 10 } = {}) => {
+      const batch = queue.slice(0, limit);
+      return { messages: batch };
+    },
+    ackInbox: async ({ messageId }) => {
+      acks.push(messageId);
+      const idx = queue.findIndex((m) => m.id === messageId || m.task_id === messageId);
+      if (idx !== -1) queue.splice(idx, 1);
+      return { ok: true };
+    },
+    sendReply: async () => {},
+    subscribeEvents: async () => {},
+  };
+
+  try {
+    const bridge = new HerdrCommHubBridge({
+      alias: "herdr-backlog",
+      client: mockClient,
+      ledgerPath,
+      pollMs: 60_000,
+      handler: async (task) => {
+        handled.push(task.task_id);
+        return { reply: "ok" };
+      },
+    });
+
+    await bridge.start();
+    // A single drain() invocation should drain all 15 without waiting for the 60s poll timer
+    await bridge.drain();
+    await bridge.stop();
+
+    assert.equal(handled.length, 15, "All 15 tasks across multiple pages must be processed");
+    assert.equal(acks.length, 15, "All 15 tasks must be acknowledged");
+    assert.equal(queue.length, 0, "Inbox queue must be empty");
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("HerdrCommHubBridge times out hung turns and reports failure", async () => {
+  const tmpDir = mkdtempSync(join(tmpdir(), "timeout-ledger-"));
+  const ledgerPath = join(tmpDir, "ledger.json");
+
+  const replies = [];
+  const mockClient = {
+    alias: "herdr-timeout",
+    reportStatus: async () => {},
+    getInbox: async () => ({
+      messages: [{ id: "m_hung", type: "task", task_id: "t_hung", content: "hung turn" }],
+    }),
+    ackInbox: async () => ({ ok: true }),
+    sendReply: async (reply) => replies.push(reply),
+    subscribeEvents: async () => {},
+  };
+
+  try {
+    const bridge = new HerdrCommHubBridge({
+      alias: "herdr-timeout",
+      client: mockClient,
+      ledgerPath,
+      turnTimeoutMs: 50, // fast timeout for test
+      handler: async () => {
+        // Hang indefinitely
+        await new Promise((r) => setTimeout(r, 2000));
+        return { reply: "too late" };
+      },
+    });
+
+    await bridge.start();
+    await bridge.drain();
+    await bridge.stop();
+
+    assert.equal(replies.length, 1);
+    assert.equal(replies[0].inReplyTo, "t_hung");
+    assert.equal(replies[0].status, "failed");
+    assert.match(replies[0].text, /turn exceeded/);
+
+    const ledger = createLedger(ledgerPath);
+    assert.equal(ledger.get("t_hung")?.state, "done");
+    assert.equal(ledger.get("t_hung")?.status, "failed");
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 test("writeNodeRulesFile, readNodeRulesFile, and pushAccountingRulesToNode MCP tool calls", async () => {
   const calls = [];
   const mockClient = {
@@ -640,6 +812,12 @@ test("E2E with isolated real CommHub server instance (bun subprocess + temp SQLi
     return;
   }
 
+  const bunCheck = spawnSync("which", ["bun"]);
+  if (bunCheck.status !== 0) {
+    t.skip("bun runtime not found, skipping live subprocess test");
+    return;
+  }
+
   const tmpDir = mkdtempSync(join(tmpdir(), "commhub-e2e-"));
   const dbPath = join(tmpDir, "test-hub.db");
   const ledgerPath = join(tmpDir, "herdr-ledger.json");
@@ -661,6 +839,7 @@ test("E2E with isolated real CommHub server instance (bun subprocess + temp SQLi
       },
       stdio: "ignore",
     });
+    proc.on("error", () => {});
 
     // Wait for health endpoint
     let healthy = false;
@@ -780,7 +959,8 @@ test("E2E with isolated real CommHub server instance (bun subprocess + temp SQLi
     assert.equal(ledger.get(taskId)?.state, "done");
   } finally {
     if (proc) {
-      proc.kill("SIGTERM");
+      try { proc.kill("SIGTERM"); } catch {}
+      try { proc.kill("SIGKILL"); } catch {}
     }
     rmSync(tmpDir, { recursive: true, force: true });
   }
