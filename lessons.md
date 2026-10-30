@@ -121,7 +121,7 @@ dot 原生平台任务通道不受本节阻断；DSH／GrokBot→Agenvo→Codex 
 
 - 起因与后果：`check --dispatch` 用 `maxMessages: 6` 读快照，真实会话（含读文件的 tool 结果）超过 64 KiB，返回的错误被当成"还没完成"，轮次早已 completed，检查却等满 10 分钟报失败；实例 context 里写的"4–8"也会让助手踩同一个坑。
 - 修复与证据：`scripts/fleet.mjs` 的 `dshTurn`；两台 DSH 的 `check --dispatch` 均 turn/end completed；overlay 的 DSH context 改为 1–2 并写明超限时怎么办。
-- 验证点：`rg -n 'maxMessages: 1' scripts/fleet.mjs` 在 `session/follow` 与 `session/page` 两处有结果；`node scripts/fleet.mjs check --dispatch` 两台 DSH 均 turn/end completed。
+- 验证点：`rg -n 'maxMessages: 1' scripts/harness.mjs` 在 `session/follow` 与 `session/page` 调用处均有结果；`node scripts/fleet.mjs check --dispatch` 两台 DSH 均 turn/end completed。
 - 复发记录：Seen 1x (2026-10-19)。
 
 ### Herdr 的 runtime_unavailable 多半是 session 名错
@@ -217,7 +217,7 @@ dot 原生平台任务通道不受本节阻断；DSH／GrokBot→Agenvo→Codex 
 - 起因与后果：2026-10-21 想经 Herdr 用 osascript 自动点 Codex 桌面版，验证派活线程能续发、出现在侧栏。权限记在 herdr 头上（launchd 起的 herdr 0.9.3），herdr 只有 adhoc 签名、没有 Team ID；用户三轮守在主力 Mac 前点 Allow，「控制 System Events」记住了，辅助功能一直没授予（22:17–22:22 六次检查都是 false，这项权限不弹窗，点 Allow 解决不了），自动检查始终没跑通。
 - 修复与证据：用户 2026-10-21 22:26 定：不自动化桌面，不申请辅助功能，不重签 herdr；「桌面在同一线程续发」以用户 22:16、22:17 在桌面里发出的两个 turn 为证记为通过；侧栏是否出现不单独测，技能写明 exec 线程不一定在侧栏、必须给链接。
 - 正确做法（Done right）：Codex 新建派活用 `codex exec`，追问用 `codex exec resume`，均经 Herdr pane 执行，不需要桌面权限；要验证桌面能续发，请用户在桌面里发一轮并截图或给时间点。授予 herdr 辅助功能等于让 herdr 里跑的任何命令都能控制键盘鼠标，且 adhoc 签名下每次升级 herdr 都可能要重新授权。
-- 验证点：`rg -n 'osascript|System Events' ~/Projects/xw-skills/live/xw-stack/skills/delegate-via-agenvo/ prompts/ scripts/` 无派活或验收用的桌面自动化步骤；`rg -n '0 个归入项目' ~/Projects/xw-skills/live/xw-stack/skills/delegate-via-agenvo/SKILL.md` 有结果。
+- 验证点：`rg -n 'osascript|System Events' ~/Projects/xw-skills/live/xw-stack/skills/delegate-via-agenvo/ prompts/ scripts/` 无派活或验收用的桌面自动化步骤；核对 `~/Projects/xw-skills/live/xw-stack/skills/delegate-via-agenvo/SKILL.md` 的派出回报要求：告知会话 id 和桌面查看入口，没拿到登记结果或链接时，不说用户能在桌面里看到。
 - 复发记录：Seen 1x (2026-10-21)。
 
 ### 改用户的配置前先读现状，派活模型只照决定清单写进命令
