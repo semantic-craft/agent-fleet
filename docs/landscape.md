@@ -18,6 +18,7 @@ ZCode 不再派活（#34 起仓库里没有它的接收端代码），但主力 
 
 | 目录 | 是什么 | 状态 |
 | --- | --- | --- |
+| `alma-relay-ops` | 多设备回家／alma-relay 运维与实验正本仓（协议＋薄 agent／client） | 核心 |
 | `agent-fleet` | 本仓库：设计、清单、脚本、提示词，以及桌面端适配层 `adapters/dsh`（DSH 原生桥接插件），由 `fleet.mjs release` 部署 | 核心 |
 | `_forks/agenvo` | 上游 Agenvo 的最小 fork（新增 `dsh`/`zcode` kind、原生 DSH connector `apps/dsh` 和 ZCode 用的 `apps/dispatch`）；relay 与所有 connector 都从这里构建，connector 由 `fleet.mjs release agenvo` 装进发布目录运行，checkout 可以随意切分支 | 核心 |
 | `agent-plugins` | 各 coding agent 自有插件的安装根（2026-10-20）：`claude/`（Claude mod，marketplace xw-claude）、`codex/`（writing-core 构建件，xw-codex）、`zcode/`（zlib 技能包）、`dsh/`（dsh-zlib、lcu-dsh 子模块，dsh-english-coach、dsh-pomodoro） | 无关：不是通信基础设施；其中 `dsh/lcu-dsh`（LCU Computer Use 插件）线上在用 |
