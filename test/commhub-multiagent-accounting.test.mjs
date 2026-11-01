@@ -544,11 +544,14 @@ test("HerdrCommHubBridge handles lightweight new_task SSE event, drains inbox, a
       agent: "herdr",
       client: mockClient,
       ledgerPath,
-      handler: async (task) => ({
+      handler: async (task, started) => {
+        await started();
+        return {
         reply: "测试全部通过",
         comment: "Herdr 执行完毕：全部通过",
         status: "replied",
-      }),
+        };
+      },
     });
 
     await bridge.start();

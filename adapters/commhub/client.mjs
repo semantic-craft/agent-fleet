@@ -421,6 +421,14 @@ export class CommHubClient {
     return this.call("ack_inbox", args);
   }
 
+  async ackTask({ taskId = null, task_id = null, networkId = null } = {}) {
+    const id = task_id ?? taskId;
+    if (!id) throw new Error("ackTask requires taskId");
+    const args = { task_id: String(id) };
+    if (networkId || this.networkId) args.network_id = networkId || this.networkId;
+    return this.call("send_ack", args);
+  }
+
   // --- Node Rules & Capabilities Tools (#131) ---
 
   async writeNodeRulesFile({ nodeId = null, alias = null, content, networkId = null }) {
