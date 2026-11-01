@@ -26,7 +26,8 @@ export class HerdrCommHubBridge {
     this.agent = agent;
     this.resumeId = resumeId || `herdr-${randomUUID()}`;
     this.client = client || new CommHubClient({ alias: this.alias, resumeId: this.resumeId });
-    this.handler = onStarted ? (task) => handler(task, onStarted) : handler;
+    this.handler = handler;
+    this.onStarted = onStarted;
     this.ledger = ledger || createLedger(ledgerPath);
     this.pollMs = pollMs;
     this.heartbeatMs = heartbeatMs;
@@ -118,6 +119,15 @@ export class HerdrCommHubBridge {
     this.ledger.set(id, { state: "done", status: replyStatus });
   }
 
+  async markTaskStarted(msg) {
+    const content = String(msg.content ?? msg.task?.text ?? msg.text ?? "");
+    // send_ack leaves the task in the official pre-run state; the next
+    // report_status(working) transition is what gives CommHub started_at.
+    await this.client.ackTask?.({ task_id: String(msg.task_id || msg.id) });
+    await this.heartbeat("working", content);
+    if (this.onStarted) await this.onStarted(String(msg.task_id || msg.id), msg);
+  }
+
   async handleTask(msg) {
     const id = String(msg.task_id || msg.id);
     const seen = this.ledger.get(id);
@@ -138,8 +148,6 @@ export class HerdrCommHubBridge {
     }
 
     this.ledger.set(id, { state: "started" });
-    const content = String(msg.content ?? msg.task?.text ?? msg.text ?? "");
-    await this.heartbeat("working", content);
 
     let outcome;
     try {
@@ -151,7 +159,9 @@ export class HerdrCommHubBridge {
         );
       });
       try {
-        outcome = await Promise.race([this.handler(msg), timeoutPromise]);
+        const notifyStarted = async () => this.markTaskStarted(msg);
+        const handlerWithStarted = (task) => this.handler(task, notifyStarted);
+        outcome = await Promise.race([handlerWithStarted(msg), timeoutPromise]);
       } finally {
         clearTimeout(t);
       }

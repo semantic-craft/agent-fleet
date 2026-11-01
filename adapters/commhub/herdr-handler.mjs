@@ -130,10 +130,13 @@ export function createHerdrHandler({
 
     if (!existsSync(startedFile)) {
       return {
-        reply: truncateReply(`task ${id}: command not started within ${startedTimeoutMs} ms`),
+        reply: truncateReply(`task ${id}: 命令未起跑（not started within ${startedTimeoutMs} ms）`),
         status: "failed",
       };
     }
+
+    const startedAt = new Date();
+    if (onStarted) await onStarted(id, task);
 
     let exitCode = null;
     while (Date.now() - started < timeoutMs) {
@@ -154,7 +157,7 @@ export function createHerdrHandler({
 
     await writeFile(
       join(dir, "metadata.json"),
-      JSON.stringify({ task_id: id, agent, pane, started_at: new Date().toISOString(), exit: exitCode, completed_at: new Date().toISOString() }, null, 2)
+      JSON.stringify({ task_id: id, agent, pane, started_at: startedAt.toISOString(), exit: exitCode, completed_at: new Date().toISOString() }, null, 2)
     );
     const output = await readMaybe(describeOutput(agent, dir), 6000);
     const stderr = await readMaybe(join(dir, "stderr.log"), 1200);

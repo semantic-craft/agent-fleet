@@ -16,7 +16,6 @@ const bridge = new HerdrCommHubBridge({
   agent: process.env.HERDR_BRIDGE_AGENT || "herdr",
   version: process.env.HERDR_BRIDGE_VERSION || "herdr-commhub-bridge",
   ledgerPath,
-  onStarted: async (taskId) => client.call("send_ack", { task_id: String(taskId) }),
   handler: createHerdrHandler({
     workspaceId: process.env.HERDR_WORKSPACE_ID || null,
     timeoutMs: Number(process.env.HERDR_BRIDGE_TIMEOUT_MS || 29 * 60_000),

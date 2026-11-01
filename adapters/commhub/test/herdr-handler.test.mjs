@@ -43,10 +43,16 @@ test("handler writes the brief, starts the selected agy pane, and reports artifa
   const root = mkdtempSync(join(tmpdir(), "herdr-handler-"));
   const fixture = fixtureExecImpl(0);
   let acked = null;
+  let startedTask = null;
+  let startedAt = null;
   const handler = createHerdrHandler({
     statusRoot: root,
     execFileImpl: fixture.execFileImpl,
-    onStarted: async (id) => { acked = id; },
+    onStarted: async (id, task) => {
+      acked = id;
+      startedTask = task;
+      startedAt = new Date();
+    },
   });
   const result = await handler({ task_id: "task agy/1", content: "agent: agy\nDo the thing" });
 
@@ -62,6 +68,8 @@ test("handler writes the brief, starts the selected agy pane, and reports artifa
   assert.match(paneCommand, /--model gemini-4-argon-medium/);
   assert.match(paneCommand, /touch "\$D\/started"/);
   assert.equal(acked, "task-agy-1");
+  assert.equal(startedTask.task_id, "task agy/1");
+  assert.ok(startedAt <= new Date());
   assert.equal(await readFile(join(root, "task-agy-1", "brief.md"), "utf8"), "agent: agy\nDo the thing\n");
 });
 
@@ -97,7 +105,8 @@ test("handler fails quickly when Herdr never starts the command", async () => {
   const result = await handler({ id: "slow-start", content: "agent: agy\nDo the thing" });
 
   assert.equal(result.status, "failed");
-  assert.match(result.reply, /command not started within 10 ms/);
+  assert.match(result.reply, /not started within 10 ms/);
+  assert.match(result.reply, /命令未起跑/);
 });
 
 test("handler routes DSH tasks to the headless profile", async () => {
