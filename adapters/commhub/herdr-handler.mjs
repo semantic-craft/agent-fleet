@@ -122,7 +122,6 @@ export function createHerdrHandler({
     const started = Date.now();
     while (Date.now() - started < startedTimeoutMs) {
       if (existsSync(startedFile)) {
-        if (onStarted) await onStarted(id);
         break;
       }
       await new Promise((resolve) => setTimeout(resolve, pollMs));
