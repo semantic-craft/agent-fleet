@@ -13,6 +13,7 @@ export class HerdrCommHubBridge {
     resumeId = null,
     client = null,
     handler = async (task) => ({ reply: "ok", status: "replied" }),
+    onStarted = null,
     ledger = null,
     ledgerPath = null,
     pollMs = 60_000,
@@ -25,7 +26,7 @@ export class HerdrCommHubBridge {
     this.agent = agent;
     this.resumeId = resumeId || `herdr-${randomUUID()}`;
     this.client = client || new CommHubClient({ alias: this.alias, resumeId: this.resumeId });
-    this.handler = handler;
+    this.handler = onStarted ? (task) => handler(task, onStarted) : handler;
     this.ledger = ledger || createLedger(ledgerPath);
     this.pollMs = pollMs;
     this.heartbeatMs = heartbeatMs;

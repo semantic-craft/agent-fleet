@@ -76,12 +76,13 @@ function describeOutput(agent, dir) {
 export function createHerdrHandler({
   home = homedir(),
   statusRoot = join(homedir(), "Projects", "_status"),
-  cwd = join(homedir(), "Projects"),
   workspaceId = process.env.HERDR_WORKSPACE_ID || null,
   herdrBin = "herdr",
   execFileImpl = execFileAsync,
   pollMs = 500,
+  startedTimeoutMs = 3 * 60_000,
   timeoutMs = 29 * 60_000,
+  onStarted = null,
 } = {}) {
   return async function handleHerdrTask(task) {
     const text = taskText(task);
@@ -94,12 +95,13 @@ export function createHerdrHandler({
     const id = safeTaskId(task?.task_id || task?.id);
     const dir = join(statusRoot, id);
     const brief = join(dir, "brief.md");
+    const startedFile = join(dir, "started");
     const exitFile = join(dir, "exit");
     await mkdir(dir, { recursive: true });
     await writeFile(brief, `${text}\n`, { mode: 0o600 });
 
     const label = `commhub-${id}`.slice(0, 80);
-    const tabArgs = ["tab", "create", "--cwd", cwd, "--label", label, "--no-focus"];
+    const tabArgs = ["tab", "create", "--cwd", dir, "--label", label, "--no-focus"];
     if (workspaceId) tabArgs.push("--workspace", workspaceId);
     const created = jsonOutput((await execFileImpl(herdrBin, tabArgs)).stdout);
     const pane = paneId(created);
@@ -107,11 +109,10 @@ export function createHerdrHandler({
       throw new Error(`herdr tab create did not return a pane: ${JSON.stringify(created)?.slice(0, 500)}`);
     }
 
-    const encodedBrief = Buffer.from(`${text}\n`, "utf8").toString("base64");
     const command = [
       `D=${JSON.stringify(dir)}`,
       "mkdir -p \"$D\"",
-      `printf %s '${encodedBrief}' | base64 -d > "$D/brief.md"`,
+      "touch \"$D/started\"",
       AGENT_COMMANDS[agent]("$D"),
       "echo $? > \"$D/exit\"",
       "exit",
@@ -119,6 +120,21 @@ export function createHerdrHandler({
     await execFileImpl(herdrBin, ["pane", "run", pane, command]);
 
     const started = Date.now();
+    while (Date.now() - started < startedTimeoutMs) {
+      if (existsSync(startedFile)) {
+        if (onStarted) await onStarted(id);
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, pollMs));
+    }
+
+    if (!existsSync(startedFile)) {
+      return {
+        reply: truncateReply(`task ${id}: command not started within ${startedTimeoutMs} ms`),
+        status: "failed",
+      };
+    }
+
     let exitCode = null;
     while (Date.now() - started < timeoutMs) {
       if (existsSync(exitFile)) {
@@ -138,7 +154,7 @@ export function createHerdrHandler({
 
     await writeFile(
       join(dir, "metadata.json"),
-      JSON.stringify({ task_id: id, agent, pane, exit: exitCode, completed_at: new Date().toISOString() }, null, 2)
+      JSON.stringify({ task_id: id, agent, pane, started_at: new Date().toISOString(), exit: exitCode, completed_at: new Date().toISOString() }, null, 2)
     );
     const output = await readMaybe(describeOutput(agent, dir), 6000);
     const stderr = await readMaybe(join(dir, "stderr.log"), 1200);

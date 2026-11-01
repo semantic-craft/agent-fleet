@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { CommHubClient } from "../client.mjs";
 import { HerdrCommHubBridge } from "../herdr-bridge.mjs";
 import { createHerdrHandler } from "../herdr-handler.mjs";
 
@@ -9,14 +10,15 @@ if (!alias) {
 }
 
 const ledgerPath = process.env.HERDR_BRIDGE_LEDGER || null;
+const client = new CommHubClient({ alias });
 const bridge = new HerdrCommHubBridge({
   alias,
   agent: process.env.HERDR_BRIDGE_AGENT || "herdr",
   version: process.env.HERDR_BRIDGE_VERSION || "herdr-commhub-bridge",
   ledgerPath,
+  onStarted: async (taskId) => client.call("send_ack", { task_id: String(taskId) }),
   handler: createHerdrHandler({
     workspaceId: process.env.HERDR_WORKSPACE_ID || null,
-    cwd: process.env.HERDR_BRIDGE_CWD || undefined,
     timeoutMs: Number(process.env.HERDR_BRIDGE_TIMEOUT_MS || 29 * 60_000),
   }),
 });
