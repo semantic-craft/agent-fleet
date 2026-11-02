@@ -18,7 +18,7 @@
 | `agent-plugins/README.md` | 插件安装导航 | 独立 worktree 已修正旧 ZCode 源码路径，待审查合并 | 原文仍指 `agent-fleet/adapters/zcode`，该目录已不存在；文档修复不等于卸载运行服务 |
 | `magpie-ops/tools/agenvo_pilot.py`、`agenvo_config_guard.py` | 2026-10-25 一次性评估；guard 含恢复旧 MCP 配置的执行分支 | 远端已退役：`origin/main` 的 `70e7741`（PR #1）删除两脚本；本地已安全快进，原有未提交文件哈希核对保持不变。不运行恢复分支，不把模型路由并入 ANet | 已读脚本；本仓 AGENTS、README 有他人修改，NOTES 未跟踪；未读凭据或执行脚本 |
 | `alma-relay-ops/README.md` | 网络运维者；仍描述 CommHub 门铃 | 远端 `origin/main` 的 `6870966`（PR #2）已澄清 ANet 边界；本地主 checkout 已安全快进，网络底座保留 | 原第 13 行称旧控制面“不砍、本仓不改”；初查工作区干净；未停服务 |
-| `_forks/agent-network/` | 官方上游 fork，ANet/agent-node 协议实现及测试 | 保留独立上游，fleet 消费而非复制协议实现 | 已列源码目录并查 Git 状态：初查干净；不证明已安装版本一致 |
+| `_forks/agent-network/` | 远端为 `sleep2agi/agent-network`，README 指向 `anet.sh`；是旧 ANet/CommHub 实现 | 与当前 Research 0.3.9 区分，不并入 fleet、不作当前协议来源；核实运行消费者后才退役 | 已查 remote、README 和 Git 状态（干净）；当前是否仍被旧部署引用未完全确认 |
 | `TeslaHub/`、`kotone/`、`vps-ops/` 等 | 共用 AGENTS、产品资料及历史运维引用 | 保留消费者及历史事实；关键词命中不构成冗余实现 | 检索发现引用；未发现需要吞并的 ANet 协议实现 |
 | `_status/`、`_artifacts/`、`_shared-work/` | 回执、测试输出、快照、历史证据 | 保留证据职责；与活动源码分开，不因旧名称批量删除 | 历史快照不是维护正本；未逐一阅读所有产物 |
 
