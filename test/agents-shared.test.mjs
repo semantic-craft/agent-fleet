@@ -1,12 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, lstatSync, readlinkSync } from 'node:fs';
 
-const read = (path) => readFileSync(new URL('../' + path, import.meta.url), 'utf8');
+const root = new URL('..', import.meta.url);
+const read = (path) => readFileSync(new URL(path, root), 'utf8');
 const agenvoAsCanon = /agenvo.*正本|正本.*agenvo|agenvo 为/i;
 
-test('root AGENTS.md is the shared cross-repo body', () => {
-  const text = read('AGENTS.md');
+function assertSharedRules(text) {
   assert.match(text, /官方 Agent Network（ANet）Research/);
   assert.match(text, /docs\/anet\.md/);
   assert.match(text, /https:\/\/docs\.agentnetwork\.org\.cn/);
@@ -24,13 +24,17 @@ test('root AGENTS.md is the shared cross-repo body', () => {
   assert.doesNotMatch(text, agenvoAsCanon);
   assert.doesNotMatch(text, /EGM/i);
   assert.doesNotMatch(text, /先读什么/);
+}
+
+test('docs/AGENTS.shared.md is the editable shared body', () => {
+  assertSharedRules(read('docs/AGENTS.shared.md'));
 });
 
-test('docs/AGENTS.shared.md only points at the root body', () => {
-  const text = read('docs/AGENTS.shared.md').trim();
-  assert.match(text, /\.\.\/AGENTS\.md/);
-  assert.ok(text.split('\n').length <= 2, text);
-  assert.doesNotMatch(text, /Agent Network/);
-  assert.doesNotMatch(text, agenvoAsCanon);
-  assert.doesNotMatch(text, /EGM/i);
+test('root AGENTS.md symlinks to the shared body', () => {
+  const path = new URL('AGENTS.md', root);
+  assert.equal(lstatSync(path).isSymbolicLink(), true);
+  assert.equal(readlinkSync(path), 'docs/AGENTS.shared.md');
+  const viaRoot = read('AGENTS.md');
+  assert.equal(viaRoot, read('docs/AGENTS.shared.md'));
+  assertSharedRules(viaRoot);
 });
