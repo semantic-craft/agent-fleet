@@ -7,8 +7,8 @@ test('reviewed source candidates retain fixed bases and exact patch/license byte
  const manifest=JSON.parse(readFileSync(new URL('manifest.json',root),'utf8'));
  assert.equal(manifest.deployed,false);
  assert.equal(manifest.runtime.base,'1f81c047fc48fa190a683e469daa699857e9afe8');
- assert.equal(manifest.agenvo.base,'cd10fb92e1da731b307b85f8e94e8db8b6b8808a');
- for(const entry of [manifest.runtime,manifest.agenvo]) {
+ assert.equal(manifest.agenvo,undefined);
+ for(const entry of [manifest.runtime]) {
    for(const key of ['patch','license']) {
      assert.match(entry[key].file,/^[a-z-]+\.(patch|txt)$/);
      const bytes=readFileSync(new URL(entry[key].file,root));

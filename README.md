@@ -12,6 +12,8 @@
 
 不另造控制面层，不经 CommHub MCP、不经 `anet.sonori.dev`、不经 #90 门铃桥做本机派活。那些是历史路径，见文末「遗留附录」。
 
+dot 的原生平台任务与 anet 并列，不互相替代。DSH、GrokBot 的历史外部路线见[调用方路由](docs/caller-routing.md)。交还 Desktop 时才涉及 `thread/unsubscribe`，见[交接契约](docs/codex-desktop-handoff.md)。
+
 迁移与升级仍先读[兼容来源、模型选择保护及在途恢复门槛](docs/migration-and-upgrades.md)。
 
 ## 组成（当前）
@@ -39,11 +41,7 @@ npm install
 git config core.hooksPath .githooks       # 一次性：提交前自动跑 guard
 npm test                                  # 配置解析、context 渲染与私有值检查
 node scripts/fleet.mjs doctor             # 本机 connector 与原生服务状态
-node scripts/fleet.mjs check              # 遗留：检查 CommHub `/mcp`（仅旧部署；本机派活不依赖它）
-node scripts/fleet.mjs check --legacy-agenvo          # 遗留：旧 Agenvo relay OAuth + MCP
-node scripts/fleet.mjs check --legacy-agenvo --dispatch   # 遗留：Herdr／dsh 派活抽检
-node scripts/fleet.mjs upstream           # fork 与上游的差距，以及是否到了去掉 fork 的时候
-node scripts/fleet.mjs release agenvo|dsh     # 把已推送的提交装进固定版本的发布目录并切换 launchd（--rollback 回退）
+node scripts/fleet.mjs release dsh        # 把已推送的提交装进固定版本的发布目录并链到 DSH 桌面 profile（--rollback 回退）
 ```
 
 License: Apache-2.0。
@@ -58,7 +56,7 @@ License: Apache-2.0。
 | 调用方 → 目标 | 历史路线 | 说明 |
 | --- | --- | --- |
 | Grok 外环 → 节点 | CommHub MCP（hub `/mcp`） | 旧外环；本机协作改走 anet |
-| 本机接收端（Herdr 等） | #90 门铃桥 | `adapters/commhub`；旧 SSE 门铃 |
+| 本机接收端（Herdr 等） | #90 门铃桥 | 已从本仓库删除；旧 SSE 门铃 |
 | DSH／GrokBot → Codex Desktop | Agenvo connector | 见 [ADR-0002](docs/decisions/0002-minimal-agenvo-fork.md) |
 
 历史架构与路由正文仍保留：
@@ -72,11 +70,11 @@ License: Apache-2.0。
 
 | 层 | 来源 | 本仓库做什么 |
 | --- | --- | --- |
-| CommHub 适配 | `~/Projects/_forks/agent-network` | [adapters/commhub](adapters/commhub/client.mjs)：旧 MCP 客户端与 #90 门铃桥 |
+| CommHub 适配 | `~/Projects/_forks/agent-network` | 旧 MCP 客户端与 #90 门铃桥已从本仓库删除 |
 | Codex/Herdr connector | [Xuanwo/agenvo](https://github.com/Xuanwo/agenvo) | 记录部署与验收 |
 | `dsh` connector | agenvo 小补丁分支 | [ADR-0002](docs/decisions/0002-minimal-agenvo-fork.md) |
 | 桌面 DSH 插件 | [adapters/dsh](adapters/dsh/README.md) | `fleet.mjs release` 部署 |
 
 ### DSH 侧的调用适配（遗留）
 
-外环派活走 CommHub MCP。下列适配是 DSH 进程里的调用方，不是控制面。[原生 scoped 客户端候选](adapters/dsh-agenvo-native/README.md)复用 DSH credentials、官方工具投影与 SDK OAuth；源码与离线 fixture 不等于真实授权或已部署。此前[外置桥候选](adapters/dsh-agenvo/README.md)的固定 transport 曾安装并短暂启动，暂停后已按用户要求移入废纸篓，客户端注册/授权页已产生，但未确认 grant、未加载 DSH 插件。它与入站 `agent-fleet-dsh` 分开，不新增 relay，不把 raw execute 冒称持久幂等调度器。真实接入所需用户授权、范围、迁移与撤销步骤见该说明。
+外环派活曾走 CommHub MCP。DSH 进程里的调用方候选（外置桥与原生 scoped 客户端）已从本仓库删除，不是控制面，也从未作为已部署插件。入站桌面插件仍是 [adapters/dsh](adapters/dsh/README.md)。

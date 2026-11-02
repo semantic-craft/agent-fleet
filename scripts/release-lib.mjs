@@ -3,7 +3,6 @@
 import { createHash } from "node:crypto";
 import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
-import { CONNECTOR_DIRS } from "./lib.mjs";
 
 export const MANIFEST = "release.json";
 
@@ -12,14 +11,6 @@ export const MANIFEST = "release.json";
  * inside the release, or null when the plist is not this component's.
  */
 export const COMPONENTS = {
-  // The four agenvo connectors (upstream codex/herdr plus the fork's dsh/dispatch), one shared release.
-  agenvo: {
-    labelPrefix: "io.agenvo.connector.",
-    entry(programArg) {
-      const m = /\/apps\/([^/]+)\/(?:dist\/)?cli\.js$/.exec(programArg ?? "");
-      return m && Object.values(CONNECTOR_DIRS).includes(m[1]) ? `apps/${m[1]}/cli.js` : null;
-    },
-  },
   // The DSH desktop plugin (adapters/dsh). No launchd job: the desktop profile links the plugin at
   // releases/dsh/live/plugin, and `live` points at the current release.
   dsh: {
@@ -39,47 +30,15 @@ export function component(name) {
 /** Plists (as {label, programArg}) this component owns; anything else is left alone. */
 export function releaseStateName(name, connector) {
   component(name);
-  if (connector !== undefined && (name !== "agenvo" || connector !== "codex"))
-    throw new Error("--connector supports only: release agenvo --connector codex");
-  return connector ? "current-codex.json" : "current.json";
+  if (connector !== undefined) throw new Error("--connector is not supported");
+  return "current.json";
 }
 
 export function ownedPlists(name, plists, connector) {
   releaseStateName(name, connector);
   const c = component(name);
   if (!c.entry) return [];
-  return plists.filter(({ label, programArg }) =>
-    String(label ?? "").startsWith(c.labelPrefix) && c.entry(programArg) &&
-    (!connector || c.entry(programArg) === `apps/${CONNECTOR_DIRS[connector]}/cli.js`));
-}
-
-/** Validate every rollback target before changing any plist. A scoped rollback
- * cannot consume a full-release record or overwrite a later release. */
-export function rollbackPlan(name, connector, record, backups, live, root) {
-  releaseStateName(name, connector);
-  if ((record.connector ?? null) !== (connector ?? null) || !fullSha(record.sha))
-    throw new Error("rollback record scope or SHA mismatch");
-  if (!Array.isArray(record.previous) || !record.previous.length)
-    throw new Error("rollback record has no previous targets");
-  const labels = record.previous.map((p) => p.label).sort();
-  const same = (a, b) => JSON.stringify(a.slice().sort()) === JSON.stringify(b.slice().sort());
-  if (new Set(labels).size !== labels.length || labels.some((l) => !/^[\w.-]+$/.test(l)))
-    throw new Error("invalid rollback target labels");
-  if (!same(labels, ownedPlists(name, backups, connector).map((p) => p.label)) || backups.length !== labels.length)
-    throw new Error("backup targets do not match rollback scope");
-  const selected = ownedPlists(name, live, connector);
-  if (!same(labels, selected.map((p) => p.label)))
-    throw new Error("live targets do not match rollback scope");
-  return record.previous.map((previous) => {
-    const backup = backups.find((p) => p.label === previous.label);
-    const current = selected.find((p) => p.label === previous.label);
-    const entry = component(name).entry(previous.programArg);
-    if (!entry || backup.programArg !== previous.programArg)
-      throw new Error("backup entry does not match recorded previous target");
-    if (current.programArg !== (record.rollbackPending ? previous.programArg : join(root, record.sha, entry)))
-      throw new Error(`stale rollback: ${previous.label} no longer runs the recorded release`);
-    return { previous, backup, current };
-  });
+  return plists.filter(({ label, programArg }) => String(label ?? "").startsWith(c.labelPrefix) && c.entry(programArg));
 }
 
 export const fullSha = (s) => /^[0-9a-f]{40}$/.test(s ?? "");
