@@ -110,25 +110,22 @@ function runJob(job, timeoutMs) {
 function flushJobs() { for (const e of jobs.values()) if (!e.sentAt) { e.sentAt = Date.now(); write({ jsonrpc: '2.0', method: 'dispatch/job', params: e.job }); } }
 
 // ---------- anet task helpers ----------
-function lastUserMessageId(task) {
+function latestUserMessage(task) {
   const history = Array.isArray(task.history) ? task.history : [];
   for (let i = history.length - 1; i >= 0; i--) {
-    if (history[i].role === 'ROLE_USER' || history[i].role === 'user') {
-      return typeof history[i].messageId === 'string' && history[i].messageId ? history[i].messageId : null;
+    const message = history[i];
+    if (message.role === 'ROLE_USER' || message.role === 'user') {
+      const parts = Array.isArray(message.parts) ? message.parts : [];
+      return {
+        id: typeof message.messageId === 'string' && message.messageId ? message.messageId : null,
+        text: parts.map(p => p && typeof p.text === 'string' ? p.text : '').filter(Boolean).join('\n')
+      };
     }
   }
-  return null;
+  return { id: null, text: '' };
 }
-function lastUserText(task) {
-  const h = Array.isArray(task.history) ? task.history : [];
-  for (let i = h.length - 1; i >= 0; i--) {
-    if (h[i].role === 'ROLE_USER' || h[i].role === 'user') {
-      const t = (h[i].parts || []).map((p) => (p && typeof p.text === 'string') ? p.text : '').filter(Boolean).join('\n');
-      if (t) return t;
-    }
-  }
-  return '';
-}
+const lastUserMessageId = task => latestUserMessage(task).id;
+const lastUserText = task => latestUserMessage(task).text;
 function pickOutput(st) {
   const msgs = Array.isArray(st.messages) ? st.messages : [];
   const outId = st.run && st.run.outputMessageId;
@@ -168,7 +165,9 @@ async function tick() {
         continue;
       }
       const text = lastUserText(t);
-      if (!text) continue;
+      if (!text.trim()) {
+        state.tasks[t.id] = { phase: 'unverified', peer, requestMessageId: lastUserMessageId(t), error: { code: 'LATEST_USER_TEXT_UNAVAILABLE' } }; saveState(); continue;
+      }
       state.tasks[t.id] = { phase: 'creating', peer, requestMessageId: lastUserMessageId(t), at: new Date().toISOString() }; saveState();
     }
     // 2) advance known tasks
@@ -191,6 +190,9 @@ async function tick() {
           Object.assign(rec, { phase: 'unverified', error: { code: 'REQUEST_MESSAGE_CHANGED_OR_UNAVAILABLE' } }); saveState(); continue;
         }
         const text = lastUserText(task);
+        if (!text.trim()) {
+          Object.assign(rec, { phase: 'unverified', error: { code: 'LATEST_USER_TEXT_UNAVAILABLE' } }); saveState(); continue;
+        }
         if (text.length > 32768) {
           Object.assign(rec, { phase: 'unverified', error: { code: 'INPUT_TOO_LONG' } }); saveState(); continue;
         }
@@ -214,7 +216,7 @@ async function tick() {
         if (OFFICIAL_TERMINAL.has(officialState(official))) {
           Object.assign(rec, { phase: 'unverified', error: { code: 'OFFICIAL_TASK_ENDED_HOST_NOT_STOPPED' }, officialState: official.status.state }); saveState(); continue;
         }
-        if (!rec.requestMessageId || lastUserMessageId(official) !== rec.requestMessageId) {
+        if (!rec.requestMessageId || lastUserMessageId(official) !== rec.requestMessageId || !lastUserText(official).trim()) {
           Object.assign(rec, { phase: 'unverified', error: { code: 'FOLLOWUP_REQUIRES_OPERATOR' } }); saveState(); continue;
         }
         const st = await runJob({ kind: 'status', taskId: rec.cindyTaskId, runId: rec.runId }, 30000);

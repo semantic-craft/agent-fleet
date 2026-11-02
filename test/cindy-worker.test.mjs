@@ -112,6 +112,15 @@ test('missing official user messageId fails closed before create', async () => {
   reset(async name => name === 'list_tasks' ? { tasks: [missing] } : missing, async () => { creates++; });
   await worker.tick(); assert.equal(creates, 0); assert.equal(worker.state.tasks.task.phase, 'unverified');
 });
+test('latest attachment-only or empty user message never executes earlier text', async () => {
+  for (const parts of [[{ file: { uri: 'attachment' } }], [{ text: '' }]]) {
+    let creates = 0;
+    const changed = { ...remote, history: [...remote.history, { messageId: 'new-message', role: 'user', parts }] };
+    reset(async name => name === 'list_tasks' ? { tasks: [changed] } : changed, async () => { creates++; });
+    await worker.tick(); assert.equal(creates, 0);
+    assert.equal(worker.state.tasks.task.error.code, 'LATEST_USER_TEXT_UNAVAILABLE');
+  }
+});
 test('state write failure prevents host create', async () => {
   let creates = 0;
   reset(async name => name === 'list_tasks' ? { tasks: [remote] } : remote, async () => { creates++; });
