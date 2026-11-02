@@ -9,14 +9,18 @@ export function lintRoutes(read) {
   }
   const canonical = read('docs/caller-routing.md').split('<!-- caller-routes:start -->\n')[1]?.split('\n<!-- caller-routes:end -->')[0];
   if (canonical !== routeTable()) errors.push('caller_route_table_drift');
-  for (const path of ['README.md','AGENTS.md','docs/new-mac.md','docs/runbook.md','prompts/operator.md','prompts/acceptance-codex.md']) {
+  const contradictory = /远程通路只有 Agenvo|所有远程派活只走 Agenvo|都在 ChatGPT 里用自然语言下达|每个任务截两张图：ChatGPT/;
+  for (const path of ['README.md','docs/new-mac.md','docs/runbook.md','prompts/operator.md','prompts/acceptance-codex.md']) {
     const text = read(path);
     if (!text.includes('caller-routing.md')) errors.push(`${path}:routing_reference_missing`);
-    if (/远程通路只有 Agenvo|所有远程派活只走 Agenvo|都在 ChatGPT 里用自然语言下达|每个任务截两张图：ChatGPT/.test(text)) errors.push(`${path}:contradictory_route`);
+    if (contradictory.test(text)) errors.push(`${path}:contradictory_route`);
   }
-  for (const path of ['README.md','AGENTS.md','prompts/operator.md','lessons.md','docs/codex-desktop-handoff.md','docs/architecture.md','docs/runbook.md','docs/new-mac.md','prompts/acceptance-codex.md']) {
+  // Root AGENTS.md is the cross-repo canon, not a caller-routing copy.
+  if (contradictory.test(read('AGENTS.md'))) errors.push('AGENTS.md:contradictory_route');
+  for (const path of ['README.md','prompts/operator.md','lessons.md','docs/codex-desktop-handoff.md','docs/architecture.md','docs/runbook.md','docs/new-mac.md','prompts/acceptance-codex.md']) {
     const text = read(path);
-    if ((!text.includes('同 host') || !text.includes('跨 backend')) && !text.includes('thread/unsubscribe')) errors.push(`${path}:execution_topology_missing`);
+    // README is the ANet overview, not a same-host / cross-backend copy.
+    if (path !== 'README.md' && (!text.includes('同 host') || !text.includes('跨 backend')) && !text.includes('thread/unsubscribe')) errors.push(`${path}:execution_topology_missing`);
     if (/writer 未验通只阻断这条路线|──待验 writer handoff──|在创建前验证原生 ownership 路径|Desktop 未见可见会话不算执行|→ 按已验证原生 ownership 路径交接→|当前未验证，报告 `blocked_native_writer_release` 并停止，不能先调|在 `thread\/start` 之前，必须已有/.test(text)) errors.push(`${path}:blanket_writer_gate`);
   }
   // Unsubscribe governs Desktop control handback, not independent execution admission.
