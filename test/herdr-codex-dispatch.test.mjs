@@ -4,15 +4,14 @@ import { readFileSync } from 'node:fs';
 
 const read = (p) => readFileSync(new URL('../' + p, import.meta.url), 'utf8');
 const fleet = JSON.parse(read('fleet.example.json'));
-const herdr = fleet.machines[0].instances.find((i) => i.id === 'herdr-laptop').context;
-const codex = fleet.machines[0].instances.find((i) => i.id === 'codex-laptop').context;
-const agentLine = herdr.slice(herdr.indexOf('- agent 命令：'), herdr.indexOf('\n- 读结果'));
+const contexts = fleet.machines[0].instances.map((i) => i.context);
 const adr = read('docs/decisions/0003-herdr-for-cli-agents.md');
 
-test('Codex Desktop and explicit Codex CLI retain their routing parameters', () => {
-  assert.match(codex, /model=gpt-6-astra，modelProvider=magpie/);
-  assert.match(codex, /effort=medium/);
-  assert.match(herdr, /const agent=\(D\)=>`codex exec --json -o "\$\{D\}\/result-\$\{n\}\.md" -C "\$PWD" -s danger-full-access -m <模型> -c model_provider="magpie"/);
-  assert.match(agentLine, /Codex 见脚本，追问在 model_provider="magpie" 后加 resume <thread_id>/);
+test('fleet example instance contexts are anet placeholders without model params', () => {
+  assert.ok(contexts.length >= 3);
+  for (const context of contexts) {
+    assert.match(context, /docs\/anet\.md/);
+    assert.doesNotMatch(context, /gpt-6-astra|modelProvider|model_provider|gemini-4-argon|magpie|codex exec/);
+  }
   assert.match(adr, /-c model_provider="magpie"/);
 });

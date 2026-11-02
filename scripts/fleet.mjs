@@ -62,16 +62,6 @@ async function doctor() {
     }
     console.log(`  service ${label}: ${ok ? "loaded" : "MISSING"}`);
   }
-  const seen = new Set();
-  for (const inst of m.instances ?? []) {
-    const status = readJson(join(dirname(connectorConfigPath(inst.connector)), "status.json"));
-    const live = status?.instances?.find((i) => i.id === inst.id);
-    if (!seen.has(inst.connector)) {
-      seen.add(inst.connector);
-      console.log(`  connector ${inst.connector}: ${status?.state ?? "no status"} relay=${status?.relay ?? "-"}${status?.lastError ? " error=" + status.lastError : ""}`);
-    }
-    console.log(`    ${inst.id}: ${live ? (live.available ? "available" : "UNAVAILABLE") : "NOT CONFIGURED"} ${live?.backendVersion ?? ""}`);
-  }
 }
 
 function contexts() {
