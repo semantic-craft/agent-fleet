@@ -20,14 +20,14 @@
 | --- | --- | --- |
 | 协议与本机节点 | 官方 anet 0.3.9 | [docs/anet.md](docs/anet.md)：身份、inbound、delegate、env 教训 |
 | 自制派活插件 | 本仓库 [plugins/](plugins/README.md) | 一宿主一目录；Cindy 见 [agent-network-cindy](plugins/agent-network-cindy/README.md) |
-| 跨仓库约定与教训 | 本仓库 | [docs/AGENTS.shared.md](docs/AGENTS.shared.md)（可编辑原文；根 [AGENTS.md](AGENTS.md) 符号链接到它）、[lessons.md](lessons.md) |
+| 跨仓库约定与教训 | 本仓库 | 根 [AGENTS.md](AGENTS.md)（其他仓库的同步源）、[lessons.md](lessons.md) |
 | 机器清单／脚本（遗留部署仍可用） | 本仓库 | [scripts/fleet.mjs](scripts/fleet.mjs)、[templates/](templates/)、[prompts/](prompts/) |
 
 ## 从哪里开始
 
 - 本机派活与协议：[docs/anet.md](docs/anet.md)、官方 <https://docs.agentnetwork.org.cn>。
 - 判断 `~/Projects` 目录能不能动：[docs/landscape.md](docs/landscape.md)。
-- Agent 接手：跨仓库约定在 [docs/AGENTS.shared.md](docs/AGENTS.shared.md)。根 [AGENTS.md](AGENTS.md) 是指向它的符号链接，打开根文件就是这份正文。本仓再读 [lessons.md](lessons.md)、[docs/architecture.md](docs/architecture.md)。
+- Agent 接手：跨仓库约定是根 [AGENTS.md](AGENTS.md)。[docs/AGENTS.shared.md](docs/AGENTS.shared.md) 只指向它。本仓再读 [lessons.md](lessons.md)、[docs/architecture.md](docs/architecture.md)。
 - 新 Mac／旧 connector 运维（遗留）：[docs/new-mac.md](docs/new-mac.md)、[docs/runbook.md](docs/runbook.md)、文末附录。
 
 ## 检查
