@@ -365,3 +365,10 @@ dot 原生平台任务通道不受本节阻断；DSH／GrokBot→Agenvo→Codex 
 - 本机多 agent 派活只走官方 anet 0.3.9（docs/anet.md）；CommHub MCP／#90／Agenvo 是遗留附录，不再当作控制面教给新任务。
 
 - Cindy 对经 anet／插件转入的任务调用 `send_to_peer` 可能拒绝（需用户亲口确认发送）；用户在 Cindy 对话框亲口调用则可通过。smoke B 以用户对话为准，anet 代问作辅。
+
+### 删除旧路径后要全仓搜旧关键词再报完成（2026-11-02）
+
+- 起因与后果：#104（bba15da）删 agenvo／CommHub 派活残留，PR 列了 KEEP／DELETE 清单但没做全仓关键词扫描；合入 6 分钟后发现 `prompts/operator.md`、`fleet.example.json`、`scripts/fleet.mjs doctor` 仍在教旧路径，只能补开 #106。
+- 修复：#106（2c80c61）清掉三处正文与 doctor 读取 `~/.config/agenvo/…/status.json`，钉旧文案的测试同步改；`npm test` 303 通过。
+- Done right: 清理类 PR 合前跑 `rg -n -i 'agenvo|commhub' -g '!lessons.md' -g '!docs/decisions/**' .`，把剩余命中逐条列进 PR 正文（保留的写理由），命中为零或全有理由才报完成。
+- Seen 1x (2026-11-02)
