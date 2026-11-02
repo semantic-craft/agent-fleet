@@ -39,7 +39,7 @@
 
 官方插件与 `agents wire` 是替代入口，同名配置可遮蔽插件；只保留一种接线。工具 schema 取自当前 MCP 会话，使用 installed binary 的 guide，不维护固定工具清单副本。[Codex 接入](https://docs.agentnetwork.org.cn/docs/zh-cn/latest/agents/codex.html)、[MCP](https://docs.agentnetwork.org.cn/docs/zh-cn/latest/howto/mcp.html)。
 
-文档对 daemon 自动启动存在版本差异。本机 `guide setup` 说明 MCP 在条件允许时启动所属节点；CLI `peers list` 的此次只读探测返回 `daemon_not_running`。不能据文件存在宣称节点在线；启动、接线、权限修改及真实宿主安装单独验收。本轮未启动常驻节点或修改接入权限。
+文档对 daemon 自动启动存在版本差异。本机 `guide setup` 说明 MCP 在条件允许时启动所属节点；CLI 在沙箱内返回 `daemon_not_running`，沙箱外 `status --json` 与 `peers list --json` 确认已有节点实际在线：这是沙箱访问限制，不能把该错误直接当作停机或新增授权门槛。本轮未启动节点或修改接入权限；接线、权限修改及真实宿主安装单独验收。
 
 ## 结果与回流
 

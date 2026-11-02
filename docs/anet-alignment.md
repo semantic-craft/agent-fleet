@@ -38,5 +38,5 @@
 - 最后删除未获实时 schema 确认的 `send_message.message_id` 参数后，Cindy 13 项定向测试再次通过；这里只承诺本地同 callId 不重复发送，不承诺网络幂等。
 - outer-loop `scripts/check.sh` 通过；xw-stack 全量检查停留在无关 progress-page 子进程并中断（130），不记全量通过。技能入口测试单独执行，结果随消费者 PR 记录。
 - 补充独立源码审查发现并推动修复旧结果误认、状态损坏、超长输入、未知发送和公开 reviewer 与隐私扫描冲突。该审查不替代仓库要求的 helios-codex 审查。
-- 本机 `turing peers list` 返回 `daemon_not_running`；未启动常驻节点、安装 Cindy 包、改 trust/inbound 或更改网络设置。正式审查、真实双向回流、宿主取消/续问及部署均未验证。消费者应等 Fleet 正本合并后再合并，不能提前发布断链入口。
+- 沙箱内 `turing peers list` 返回 `daemon_not_running`；沙箱外只读核验确认节点实际在线，入站仍 closed，未启动或配置任何节点。旧 helios-codex 名称是历史 CommHub runtime 标签，官方 ANet discovery 未找到同名节点；本机独立 Codex 源码审查与真实双向回流验收分别执行。未安装 Cindy 包、改 trust/inbound 或更改网络设置；宿主取消/续问及部署仍未验证。消费者应等 Fleet 正本合并后再合并，不能提前发布断链入口。
 - 缺失关联账本、同文本续问、宿主取消以及超过本地观察期限的恢复仍需人工核对原任务与宿主；不声称完整生命周期自动化。未获得正式独立审查及运行证据前维持 draft。
