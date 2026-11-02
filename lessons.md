@@ -363,3 +363,5 @@ dot 原生平台任务通道不受本节阻断；DSH／GrokBot→Agenvo→Codex 
 - Cindy 用户通道拒绝以 `cindy-` 开头的插件 id（官方保留前缀）；自制派活插件用 `agent-network-cindy` 这类宿主×协议名，不以 `cindy-` 开头。
 
 - 本机多 agent 派活只走官方 anet 0.3.9（docs/anet.md）；CommHub MCP／#90／Agenvo 是遗留附录，不再当作控制面教给新任务。
+
+- Cindy 对经 anet／插件转入的任务调用 `send_to_peer` 可能拒绝（需用户亲口确认发送）；用户在 Cindy 对话框亲口调用则可通过。smoke B 以用户对话为准，anet 代问作辅。

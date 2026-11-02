@@ -1,6 +1,9 @@
 #!/bin/zsh
 # Smoke for agent-network-cindy 0.3.0. Run AFTER: plugin installed+enabled in Cindy, old turing-cindy-dispatch
 # disabled/uninstalled, and peers allowed both ways. Evidence goes to ./evidence/ (gitignored). No secrets.
+# Direction B via anet delegate may be refused by Cindy when the ask is not user-authored
+# (model: needs user confirmation to send). Fallback: user-typed Cindy chat calling send_to_peer;
+# then check turing provider inbox for ORIGIN marker. See receipt multiagent-canon-20261102.
 # Requester identity defaults to `turing`; AIDs are read from the local nodes, not hardcoded.
 set -u
 A=$HOME/.local/bin/anet
