@@ -1,0 +1,18 @@
+---
+name: delegate-via-anet
+description: Dispatch and follow work through official Agent Network; agent-fleet owns the reusable workflow.
+---
+
+# 经官方 Agent Network 派活
+
+本技能是可复用派活流程的唯一维护源。先读 [派活契约](../../docs/dispatch-contract.md) 和 [本机接入](../../docs/anet.md)，再读取目标仓 AGENTS.md。官方协议与工具 schema 以 [官方文档](https://docs.agentnetwork.org.cn/docs/zh-cn/latest/) 和已安装版本为准。
+
+1. 明确目标、完整对端 AID、身份和已有授权。只使用已批准的对端；不得自行增加 trust、开放 inbound 或复制身份私钥。allow 与 trust 不等价。
+2. 写清任务上下文、仓库、约束、验收及提交权限。开发在独立 worktree；只读任务明确只读。审查者先依用户点名，再依目标仓默认；无覆盖时遵守 agent-fleet AGENTS.md，不能自行改成 agy。记录选择依据及被审提交。
+3. 使用官方 CLI `anet --id <身份> delegate <完整AID> "<目标>" --watch` 或当前 schema 的官方 MCP `send_message`。保存 task id、对端和身份。无可用官方入口则报告缺口，不回退旧控制面。调用方已在执行且用户未要求跨身份委派的工作留在当前会话。
+4. 对同一 task id 用 `get_task` / `wait_task` 或 CLI 跟进；续问使用同一任务。超时、断连或响应未知先回读，不新建第二次委派。调用之间不要忙等；长任务定期报告状态与未验项。
+5. 对照业务验收检查产物，保存契约要求的收据。ANet completed 只证明协议终态；不能代替测试、真实宿主回流、交付或合并证据。
+
+Magpie 属独立可选模型路由。点名模型时核对实际运行模型，不修改私人默认。点名其他执行环境时依该环境现行文档和可用工具；本技能不提供退役 Agenvo/CommHub/Herdr 复活步骤。
+
+来源：从 xw-stack 的 delegate-via-anet 与 outer-loop-kit 派活契约提取；2026-11-03 收敛维护权。消费者只保留入口、业务角色与展示规范。

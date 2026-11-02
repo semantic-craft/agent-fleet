@@ -13,8 +13,8 @@
 
 ## 加东西之前先问
 
-1. 上游已经有这个能力吗？（看 agenvo 的 `docs/` 和 `apps/`）有就用上游的。
-2. 是 CLI 型 agent 吗？是就放进 Herdr，不写 connector。
+1. 上游已经有这个能力吗？（看官方 ANet 文档和已安装二进制的 `guide`）有就用上游的。
+2. 官方插件或 `agents wire` 是否已经支持该宿主？选一种接入；只有缺失的宿主能力才由本仓维护薄适配，不新增派发控制面。
 3. 只有写了个人值才有意义吗？那就放进 overlay，不放进本仓库；如果连 overlay 都需要大量定制，重新考虑要不要做。
 4. 会产生新的常驻进程、新的目录或新的仓库吗？先在 [landscape](landscape.md) 里写清它的角色和移除条件，再动手。
 
@@ -23,12 +23,12 @@
 1. 在 [landscape](landscape.md) 把它的状态改成"移除中"。
 2. 用 `launchctl bootout` 停掉服务，plist 移进 `~/Library/LaunchAgents/_retired/`。
 3. 跑一次 `fleet.mjs doctor`。本机派活再按 [anet.md](anet.md) 做 smoke。
-4. 删除本地目录、部署副本、状态目录和 `_retired/` 里的 plist（先确认没有未推送的有用工作），并把这些仓库从每日维护任务里摘掉；最后删掉 landscape 里那一行。
+4. 查清消费者、未推送工作、在途任务及恢复需要；确认冗余后先可恢复地移出本地目录和部署副本。身份、任务与恢复状态不随源码清理删除，并把这些仓库从每日维护任务里摘掉；最后删掉 landscape 里那一行。
 5. GitHub 仓库默认归档；删除须用户逐个确认后执行。
 
 ## 什么算"维护好了"
 
 - `~/Projects` 里每个 agent 相关目录在 [landscape](landscape.md) 都有一行，状态与实际一致。
 - `~/Projects` 符合 [landscape](landscape.md#projects-的布局) 的布局：每个仓库一份停在默认分支的干净克隆，已合并的 worktree 和本地分支已清理。 收尾须遵守根 [AGENTS.md](../AGENTS.md)「worktree 不遗留」。
-- overlay 是 connector 实例 context 的唯一来源，执行 `contexts` 显示全部 in sync。
+- 历史部署的 overlay 是 connector 实例 context 的唯一来源，执行 `contexts` 显示全部 in sync。
 - 本机派活以 anet `delegate --watch` 与 Cindy 插件 smoke 为准，见 [anet.md](anet.md)。

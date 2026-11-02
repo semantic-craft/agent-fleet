@@ -11,7 +11,7 @@
 
 ## 当前路径
 
-本机多 agent 派活只走官方 anet。不经 CommHub MCP、不经 `anet.sonori.dev`、不经 #90 门铃桥。做法见 [anet.md](anet.md)。dot 若已有原生平台任务工具且电脑已授权，Codex 可走原生通道（与 anet 并列）。DSH、GrokBot 的历史外部路线见[调用方路由](caller-routing.md)。
+跨 ANet 身份委派只走官方 anet。不经 CommHub MCP、不经 `anet.sonori.dev`、不经 #90 门铃桥。做法见 [anet.md](anet.md)。dot 若已有原生平台任务工具且电脑已授权，Codex 可走原生通道（平台执行环境，不是另一 ANet 控制面）。DSH、GrokBot 的历史外部路线见[调用方路由](caller-routing.md)。
 
 桌面 DSH 插件仍是 [adapters/dsh](../adapters/dsh/README.md)，由 `fleet.mjs release dsh` 装进桌面 profile。它不是控制面。
 

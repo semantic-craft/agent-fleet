@@ -8,6 +8,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { configPath } from "./lib.mjs";
+import { overlayContains } from "./public-identifiers.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 let failed = 0;
@@ -35,9 +36,10 @@ function privateGuard() {
   const overlay = existsSync(configPath()) ? JSON.parse(readFileSync(configPath(), "utf8")) : null;
   const values = overlay ? personalValues(overlay) : [];
   for (const f of files) {
+    if (!existsSync(join(root, f))) continue; // tracked deletions have no content to scan
     const text = readFileSync(join(root, f), "utf8");
     for (const re of generic) if (re.test(text)) fail(`${f}: matches ${re}`);
-    for (const v of values) if (text.toLowerCase().includes(v.toLowerCase())) fail(`${f}: contains an overlay value (${v.slice(0, 3)}…)`);
+    for (const v of values) if (overlayContains(text, v)) fail(`${f}: contains an overlay value (${v.slice(0, 3)}…)`);
   }
   console.log(`private: ${files.length} files, ${values.length} overlay values${overlay ? "" : " (no overlay found; generic patterns only)"}`);
 }

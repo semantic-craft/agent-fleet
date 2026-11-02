@@ -25,6 +25,8 @@ dot 的原生平台任务与 anet 并列，不互相替代。DSH、GrokBot 的�
 | 跨仓库约定与教训 | 本仓库 | 根 [AGENTS.md](AGENTS.md)（其他仓库的同步源）、[lessons.md](lessons.md) |
 | 机器清单／脚本（遗留部署仍可用） | 本仓库 | [scripts/fleet.mjs](scripts/fleet.mjs)、[templates/](templates/)、[prompts/](prompts/) |
 
+通用派发契约：[docs/dispatch-contract.md](docs/dispatch-contract.md)。技能正文：[skills/delegate-via-anet](skills/delegate-via-anet/SKILL.md)。跨 Projects 来源与迁移：[docs/anet-alignment.md](docs/anet-alignment.md)。
+
 ## 从哪里开始
 
 - 本机派活与协议：[docs/anet.md](docs/anet.md)、官方 <https://docs.agentnetwork.org.cn>。

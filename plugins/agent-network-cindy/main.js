@@ -19,9 +19,12 @@ function partText(c) {
   return '';
 }
 async function createJob(job) {
+  if (typeof job.text !== 'string' || job.text.length > 32768) return { ok: false, error: { code: 'INPUT_TOO_LONG', message: 'Input exceeds host adapter limit; nothing created.' } };
   const task = await cindy.tasks.create({ requestKey: job.requestKey + ':create', title: job.title });
-  const run = await cindy.tasks.send({ taskId: task.taskId, expectedRevision: task.revision,
-    requestKey: job.requestKey + ':send', text: job.text });
+  let run;
+  try { run = await cindy.tasks.send({ taskId: task.taskId, expectedRevision: task.revision,
+    requestKey: job.requestKey + ':send', text: job.text }); }
+  catch (e) { return { ok: false, taskId: task.taskId, requestKey: job.requestKey, error: errInfo(e) }; }
   return { ok: true, taskId: task.taskId, runId: (run && run.runId) || null, runStatus: (run && run.status) || null };
 }
 async function statusJob(job) {
@@ -32,8 +35,8 @@ async function statusJob(job) {
   try {
     const page = await cindy.tasks.readMessages({ taskId: job.taskId, limit: 100 });
     const msgs = (page && (page.messages || page.items)) || [];
-    out.messages = msgs.slice(-20).map(m => ({ id: m.id || m.messageId || null, role: m.role || null,
-      text: partText(m.text !== undefined ? m.text : m.content).slice(0, 16000) }));
+    out.messages = msgs.map(m => ({ id: m.id || m.messageId || null, role: m.role || null,
+      text: partText(m.text !== undefined ? m.text : m.content) }));
   } catch (e) { out.messagesError = errInfo(e); }
   return out;
 }
@@ -52,7 +55,7 @@ async function toolCall(msg) {
       await cindy.send({ type: 'tool-result', callId: msg.callId, ok: false, errorCode: 'INVALID_TEXT', message: 'text must be 1-8000 characters' });
       return;
     }
-    r = await node('anet/send_to_peer', { text }, 60000);
+    r = await node('anet/send_to_peer', { text, callId: msg.callId }, 60000);
   } else if (msg.tool === 'bridge_status') {
     r = await node('bridge/status', {}, 15000);
   } else return;
