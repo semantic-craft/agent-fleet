@@ -1,5 +1,8 @@
 # 按调用方能力选择派活入口
 
+> **遗留附录（2026-11-02）。** 本机多 agent 派活的正本是官方 anet 0.3.9：[docs/anet.md](anet.md)、[plugins/agent-network-cindy](../plugins/agent-network-cindy/README.md)。下文描述 CommHub MCP、#90 门铃桥与 Agenvo connector，只供维护旧部署；新任务不要再按本节选控制面。
+
+
 ## 入口分开，不互相冒充
 
 | 调用方／目标 | 选择 | 不可外推 |

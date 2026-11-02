@@ -361,3 +361,5 @@ dot 原生平台任务通道不受本节阻断；DSH／GrokBot→Agenvo→Codex 
 - Cindy 0.1.121 清单 `description`／`whenToUse`／工具描述上限 300 字符，超限安装时只报不合法的 .cindy 文件；`pack.py` 先校验再打包。
 
 - Cindy 用户通道拒绝以 `cindy-` 开头的插件 id（官方保留前缀）；自制派活插件用 `agent-network-cindy` 这类宿主×协议名，不以 `cindy-` 开头。
+
+- 本机多 agent 派活只走官方 anet 0.3.9（docs/anet.md）；CommHub MCP／#90／Agenvo 是遗留附录，不再当作控制面教给新任务。

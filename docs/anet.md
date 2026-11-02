@@ -1,5 +1,7 @@
 # Agent Network：当前派活传输（2026-11-02）
 
+**这是本机多 agent 派活的唯一传输。** 不经 CommHub MCP、不经 `anet.sonori.dev`、不经 #90 门铃桥。那些见 README「遗留附录」。
+
 只引用官方文档：<https://docs.agentnetwork.org.cn>。本页只记本机用法，不另造层。
 
 ## 现状

@@ -1,5 +1,8 @@
 # 架构
 
+> **遗留附录（2026-11-02）。** 本机多 agent 派活的正本是官方 anet 0.3.9：[docs/anet.md](anet.md)、[plugins/agent-network-cindy](../plugins/agent-network-cindy/README.md)。下文描述 CommHub MCP、#90 门铃桥与 Agenvo connector，只供维护旧部署；新任务不要再按本节选控制面。
+
+
 ## 目标
 
 1. 人只面对一个入口：手机上的 ChatGPT（主力是 dots），也可以是 Grok Bot。
