@@ -57,7 +57,7 @@ test('sanitized live baseline never promotes caller or Desktop acceptance',()=>{
 });
 
 test('lint catches old writer assumptions at root and copied operator entry points',()=>{
- for(const [path,old] of [['AGENTS.md','writer 未验通只阻断这条路线'],['README.md','──待验 writer handoff──'],['prompts/operator.md','在创建前验证原生 ownership 路径'],['lessons.md','→ 按已验证原生 ownership 路径交接→'],['docs/new-mac.md','Desktop 未见可见会话不算执行']]) {
+ for(const [path,old] of [['README.md','──待验 writer handoff──'],['prompts/operator.md','在创建前验证原生 ownership 路径'],['lessons.md','→ 按已验证原生 ownership 路径交接→'],['docs/new-mac.md','Desktop 未见可见会话不算执行']]) {
   assert.ok(lintRoutes(p=>read(p)+(p===path?'\n'+old:'')).includes(path+':blanket_writer_gate'),path);
  }
 });

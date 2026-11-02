@@ -1,48 +1,21 @@
-# agent-fleet 维护约定
+# 跨仓库约定
 
-本仓库是「多 agent 协作」的设计正本。本机派活只走官方 Agent Network（anet）0.3.9，见 [docs/anet.md](docs/anet.md) 与 [plugins/](plugins/README.md)。没有对话记忆的 agent 只要按本文件和链接行事，就应与现设计一致。CommHub／Agenvo／#90 是遗留路径，见 README「遗留附录」与 [ADR-0001](docs/decisions/0001-agenvo-as-control-plane.md)（历史）。
+本文件是各仓库共用的 agent 约定原文。其他仓库从 agent-fleet 仓库根的本文件同步。本仓的接入、维护和 CI 细则不在这里。
 
-## 先读什么
+## 派活
 
-| 任务 | 读 |
-| --- | --- |
-| 任何改动前 | [docs/architecture.md](docs/architecture.md)、[lessons.md](lessons.md) |
-| 新 Mac 加入、重装 | [docs/new-mac.md](docs/new-mac.md) |
-| 接入新的 agent 运行时或新机器 | [docs/decisions/](docs/decisions/) 全部、[docs/runbook.md](docs/runbook.md) |
-| 判断某个 `~/Projects` 目录能否动 | [docs/landscape.md](docs/landscape.md) |
-| 改脚本 | [scripts/fleet.mjs](scripts/fleet.mjs)、[test/](test/)；`npm test` |
-| 例行维护、跟进上游、新增组件前 | [docs/maintenance.md](docs/maintenance.md) |
-| worktree／任务目录收尾 | 下文「worktree 不遗留」；布局见 [docs/landscape.md](docs/landscape.md) |
+派活正本是官方 Agent Network（ANet）Research。本机身份、`delegate` 和插件以 agent-fleet 仓库的 `docs/anet.md` 与官方文档为准：<https://docs.agentnetwork.org.cn>。
 
-## 决策规则（按优先级）
+历史遗留，不要当作派活入口：agenvo、Hermes、LCU 自定义 MCP、CommHub、`anet.sonori.dev`。
 
-0. **本机多 agent 派活走官方 anet。** 身份、inbound、`delegate --watch`、插件见 [docs/anet.md](docs/anet.md)。不要把 CommHub MCP、`anet.sonori.dev` 或 #90 门铃桥当作本机派活控制面。dot 若已有原生平台任务工具且电脑已授权，Codex 可走原生通道（与 anet 并列，不互相替代）。遗留的 Grok／CommHub／Agenvo／Desktop 交接验收见 README 附录与 [调用方路由](docs/caller-routing.md)（遗留）。
+未点名时，派活交给 Codex。DSH 是同等能力的后备：须能列出、读输出、新建、追问、中断、看事件，任务在 DSH 桌面可见。Codex 不可用（额度或故障）时由 DSH 接上。不要把 DSH 退回到只能派任务的程度。
 
-   **Codex 是主力，DSH 是同等能力的后备。** 未有用户点名或审查覆盖时，默认把活交给 Codex；DSH 必须保持和 Codex 同级的原生能力（列出、读输出、新建、追问、中断、事件，任务在 DSH 桌面可见），以便 Codex 不可用（额度、故障）时无缝顶上。任何改动都不能让 DSH 退回到只能派任务的程度。
+## 审查
 
-   **审查／审稿／独立审**按 [xw-stack 派活技能](https://github.com/semantic-craft/xw-stack/blob/main/skills/delegate-via-agenvo/SKILL.md#审查审稿独立审)解析用户点名、项目／agent 默认及审查请求；无覆盖才用技能已有未点名默认，不因审查就默认 agy 或 `--mode plan`。
-
-1. **先用上游。** 运行时若已有 Agenvo 官方 connector（Codex app-server、Herdr、Paseo、OpenCode、Amp、Lody），直接用，不写自己的。CLI 型 agent（codex CLI、agy 等）一律放进 Herdr pane，不新增 connector。见 [ADR-0003](docs/decisions/0003-herdr-for-cli-agents.md)。
-2. **只为上游没有 connector、但用户要求在其桌面 app 里可见的运行时写 connector**。优先附着运行时自己的原生会话接口（DSH：桌面 Host 的 Typert 端点，经插件 native bridge），保留原生方法名；只有拿不到原生接口时才薄封装接收端 HTTP 契约（ZCode）。都不引入调度、队列或状态机。见 [ADR-0002](docs/decisions/0002-minimal-agenvo-fork.md)。
-3. **fork 补丁最小化。** 对 agenvo 的改动只限新增 kind、`apps/dsh` 与 `apps/dispatch`。上游一旦支持外部 kind，就去掉 fork。不在 fork 里写部署记录或个人值。
-4. **个人值不进本仓库。** 域名、IP、账号、主机名、路径写在 overlay（默认 `~/.config/agent-fleet/fleet.json`，可用 `AGENT_FLEET_CONFIG` 覆盖）。如果某项改造离开个人值就没意义，先怀疑这项改造的必要性。
-5. **桌面可见、full access。** 派给 DSH 的任务必须出现在桌面 app 里，app 不在就明确失败，不退回 headless。执行权限默认 full access，访问控制靠 relay 的设备配对与 OAuth 授权。见 [ADR-0004](docs/decisions/0004-desktop-strict-and-full-access.md)。用户明确要 CLI 通道时可在 Herdr 跑 `dsh headless`，但必须按[派活技能](https://github.com/semantic-craft/xw-stack/blob/main/skills/delegate-via-agenvo/SKILL.md)登记到桌面项目，使其仍在桌面可见。
-6. **一个 relay，一个 owner。** 所有已授权客户端都能访问所有已批准实例；测试授权用完即撤，不碰用户的正式授权。
+审查、审稿、独立审默认 helios-codex。只有用户点名，或项目写明时，才用 agy 或 DSH。
 
 ## worktree 不遗留（2026-10-29 社长定）
 
-在 worktree（含 subagent 的 `.claude/worktrees/agent-*`、Herdr `~/Projects/.worktrees/<仓库>/<任务>`）里做的任务，完成时必须删除该 worktree 及其分支；专用 cargo target／`node_modules`／`.next` 等一并清。删除前二选一：已合并进 `main`；或不合并时先把未提交改动提交到该分支，打 `archive/<worktree名>` tag 存档，再 `git worktree remove` + `git branch -D`。编排 subagent 的会话负责收尾它派生的 worktree。确需保留的（待社长裁决、有冲突待解）在最终回复里点名路径与原因，不得默默留下。
+任务在 worktree 里做，不改 `main` 的工作区。包括 subagent 的 `.claude/worktrees/agent-*`，以及 Herdr 的 `~/Projects/.worktrees/<仓库>/<任务>`。
 
-操作步骤与 `~/Projects` 布局见 [docs/landscape.md](docs/landscape.md)；派活侧指针见 [派活技能](https://github.com/semantic-craft/xw-stack/blob/main/skills/delegate-via-agenvo/SKILL.md)。
-
-## 验收与交付
-
-| 原生独立会话显式选模约束 | 执行机制 |
-| --- | --- |
-| 选择归单次创建参数，回读核对同线程模型/档位；类型不混用 | [native-thread-selection](docs/native-thread-selection.md) 的 prepare / check-request / check-observation；npm test 回归、lint 检查入口。宿主直接调用不在本仓拦截范围 |
-
-- 本机派活验收：官方 anet `delegate --watch` 与 [plugins/agent-network-cindy](plugins/agent-network-cindy/README.md) 的 smoke（A／B 标记）。遗留 CommHub／Agenvo 部署才用 `fleet.mjs check`／`--legacy-agenvo`；只看 `/health` 不算。
-- 区分"输入已接受""原生轮次完成""业务目标完成"。
-- 改实例 `source`、endpoint 等 scope 字段后要在 relay 重新批准；只改 `context` 不需要。
-- CI：私有仓库的必过检查是常开 Mac mini 上自托管 runner 的轻任务（runner 标签与机器名见 overlay），runner 一次只跑一个 job、以低权限独立用户运行，workflow 设 `timeout-minutes`；Swift/iOS 构建和签名在开发笔记本的 runner 上跑；公开仓库用 GitHub 托管 runner。先在 xw-tooling 试点；仓库还没接 runner 时，在本机跑同一条检查命令，把结果写进 PR。
-- 提交与 PR 写清：回退测试、真实使用情况、没跑到的项目。
+完成后删除该 worktree 及其分支；专用 cargo target、`node_modules`、`.next` 一并清掉。删除前二选一：已经合并进 `main`；或尚未合并时，先把未提交改动提交到该分支，打 `archive/<worktree名>` tag，再 `git worktree remove` 与 `git branch -D`。编排 subagent 的会话负责收尾它派生的 worktree。确需保留的（待裁决、有冲突待解）在最终回复里写明路径和原因。

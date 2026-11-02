@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 const read=p=>readFileSync(new URL('../'+p,import.meta.url),'utf8');
 test('entry points distinguish native capability from the required external route',()=>{
- for(const path of ['README.md','AGENTS.md','docs/architecture.md','docs/runbook.md','docs/new-mac.md','prompts/acceptance-codex.md','prompts/operator.md']) {
+ for(const path of ['docs/architecture.md','docs/runbook.md','docs/new-mac.md','prompts/acceptance-codex.md','prompts/operator.md']) {
   const text=read(path);
   assert.match(text,/原生平台任务|原生任务工具/,path);
   assert.match(text,/DSH[／→]|DSH、GrokBot/,path);
@@ -43,7 +43,7 @@ test('copied prompts retain caller routing and require actual external callers',
  assert.match(acceptance,/CommHub/);
 });
 test('canonical control-plane wording names CommHub',()=>{
- for(const path of ['README.md','AGENTS.md','docs/architecture.md','docs/decisions/0001-agenvo-as-control-plane.md','docs/decisions/0006-single-remote-path.md','prompts/grok.md']) {
+ for(const path of ['README.md','docs/architecture.md','docs/decisions/0001-agenvo-as-control-plane.md','docs/decisions/0006-single-remote-path.md','prompts/grok.md']) {
   const text=read(path);
   assert.match(text,/CommHub/,path);
   assert.doesNotMatch(text,/以 Agenvo 作为唯一的远程控制面|以上游为底座：Agenvo|助手经 Agenvo 给自有电脑|自建 MCP 远程派活统一 Agenvo|自建 MCP 远程通路统一 Agenvo/,path);
