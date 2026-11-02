@@ -9,7 +9,7 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cindy-worker-'));
 process.env.AGENT_NETWORK_CINDY_DIR_TEST = dir;
 fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ anetId: 'cindy', peerAid: 'peer', allowPeers: ['peer'] }));
 const worker = require('../plugins/agent-network-cindy/node/worker.cjs');
-const remote = { id: 'task', metadata: { 'anet.peer_aid': 'peer' }, history: [{ role: 'user', parts: [{ text: 'hello' }] }] };
+const remote = { id: 'task', metadata: { 'anet.peer_aid': 'peer' }, history: [{ messageId: 'request-1', role: 'user', parts: [{ text: 'hello' }] }] };
 function reset(tool, runJob) {
   for (const key of Object.keys(worker.state.tasks)) delete worker.state.tasks[key];
   worker.status.mainConnected = true;
@@ -26,38 +26,38 @@ test('uncertain host create is persisted and never retried', async () => {
 test('uncertain result delivery reads state without repeating reply', async () => {
   let replies = 0; let reads = 0;
   reset(async name => {
-    if (name === 'list_tasks') return { tasks: [] };
+    if (name === 'list_tasks') return { ...remote, tasks: [] };
     if (name === 'reply_task') { replies++; throw Error('disconnected'); }
-    reads++; return { status: { state: replies ? 'completed' : 'working' } };
+    reads++; return { ...remote, status: { state: replies ? 'completed' : 'working' } };
   }, async () => ({ ok: true, run: { status: 'completed', outputMessageId: 'output' }, messages: [{ id: 'output', role: 'assistant', text: 'done' }] }));
-  worker.state.tasks.task = { phase: 'running', acceptedAt: new Date().toISOString() };
+  worker.state.tasks.task = { phase: 'running', requestMessageId: 'request-1', acceptedAt: new Date().toISOString() };
   await worker.tick(); await worker.tick();
   assert.equal(replies, 1); assert.equal(reads, 2);
   assert.equal(worker.state.tasks.task.phase, 'delivery-state-observed');
 });
 test('observation timeout does not fail a running host task', async () => {
   let replies = 0;
-  reset(async name => { if (name === 'reply_task') replies++; return { tasks: [] }; }, async () => ({ ok: true, run: { status: 'working' } }));
-  worker.state.tasks.task = { phase: 'running', acceptedAt: new Date(0).toISOString() };
+  reset(async name => { if (name === 'reply_task') replies++; return { ...remote, tasks: [] }; }, async () => ({ ok: true, run: { status: 'working' } }));
+  worker.state.tasks.task = { phase: 'running', requestMessageId: 'request-1', acceptedAt: new Date(0).toISOString() };
   await worker.tick();
   assert.equal(replies, 0); assert.equal(worker.state.tasks.task.phase, 'unverified');
 });
 test('official cancellation never triggers host status or a completion reply', async () => {
   let hostCalls = 0; let replies = 0;
   reset(async name => {
-    if (name === 'list_tasks') return { tasks: [] };
+    if (name === 'list_tasks') return { ...remote, tasks: [] };
     if (name === 'reply_task') replies++;
     return { status: { state: 'canceled' } };
   }, async () => { hostCalls++; });
-  worker.state.tasks.task = { phase: 'running', acceptedAt: new Date().toISOString() };
+  worker.state.tasks.task = { phase: 'running', requestMessageId: 'request-1', acceptedAt: new Date().toISOString() };
   await worker.tick();
   assert.equal(hostCalls, 0); assert.equal(replies, 0);
   assert.equal(worker.state.tasks.task.error.code, 'OFFICIAL_TASK_ENDED_HOST_NOT_STOPPED');
 });
 test('working progress is rate limited', async () => {
   let replies = 0;
-  reset(async name => { if (name === 'reply_task') replies++; return { tasks: [], status: { state: 'working' } }; }, async () => ({ ok: true, run: { status: 'working' } }));
-  worker.state.tasks.task = { phase: 'running', acceptedAt: new Date().toISOString() };
+  reset(async name => { if (name === 'reply_task') replies++; return { ...remote, tasks: [], status: { state: 'working' } }; }, async () => ({ ok: true, run: { status: 'working' } }));
+  worker.state.tasks.task = { phase: 'running', requestMessageId: 'request-1', acceptedAt: new Date().toISOString() };
   await worker.tick(); worker.state.tasks.task.lastCheck = 0; await worker.tick();
   assert.equal(replies, 1);
 });
@@ -69,8 +69,8 @@ test('creating checks prefixed official cancellation before host side effects', 
 });
 test('completed run never returns stale assistant output', async () => {
   let replies = 0;
-  reset(async name => { if (name === 'reply_task') replies++; return { tasks: [], status: { state: 'working' } }; }, async () => ({ ok: true, run: { status: 'completed', outputMessageId: 'missing' }, messages: [{ id: 'old', role: 'assistant', text: 'old' }] }));
-  worker.state.tasks.task = { phase: 'running', acceptedAt: new Date().toISOString() };
+  reset(async name => { if (name === 'reply_task') replies++; return { ...remote, tasks: [], status: { state: 'working' } }; }, async () => ({ ok: true, run: { status: 'completed', outputMessageId: 'missing' }, messages: [{ id: 'old', role: 'assistant', text: 'old' }] }));
+  worker.state.tasks.task = { phase: 'running', requestMessageId: 'request-1', acceptedAt: new Date().toISOString() };
   await worker.tick(); assert.equal(replies, 0); assert.equal(worker.state.tasks.task.error.code, 'EXACT_OUTPUT_UNAVAILABLE');
 });
 test('submitted task discovery follows nextPageToken', async () => {
@@ -88,6 +88,29 @@ test('same outgoing call id survives uncertainty without another send', async ()
   const second = await worker.sendToPeer({ callId: 'outgoing-1' }, 'hello');
   assert.equal(first.sent, false); assert.equal(second.sent, false);
   assert.equal(first.messageId, second.messageId); assert.equal(sends, 1);
+});
+test('host run lookup failure cannot produce progress or terminal replies', async () => {
+  let replies = 0;
+  reset(async name => { if (name === 'reply_task') replies++; return { ...remote, tasks: [], status: { state: 'working' } }; }, async () => ({ ok: true, runError: { code: 'UNAVAILABLE' } }));
+  worker.state.tasks.task = { phase: 'running', requestMessageId: 'request-1', acceptedAt: new Date(0).toISOString() };
+  await worker.tick();
+  assert.equal(replies, 0); assert.equal(worker.state.tasks.task.phase, 'running');
+});
+test('same text with a different messageId cannot complete the prior run', async () => {
+  let hostCalls = 0; let replies = 0;
+  reset(async name => {
+    if (name === 'list_tasks') return { tasks: [] };
+    if (name === 'reply_task') replies++;
+    return { ...remote, status: { state: 'working' }, history: [{ messageId: 'request-2', role: 'user', parts: [{ text: 'hello' }] }] };
+  }, async () => { hostCalls++; return { ok: true, run: { status: 'completed' } }; });
+  worker.state.tasks.task = { phase: 'running', requestMessageId: 'request-1', requestText: 'hello', acceptedAt: new Date().toISOString() };
+  await worker.tick(); assert.equal(hostCalls, 0); assert.equal(replies, 0); assert.equal(worker.state.tasks.task.phase, 'unverified');
+});
+test('missing official user messageId fails closed before create', async () => {
+  let creates = 0;
+  const missing = { ...remote, history: [{ role: 'user', parts: [{ text: 'hello' }] }] };
+  reset(async name => name === 'list_tasks' ? { tasks: [missing] } : missing, async () => { creates++; });
+  await worker.tick(); assert.equal(creates, 0); assert.equal(worker.state.tasks.task.phase, 'unverified');
 });
 test('state write failure prevents host create', async () => {
   let creates = 0;

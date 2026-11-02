@@ -110,6 +110,15 @@ function runJob(job, timeoutMs) {
 function flushJobs() { for (const e of jobs.values()) if (!e.sentAt) { e.sentAt = Date.now(); write({ jsonrpc: '2.0', method: 'dispatch/job', params: e.job }); } }
 
 // ---------- anet task helpers ----------
+function lastUserMessageId(task) {
+  const history = Array.isArray(task.history) ? task.history : [];
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (history[i].role === 'ROLE_USER' || history[i].role === 'user') {
+      return typeof history[i].messageId === 'string' && history[i].messageId ? history[i].messageId : null;
+    }
+  }
+  return null;
+}
 function lastUserText(task) {
   const h = Array.isArray(task.history) ? task.history : [];
   for (let i = h.length - 1; i >= 0; i--) {
@@ -160,7 +169,7 @@ async function tick() {
       }
       const text = lastUserText(t);
       if (!text) continue;
-      state.tasks[t.id] = { phase: 'creating', peer, at: new Date().toISOString() }; saveState();
+      state.tasks[t.id] = { phase: 'creating', peer, requestMessageId: lastUserMessageId(t), at: new Date().toISOString() }; saveState();
     }
     // 2) advance known tasks
     for (const [aid, rec] of Object.entries(state.tasks)) {
@@ -177,6 +186,9 @@ async function tick() {
         const task = t.task || t;
         if (OFFICIAL_TERMINAL.has(officialState(task))) {
           Object.assign(rec, { phase: 'unverified', error: { code: 'OFFICIAL_TASK_ENDED_BEFORE_CREATE' } }); saveState(); continue;
+        }
+        if (!rec.requestMessageId || lastUserMessageId(task) !== rec.requestMessageId) {
+          Object.assign(rec, { phase: 'unverified', error: { code: 'REQUEST_MESSAGE_CHANGED_OR_UNAVAILABLE' } }); saveState(); continue;
         }
         const text = lastUserText(task);
         if (text.length > 32768) {
@@ -202,12 +214,11 @@ async function tick() {
         if (OFFICIAL_TERMINAL.has(officialState(official))) {
           Object.assign(rec, { phase: 'unverified', error: { code: 'OFFICIAL_TASK_ENDED_HOST_NOT_STOPPED' }, officialState: official.status.state }); saveState(); continue;
         }
-        const latestText = lastUserText(official);
-        if (rec.requestText !== undefined && latestText && latestText !== rec.requestText) {
+        if (!rec.requestMessageId || lastUserMessageId(official) !== rec.requestMessageId) {
           Object.assign(rec, { phase: 'unverified', error: { code: 'FOLLOWUP_REQUIRES_OPERATOR' } }); saveState(); continue;
         }
         const st = await runJob({ kind: 'status', taskId: rec.cindyTaskId, runId: rec.runId }, 30000);
-        if (!st || !st.ok) continue;
+        if (!st || !st.ok || st.runError || !st.run || typeof st.run.status !== 'string') continue;
         const runStatus = st.run && st.run.status;
         rec.runStatus = runStatus || null;
         if (TERMINAL.has(runStatus)) {
@@ -222,7 +233,7 @@ async function tick() {
         } else if (Date.now() - Date.parse(rec.acceptedAt) > MAX_RUN_MS) {
           // Observation deadline is not evidence that the host failed.
           Object.assign(rec, { phase: 'unverified', error: { code: 'RUN_TIMEOUT' } }); saveState();
-        } else if (!rec.lastProgressAt || Date.now() - rec.lastProgressAt > 5 * 60 * 1000) {
+        } else if (['running', 'working', 'queued', 'pending'].includes(runStatus) && (!rec.lastProgressAt || Date.now() - rec.lastProgressAt > 5 * 60 * 1000)) {
           rec.lastProgressAt = Date.now(); saveState();
           await tool('reply_task', { task_id: aid, state: 'working', text: 'Cindy host run remains active; result not yet verified.' });
         }
