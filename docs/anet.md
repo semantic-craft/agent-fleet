@@ -9,7 +9,7 @@
 - 入站：三个身份都是 `inbound policy closed`（默认值），只接 allow／trust 名单上的对端。见 [Delegation：inbound policy](https://docs.agentnetwork.org.cn/docs/en/latest/topics/delegation.html)、[Config：inbound.policy](https://docs.agentnetwork.org.cn/docs/en/latest/reference/config.html)。
 - 名单：只 allow 自有 AID（`turing` ⇄ `cindy` 互相 allow）。不加外人，不放宽 policy。
 - 派活：`anet --id turing delegate <AID> "…" --watch`。`--watch` 在 completed 时退出 0，failed／rejected／canceled 退出 1，input-required 退出 3（[CLI：Exit status](https://docs.agentnetwork.org.cn/docs/en/latest/reference/cli.html)）。参数只收完整 AID。
-- 宿主插件：Cindy 侧是 [plugins/cindy-anet](../plugins/cindy-anet/README.md)，经 `anet --id cindy mcp`（stdio）用官方 MCP 工具 `list_tasks`／`get_task`／`reply_task`／`send_message`（[MCP tools](https://docs.agentnetwork.org.cn/docs/en/latest/reference/mcp-tools.html)）。
+- 宿主插件：Cindy 侧是 [plugins/agent-network-cindy](../plugins/agent-network-cindy/README.md)，经 `anet --id cindy mcp`（stdio）用官方 MCP 工具 `list_tasks`／`get_task`／`reply_task`／`send_message`（[MCP tools](https://docs.agentnetwork.org.cn/docs/en/latest/reference/mcp-tools.html)）。
 
 ## 教训
 

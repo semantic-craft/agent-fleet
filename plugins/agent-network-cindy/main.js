@@ -1,4 +1,4 @@
-// cindy-anet (Cindy × Agent Network): browser-sandbox brain (pattern follows official cindy-ping:
+// agent-network-cindy (Cindy × Agent Network): browser-sandbox brain (pattern follows official cindy-ping:
 // resident node worker -> node-notification -> main.js -> cindy.tasks.* -> cindy.node.request back).
 async function node(method, params, timeoutMs) {
   try {

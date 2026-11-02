@@ -1,5 +1,5 @@
 'use strict';
-// cindy-anet (Cindy × Agent Network) resident Node worker.
+// agent-network-cindy (Cindy × Agent Network) resident Node worker.
 // Bridges the local Agent Network node `cindy` (anet --id cindy mcp, stdio) to Cindy tasks.
 // No network listener. stdout = JSON-RPC to Cindy host only; logs -> stderr.
 const fs = require('node:fs');
@@ -10,7 +10,7 @@ const readline = require('node:readline');
 const { spawn } = require('node:child_process');
 
 const HOME = process.env.HOME || os.homedir();
-const DIR = process.env.CINDY_ANET_DIR_TEST || path.join(HOME, 'Library', 'Application Support', 'CindyGlobal', 'cindy-anet');
+const DIR = process.env.AGENT_NETWORK_CINDY_DIR_TEST || path.join(HOME, 'Library', 'Application Support', 'CindyGlobal', 'agent-network-cindy');
 const CONFIG_FILE = path.join(DIR, 'config.json');
 const STATE_FILE = path.join(DIR, 'state.json');
 const STATUS_FILE = path.join(DIR, 'status.json');
@@ -18,7 +18,7 @@ const POLL_MS = 10000;
 const STATUS_EVERY_MS = 15000;
 const MAX_RUN_MS = 30 * 60 * 1000;
 
-const log = (...a) => { try { process.stderr.write('[cindy-anet] ' + a.join(' ') + '\n'); } catch {} };
+const log = (...a) => { try { process.stderr.write('[agent-network-cindy] ' + a.join(' ') + '\n'); } catch {} };
 const write = (m) => process.stdout.write(JSON.stringify(m) + '\n');
 
 // ---------- config / state ----------
@@ -67,7 +67,7 @@ function startMcp() {
   };
   child.on('exit', (code) => down('exited ' + code));
   child.on('error', (e) => down('error ' + e.message));
-  m.ready = rpc(m, 'initialize', { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'cindy-anet', version: '0.3.0' } }, 30000)
+  m.ready = rpc(m, 'initialize', { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'agent-network-cindy', version: '0.3.0' } }, 30000)
     .then((r) => { if (r.error) throw new Error(r.error.message); child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n'); status.mcp = 'up'; saveStatus(); });
   m.ready.catch((e) => { log('mcp init failed', e.message); try { child.kill(); } catch {} });
 }

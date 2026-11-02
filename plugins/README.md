@@ -7,6 +7,6 @@ Self-made dispatch plugins: one directory per host plugin, each connecting a hos
 
 | Dir | Host | Protocol | Status |
 | --- | --- | --- | --- |
-| [cindy-anet](cindy-anet/README.md) | Cindy | Agent Network (`anet --id cindy mcp`) | current (0.3.0) |
+| [agent-network-cindy](agent-network-cindy/README.md) | Cindy | Agent Network (`anet --id cindy mcp`) | current (0.3.0) |
 
 `agent-plugins` is only the marketplace/install root for other plugins; multi-agent dispatch plugins live here.

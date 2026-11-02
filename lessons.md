@@ -356,6 +356,8 @@ dot 原生平台任务通道不受本节阻断；DSH／GrokBot→Agenvo→Codex 
 
 - `peers allow`／`trust` 要终端确认，非 TTY 得到 `tty_required`；代跑需 PTY 回 `yes`，仅限已批准的自有 AID。见 [docs/anet.md](docs/anet.md)。
 - shell 残留错误 `ANET_HOME` 会让 `--id` 落到别的身份树；用 `env -u ANET_HOME ANET_DATA_DIR=$HOME/.anet anet …`。
-- 同一 anet 身份只能有一个常驻处理者；换 Cindy 插件（`turing-cindy-dispatch` → `cindy-anet`）先停旧插件再 smoke。
+- 同一 anet 身份只能有一个常驻处理者；换 Cindy 插件（`turing-cindy-dispatch` → `agent-network-cindy`）先停旧插件再 smoke。
 - 自制派活插件住 `plugins/`，不放 agent-plugins（那里只做 marketplace）；名称表达宿主 × 协议，不写对端名。
 - Cindy 0.1.121 清单 `description`／`whenToUse`／工具描述上限 300 字符，超限安装时只报不合法的 .cindy 文件；`pack.py` 先校验再打包。
+
+- Cindy 用户通道拒绝以 `cindy-` 开头的插件 id（官方保留前缀）；自制派活插件用 `agent-network-cindy` 这类宿主×协议名，不以 `cindy-` 开头。

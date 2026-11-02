@@ -18,7 +18,7 @@ ZCode 不再派活（#34 起仓库里没有它的接收端代码），但主力 
 
 | 目录 | 是什么 | 状态 |
 | --- | --- | --- |
-| `agent-fleet` | 本仓库：多 agent 协作正本——协议说明（[anet](anet.md)）、教训、实现（`adapters/`、`scripts/`）与自制派活插件 `plugins/`（如 `plugins/cindy-anet`）；`adapters/dsh` 由 `fleet.mjs release` 部署 | 核心 |
+| `agent-fleet` | 本仓库：多 agent 协作正本——协议说明（[anet](anet.md)）、教训、实现（`adapters/`、`scripts/`）与自制派活插件 `plugins/`（如 `plugins/agent-network-cindy`）；`adapters/dsh` 由 `fleet.mjs release` 部署 | 核心 |
 | `_forks/agenvo` | 上游 Agenvo 的最小 fork（新增 `dsh`/`zcode` kind、原生 DSH connector `apps/dsh` 和 ZCode 用的 `apps/dispatch`）；relay 与所有 connector 都从这里构建，connector 由 `fleet.mjs release agenvo` 装进发布目录运行，checkout 可以随意切分支 | 核心 |
 | `agent-plugins` | 只做 marketplace／安装根：`claude/`、`codex/`、`zcode/`、`dsh/` 等自有插件；多 agent 派活插件不放这里，在 `agent-fleet/plugins/` | 无关：不是通信基础设施；其中 `dsh/lcu-dsh`（LCU Computer Use 插件）线上在用 |
 | `outer-loop-kit` | 外环规则（outer-loop），协作协议与插件链到本仓库，不另存副本 | 治理 |
