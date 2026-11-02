@@ -26,9 +26,9 @@ function fake({ reason = 'completed', answer = 'Synthetic project', override } =
   };
   return { call, calls };
 }
-test('fleet imports the tested wrapper without duplicate implementation', () => {
+test('fleet does not keep the removed dispatch wrapper', () => {
   const source = readFileSync(new URL('../scripts/fleet.mjs', import.meta.url), 'utf8');
-  assert.match(source, /import \{ dshTurn \} from "\.\/dsh-check\.mjs"/);
+  assert.doesNotMatch(source, /dsh-check\.mjs/);
   assert.doesNotMatch(source, /function dshTurn\(/);
 });
 test('existing-session fleet wrapper uses the harness and no creation/auth paths', async () => {

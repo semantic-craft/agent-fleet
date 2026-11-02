@@ -86,9 +86,10 @@ hard tool allowlists, hard token budgets, and other capabilities fail explicitly
 no live overlay. Coverage includes transient reads, unknown mutations, disconnect
 recovery, wrong input/turn/model/preset, cancellation, fallback, concurrency and
 idempotency. These tests do not establish a real DSH tool-loop or cloud acceptance.
-That requires separate authorized Dot → Agenvo → DSH → provider evidence with the
-actual preset/model and a bounded read-only tool invocation. Do not use
-`fleet.mjs check --dispatch` as an offline test: it creates real requests.
+That requires separate authorized DSH provider evidence with the
+actual preset/model and a bounded read-only tool invocation. The old
+`fleet.mjs check --dispatch` command created real requests and has been removed;
+do not treat it as an offline test.
 
 Offline implementation validation (2026-10-24): harness tests 28/28; complete Node
 suite 66/66 on the development base; private guard passed with no overlay.
@@ -162,8 +163,8 @@ request identifiers and raw trace evidence remain in the owning task's records.
 
 ## Fleet entrypoint integration
 
-`fleet.mjs` directly imports `dshTurn` from `scripts/dsh-check.mjs`; the tested
-wrapper is the actual DSH branch used by `check --dispatch`, not a separate demo.
+`scripts/dsh-check.mjs` still exports `dshTurn` for tests. `fleet.mjs` no longer
+imports it; the old `check --dispatch` CLI branch was removed.
 Importing the wrapper has no CLI, OAuth, or dispatch side effects. Its injected
 Agenvo-envelope tests cover an existing session and workspace/session creation
 through prompt and matching terminal. Max-token failure, errors, and completed
@@ -493,8 +494,9 @@ fixture result upgrades Sol's tool capability claim.
 
 ## Structural enforcement (v4)
 
-The existing public `fleet check --dispatch` DSH path is
+The former public DSH check path was
 `fleet.mjs → dshTurn → createCallerRouter → HarnessRunner → DshProviderAdapter`.
+That CLI entry was removed. The library path remains for the harness.
 Read-only TaskSpecs now require observed runtime `permissions.currentValue = read-only`
 before any prompt and after completion, even when expected permission is omitted.
 Permission/sandbox expansion within the observed turn fails verification even if
@@ -541,4 +543,4 @@ Reuse `TaskSpec`, `RunContext`, `HarnessRunner` and `FileJournal` contracts befo
 
 DSH Agent-scoped MCP availability, outbound OAuth authorization and unsolicited completion lifecycle hooks are pending. Do not reuse a check-only OAuth grant as persistent DSH authorization or enable an adapter from task-supplied booleans. The official MCP client is the preferred transport integration; a thin plugin is justified only for bounded tools/ownership and recovery. Initial completion can use explicit observe; ACK is not completion. No new module, relay or plugin was installed by this correction.
 
-The subsequent [DSH Agenvo caller candidate](../adapters/dsh-agenvo/README.md) now composes the official scoped MCP client with a reviewed OAuth transport. It exposes upstream search/execute rather than inventing submit/observe/continue/cancel aliases. It intentionally does **not** inherit this harness's durable recovery guarantees: native MCP calls remain caller-owned. No production plugin has been loaded. The external transport was installed, started for registration/consent and then stopped on user pause; grant completion is not confirmed. The extra transport installation has since been moved to Trash on user request; the separate registration cache remains. The [native candidate](../adapters/dsh-agenvo-native/README.md) replaces the child process with host SDK/credentials and requires its own explicitly approved client identity. This avoids adding a second dispatcher while preserving the explicit need for a native Codex event adapter if bounded autonomous recovery is added later.
+The DSH outbound caller candidates (external bridge and native SDK client) were removed from this repository on 2026-11-02. They were not a production plugin and did not inherit this harness's durable recovery guarantees. Historical design is in the ADR archive.

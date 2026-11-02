@@ -9,14 +9,13 @@ and connector release is installed. This change does not modify Magpie or preset
 | Source | Fixed base | Patch |
 | --- | --- | --- |
 | `https://github.com/deepseek-ai/deepseek-harness` | `1f81c047fc48fa190a683e469daa699857e9afe8` (official rc.3 tag) | `patches/dsh-session-only/runtime.patch` |
-| `https://github.com/semantic-craft/agenvo` | `cd10fb92e1da731b307b85f8e94e8db8b6b8808a` | `patches/dsh-session-only/agenvo.patch` |
 
-Use separate clean checkouts at these exact revisions. From each checkout run
-`git apply --check <absolute-patch-path>`, then `git apply <absolute-patch-path>`.
+The connector patch that used to accompany this candidate was removed from the tree
+on 2026-11-02. Only the runtime patch remains. From a clean checkout at the runtime
+base, run `git apply --check <absolute-patch-path>`, then `git apply <absolute-patch-path>`.
 A mismatch is a rebase/review requirement, never a reason to force application.
-Retain upstream LICENSE (MIT for DSH, Apache-2.0 for Agenvo); copies accompany the
-patches. These small diffs are not vendored runtime dependencies. No new fork or
-upstream PR is required to replay locally. On upgrade, retest the patch against
+Retain the upstream MIT license; a copy accompanies the runtime patch. This small
+diff is not a vendored runtime dependency. On upgrade, retest the patch against
 the new source and capability contract; do not infer support from a version string.
 
 The runtime reuses provider/model validation and per-session admission

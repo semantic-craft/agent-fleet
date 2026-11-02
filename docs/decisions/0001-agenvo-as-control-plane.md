@@ -1,3 +1,5 @@
+> **SUPERSEDED / archive（2026-11-02）。** 本机派活正本是官方 anet：[docs/anet.md](../anet.md)。下文只作历史档案，不要按本文安装或派活。
+
 # ADR-0001：远程控制面是 CommHub（anet）
 
 状态：历史（2026-10-31 曾采纳）。**2026-11-02：本机多 agent 派活改走官方 anet 0.3.9**（[docs/anet.md](../anet.md)），不再把 CommHub MCP／#90 门铃桥当作本机派活控制面。本文保留供旧部署查阅。2026-10-19 曾把 Agenvo relay 写成唯一远程控制面；其后一度以 CommHub 为远程控制面。

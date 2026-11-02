@@ -39,10 +39,10 @@ is reverse lookup of saved attachment identity, not execution writer ownership.
 
 ## Source and offline reproduction
 
-Replay the small patch in `patches/codex-handoff-probe/` on its exact manifest base
-in a clean isolated checkout of the recorded repository. Preserve the Apache-2.0
-license. Run `git apply --check` before `git apply`; if it fails, stop and rebase
-with review. Do not force application or apply to a running release directory.
+The connector patch files that used to sit in `patches/codex-handoff-probe/` were
+removed from this tree on 2026-11-02. The manifest keeps the historical source
+base and candidate. Do not treat this page as a replay recipe, and do not apply
+anything to a running release directory.
 
 Dependency materialization is separate from runtime execution. Use the locked
 package tree with lifecycle scripts disabled; offline cache failure is an explicit

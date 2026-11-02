@@ -1,67 +1,24 @@
 # 架构
 
-> **遗留附录（2026-11-02）。** 本机多 agent 派活的正本是官方 anet 0.3.9：[docs/anet.md](anet.md)、[plugins/agent-network-cindy](../plugins/agent-network-cindy/README.md)。下文描述 CommHub MCP、#90 门铃桥与 Agenvo connector，只供维护旧部署；新任务不要再按本节选控制面。
-
+> **当前正本是官方 anet 0.3.9。** 身份、inbound、`delegate --watch` 与 Cindy 插件见 [anet.md](anet.md) 与 [plugins/agent-network-cindy](../plugins/agent-network-cindy/README.md)。CommHub MCP、#90 门铃桥与 agenvo fork 的安装步骤已从本仓库删除。历史档案：[ADR-0001](decisions/0001-agenvo-as-control-plane.md)、[ADR-0002](decisions/0002-minimal-agenvo-fork.md)。
 
 ## 目标
 
 1. 人只面对一个入口：手机上的 ChatGPT（主力是 dots），也可以是 Grok Bot。
 2. 助手能看到每台电脑上的 agent 在做什么，并能新建任务、追加输入、读结果。
-3. 任务在用户平时用的桌面 app 里可见（Codex Desktop、DSH；agy 会话只在 Herdr 终端可见，Antigravity 桌面版 2.25.0 调不出 CLI 会话），也可以在 Herdr 终端里运行（agy、codex CLI、dsh headless）。
+3. 任务在用户平时用的桌面 app 里可见（Codex Desktop、DSH）。
 4. 电脑不开入站端口；合盖、断网、关闭聊天都不会中断已经在跑的 agent。
 
-## 调用方入口
+## 当前路径
 
-远程控制面是 CommHub（Agent Network／anet），见 [ADR-0001](decisions/0001-agenvo-as-control-plane.md)。先按[调用方路由](caller-routing.md)区分 dot 原生平台任务、Grok 外环（CommHub MCP）、本机 #90 门铃桥，以及 DSH、GrokBot 的 Codex Desktop 交接。原生任务工具依赖调用方与连接授权；外部 writer 阻断不影响 dot 日常 Codex 路线，也不能用 dot 工具替代外部需求。
+本机多 agent 派活只走官方 anet。不经 CommHub MCP、不经 `anet.sonori.dev`、不经 #90 门铃桥。做法见 [anet.md](anet.md)。dot 若已有原生平台任务工具且电脑已授权，Codex 可走原生通道（与 anet 并列）。DSH、GrokBot 的历史外部路线见[调用方路由](caller-routing.md)。
 
-## 组件与职责
+桌面 DSH 插件仍是 [adapters/dsh](../adapters/dsh/README.md)，由 `fleet.mjs release dsh` 装进桌面 profile。它不是控制面。
 
-| 组件 | 运行在哪 | 职责 | 不负责 |
-| --- | --- | --- | --- |
-| 助手（ChatGPT / dots / Grok Bot） | 云端 | 理解目标、派活、读结果 | 执行代码 |
-| CommHub | 本机 bun，默认 `127.0.0.1:9200`；公网经 cloudflared | MCP `/mcp`、需求卡、`send_task`、SSE `/events/<alias>` | 执行 agent；保存 token |
-| 门铃桥 | 本仓 `adapters/commhub`（#90） | 收门铃、`get_inbox`、`ack_inbox`、`send_reply` | 另建调度器 |
-| connector（每种运行时一个进程） | 每台 Mac，launchd | 把桌面／Herdr 的原生调用接出来；附带实例 `context` | 控制面；启动或停止原生服务 |
-| 原生服务 | 每台 Mac | 真正跑 agent：`codex app-server`、`herdr server`、DSH 桌面版（插件在 Unix socket 上转发其原生端点） | 远程访问控制 |
-| 桌面 app | 每台 Mac | 让用户看到并接手会话 | — |
+## 历史外部路线（不再安装）
 
-## 一次派活的路径
+下列句子保留交接契约里的门槛，供旧文档交叉引用。不要按它们重新安装 fork 或门铃。
 
-外环：Grok 经 CommHub MCP `send_task` 到目标 alias。目标机上的 #90 门铃桥（`adapters/commhub/herdr-bridge.mjs`）从 `/events/<alias>` 醒来，`get_inbox` 排空后执行，再 `ack_inbox` 与 `send_reply`。记账用需求卡。dot 的原生平台任务不走这条。
+历史外部路线里，discovery 使用 deviceId／instanceId。DSH、GrokBot 的 Codex Desktop 可见性按[调用方路由](caller-routing.md)各自记录。dot 的原生平台任务不走 CommHub。
 
-下面是桌面 DSH 的 connector 附着，不是控制面：
-
-1. 用户对 dot 说"让 DSH 在 koe 里跑一下测试"。
-2. 助手调 `search`，拿到实例列表、在线状态和每个实例的 `context`（写着项目目录、默认权限、适合干什么）。
-3. 助手调 `execute`，依次 `call({deviceId, instanceId: "dsh-laptop"}, "workspace/create", {request: {path: ".../koe"}})`、`session/create`、`session/prompt`。改代码的任务先经同机 Herdr 实例 `worktree.create` 建任务目录，`path` 用任务目录。
-4. relay 经 WSS 把调用交给笔记本上的 `agenvo-dsh`，后者经 Unix socket 调 DSH 桌面版 Host 的原生端点。
-5. DSH 桌面在左栏该项目下建出可见会话并开始执行；connector 立即返回 session id。
-6. 轮次结束时 connector 转发原生 `turn/end`（`runtime.changed`），dot 被唤醒后调 `session/follow` 读结果，再决定下一步。
-
-**外部 Codex Desktop**（DSH、GrokBot 的桌面可见性，尚未验通）：
-
-**Desktop 交互控制交还门槛**：独立同 host 执行基线不以退订能力为创建前置，Desktop 项保持未验；仅当完成交还时，目标 connector 支持 `thread/unsubscribe`，watchEvents 不收养其他 loaded 线程；否则 `blocked_native_writer_release`。同 host 的共享 app-server 与 Desktop 自带 backend 也必须交还 writer。connector 重启不释放独立 native writer。
-1. discovery 选定 deviceId/instanceId，brief 与 cwd 均在该目标机器；`thread/start` 保存 threadId。
-2. 释放写锁或已证实原生交接（kickstart 不等于放锁，见交接契约）。
-3. 在目标机器打开 `codex://threads/<threadId>`，确认 Desktop 项目下可见。
-4. 经 Agenvo `turn/start`，读本次 turn 终态与实际输出。
-5. 同一 connector `thread/unsubscribe` 交还 Desktop 后重新打开，截图核实左栏项目可见且无 writerConflict／Fork chat／open in new chat／another app；Desktop 正道五步详见[交接契约](codex-desktop-handoff.md)。
-
-**agy、dsh headless** 在 Herdr 里跑：
-
-1. **任务目录**：改代码用 Herdr `worktree.create` 建 `~/Projects/.worktrees/<repo>/<任务名>`（分支 `agent/<任务名>`，基于 `origin/main`），只读用主 checkout；合并后 `worktree.remove`。
-2. **一轮一个 tab**：`tab.create` + `pane.run` 写 brief、跑 CLI（`agy -p`、`dsh --profile headless`），以 `echo $? > exit-N; exit` 收尾；结束看 `pane_exited` 或 `pane.get` → `pane_not_found`。
-3. **续接**：同一任务目录新开 tab（`agy --conversation`、`dsh --session-id`）。
-
-要在桌面**项目下**自动开跑：派 DSH（`workspace/create`、`session/create`、`session/prompt`、`session/follow`）。完整步骤见[派活技能](https://github.com/semantic-craft/xw-stack/blob/main/skills/delegate-via-agenvo/SKILL.md)。
-
-connector 与 relay 之间是会断开重连的长连接（2026-10-23 实测：relay 主机走机场线路时 31.5 分钟断 30 次，网关规则改走直连后 31.6 分钟断 1 次，见[网络与桌面验收](network-and-desktop-acceptance.md#重连可观察性)）。断线时进行中的调用返回 `unknown`、事件不补发，所以派活方以原生状态和 `_status/<任务名>/` 里的文件为准，事件只用来提早醒来。
-
-## 信任边界
-
-- 访问控制有三层：relay 管理员密钥、设备配对（核对指纹）、MCP 客户端 OAuth 授权。执行权限默认 full access。
-- relay 运营方（Cloudflare）能看到流量，不是端到端加密。高度敏感的项目不要经它派活。
-- 同一 macOS 用户下 full access 能触及该用户能访问的一切；这是有意的取舍，见 [ADR-0004](decisions/0004-desktop-strict-and-full-access.md)。
-
-
-Agenvo 默认 Codex Desktop 五步显式使用 magpie／gpt-6-astra；回程以原生终态＋业务验收＋收据收口，Herdr codex exec 仅用户点名 CLI 时使用，详见[派活技能](https://github.com/semantic-craft/xw-stack/blob/main/skills/delegate-via-agenvo/SKILL.md)。
+**Desktop 交互控制交还门槛**：独立同 host 执行基线不以退订能力为创建前置，Desktop 项保持未验；仅当完成交还时，目标 connector 支持 `thread/unsubscribe`，watchEvents 不收养其他 loaded 线程；否则 `blocked_native_writer_release`。同 host 的共享 app-server 与 Desktop 自带 backend 也必须交还 writer。connector 重启不释放独立 native writer。详见[交接契约](codex-desktop-handoff.md)。

@@ -14,13 +14,21 @@ const write = (obj) => {
 
 test("example config loads and expands ~ against the given home", () => {
   const c = loadConfig(new URL("../fleet.example.json", import.meta.url), "/home/u");
-  assert.equal(c.relay.adminSecretFile, "/home/u/.config/agenvo/admin-secret");
+  assert.equal(c.relay, undefined);
+  assert.equal(c.agenvo, undefined);
   assert.equal(c.machines[0].projectsRoot, "/home/u/Projects");
   assert.equal(c.machines[0].instances.find((i) => i.id === "dsh-laptop").connector, "dsh");
 });
 
+test("a relay block is optional and still expands when present", () => {
+  const c = loadConfig(write({ relay: { baseUrl: "https://r/" }, machines: [{ name: "m" }] }), "/home/u");
+  assert.equal(c.relay.baseUrl, "https://r");
+  assert.equal(c.relay.adminSecretFile, "/home/u/.config/agenvo/admin-secret");
+  assert.throws(() => loadConfig(write({ relay: {}, machines: [{ name: "m" }] })), /relay\.baseUrl/);
+});
+
 test("config rejects unknown connectors and duplicate ids", () => {
-  const base = { relay: { baseUrl: "https://r" }, machines: [{ name: "m", instances: [] }] };
+  const base = { machines: [{ name: "m", instances: [] }] };
   base.machines[0].instances = [{ id: "a", connector: "telnet" }];
   assert.throws(() => loadConfig(write(base)), /connector/);
   base.machines[0].instances = [{ id: "a", connector: "codex" }, { id: "a", connector: "herdr" }];
@@ -61,9 +69,9 @@ test("approval redirect handles both 303 and the production HTML page", () => {
   assert.throws(() => approvalRedirect(null, "<p>no</p>", cb), /neither/);
 });
 
-test("check --dispatch project: --project wins, else overlay check.project, else a clear error", () => {
-  const c = loadConfig(new URL("../fleet.example.json", import.meta.url), "/home/u");
-  assert.equal(checkProject(c), c.check.project);
+test("checkProject: --project wins, else overlay check.project, else a clear error", () => {
+  const c = { check: { project: "PROJECT" } };
+  assert.equal(checkProject(c), "PROJECT");
   assert.equal(checkProject(c, "other"), "other");
   assert.throws(() => checkProject({ machines: [] }), /check\.project/);
 });

@@ -13,7 +13,6 @@ export function configPath(env = process.env, home = homedir()) {
 
 export function loadConfig(path, home = homedir()) {
   const raw = JSON.parse(readFileSync(path, "utf8"));
-  if (!raw.relay?.baseUrl) throw new Error("fleet config: relay.baseUrl is required");
   if (!Array.isArray(raw.machines) || !raw.machines.length)
     throw new Error("fleet config: machines[] is required");
   const ids = new Set();
@@ -27,8 +26,11 @@ export function loadConfig(path, home = homedir()) {
     }
   }
   const fix = (v) => (typeof v === "string" ? expandHome(v, home) : v);
-  raw.relay.adminSecretFile = fix(raw.relay.adminSecretFile ?? "~/.config/agenvo/admin-secret");
-  raw.relay.baseUrl = raw.relay.baseUrl.replace(/\/$/, "");
+  if (raw.relay) {
+    if (!raw.relay.baseUrl) throw new Error("fleet config: relay.baseUrl is required when relay is set");
+    raw.relay.adminSecretFile = fix(raw.relay.adminSecretFile ?? "~/.config/agenvo/admin-secret");
+    raw.relay.baseUrl = raw.relay.baseUrl.replace(/\/$/, "");
+  }
   for (const m of raw.machines) {
     m.projectsRoot = fix(m.projectsRoot);
     for (const i of m.instances ?? []) if (i.keyFile) i.keyFile = fix(i.keyFile);
@@ -122,7 +124,7 @@ export function forkRef(remotes, url, branch) {
   return `${remote}/${branch}`;
 }
 
-/** Project directory for check --dispatch: --project wins, else overlay check.project. It must exist under projectsRoot on every dispatch machine. */
+/** Project directory helper kept for tests. --project wins, else overlay check.project. */
 export function checkProject(config, flag) {
   const project = flag ?? config.check?.project;
   if (!project) throw new Error("check --dispatch needs a project that exists on every dispatch machine: set check.project in the fleet config or pass --project");

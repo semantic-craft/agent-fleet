@@ -8,7 +8,7 @@
 - **移除中**：正按 [maintenance](maintenance.md) 的"移除组件"步骤移除。
 - **无关**：名字相近，但不属于这套基础设施。
 
-2026-10-20 起，别人的代码按关系分放：只读参考在 `_ref/`，上游是别人的 fork 或封装在 `_forks/`；`fleet.json` 的 `agenvo.checkout` 指向本机实际位置。
+2026-10-20 起，别人的代码按关系分放：只读参考在 `_ref/`，上游是别人的 fork 或封装在 `_forks/`。本仓库示例不再包含 fork checkout 字段。
 
 属于本架构的 launchd 任务：`io.agenvo.connector.*`（各 connector）、`dev.xw.*`、`fleet.mjs launchd` 按 `templates/launchd/` 生成的任务（标签前缀取 `LABEL_PREFIX`，默认 `dev.fleet`）。旧 Codex worker `io.agent-fleet.codex-runtime` 已退役（2026-10-22）：主力 Mac 上用 `launchctl bootout` 卸载，plist 移到 `~/Library/LaunchAgents/_retired/io.agent-fleet.codex-runtime.plist.retired-20261022`；stateDir `~/.local/state/agent-fleet-codex/`（含 `service.lock`、`runtime.json`、`native.sock`）、配置 `~/.config/agent-fleet/codex-runtime.json`、发布目录和日志原样保留，锁文件不删。退役依据：没有调用方（agenvo 的 codex 实例连 `dev.xw.codex-app-server`，Codex 派活走 Herdr 里的 `codex exec`）；旧进程和它的 worker 均已退出，没有进程持有锁或 socket；卸载时没有重启其他 connector。
 
@@ -19,7 +19,7 @@ ZCode 不再派活（#34 起仓库里没有它的接收端代码），但主力 
 | 目录 | 是什么 | 状态 |
 | --- | --- | --- |
 | `agent-fleet` | 本仓库：多 agent 协作正本——协议说明（[anet](anet.md)）、教训、实现（`adapters/`、`scripts/`）与自制派活插件 `plugins/`（如 `plugins/agent-network-cindy`）；`adapters/dsh` 由 `fleet.mjs release` 部署 | 核心 |
-| `_forks/agenvo` | 上游 Agenvo 的最小 fork（历史 connector／relay）；本机派活已改官方 anet，见 [anet.md](anet.md)。仍部署的 connector 由 `fleet.mjs release agenvo` 维护 | 遗留 |
+| `_forks/agenvo` | 上游 Agenvo 的最小 fork（历史 connector／relay）。本机派活已改官方 anet，见 [anet.md](anet.md)。本仓库不再提供安装或发布命令；档案见 [ADR-0002](decisions/0002-minimal-agenvo-fork.md) | 遗留 |
 | `agent-plugins` | 只做 marketplace／安装根：`claude/`、`codex/`、`zcode/`、`dsh/` 等自有插件；多 agent 派活插件不放这里，在 `agent-fleet/plugins/` | 无关：不是通信基础设施；其中 `dsh/lcu-dsh`（LCU Computer Use 插件）线上在用 |
 | `outer-loop-kit` | 外环规则（outer-loop），协作协议与插件链到本仓库，不另存副本 | 治理 |
 | `alma-relay-ops` | 多设备穿透／回家底座的运维仓（上游 yetone/alma-relay） | 无关：网络底座，不是派活通道 |

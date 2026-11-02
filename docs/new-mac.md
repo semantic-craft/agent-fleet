@@ -6,11 +6,11 @@
 
 ## 先弄清用户要什么
 
-- **Codex 是主力，入口按调用方区分。** dot 有原生平台任务工具且电脑连接已授权时优先原生通道；跨机先发现环境。Grok 外环走 CommHub MCP，本机接收端走 #90 门铃桥。DSH、GrokBot 的 Codex Desktop 交接另验，其 writer 阻断不阻挡前者。见[调用方路由](caller-routing.md)。
+- **Codex 是主力，入口按调用方区分。** dot 有原生平台任务工具且电脑连接已授权时优先原生通道；跨机先发现环境。本机多 agent 派活走官方 anet（[anet.md](anet.md)），不走已删除的 CommHub MCP 或 #90 门铃桥。DSH、GrokBot 的 Codex Desktop 交接另验，其 writer 阻断不阻挡前者。见[调用方路由](caller-routing.md)。
 - **DSH（DeepSeek Harness）是同等能力的后备**，防止 Codex 额度用完或出故障：它必须有和 Codex 同级的原生能力，任务出现在 DSH 桌面左栏、可以在桌面里接手；派活、追问、中断都走 DSH 的原生会话，不退回 headless。
 - Herdr 用于同机任务目录/brief 准备及明确选择的 CLI 通道；它不是 Codex Desktop 的模型执行者，也不负责释放 native writer。
-- Agenvo 默认执行约定见实例 context；原生平台任务遵守其自身权限与用户范围，不能套用 relay 授权。
-- 自建 MCP 远程通路是 CommHub（anet）；不替代已有原生平台任务服务（见 [ADR-0006](decisions/0006-single-remote-path.md)）。
+- 实例 context 里可能仍有旧 connector 文案。原生平台任务遵守其自身权限与用户范围。
+- 本机派活传输是官方 anet，见 [anet.md](anet.md)。[ADR-0006](decisions/0006-single-remote-path.md) 只记录旧的单远程通路，不替代原生平台任务。
 - 这台机器的个人值（名字、地址、项目目录）只写进私有 overlay，不写进本仓库。
 
 ## 步骤
@@ -19,11 +19,11 @@
 | --- | --- | --- |
 | 1 | 装 Node 24.13+、Git，装好 Codex（CLI 和 Desktop 共用 `~/.codex`）、Herdr 和 DSH 桌面版，Codex 与 DSH 都登录好 | `node -v`；Codex 和 DSH 都能正常对话 |
 | 2 | 拿到私有 overlay：`git clone git@github.com:<owner>/agent-fleet-overlay.git ~/.config/agent-fleet`，在 `fleet.json` 的 `machines` 里为这台机器加一项（名字、`hostnames`、`projectsRoot`、实例和 context）。实例 context 照已有机器的写法改 | `node scripts/fleet.mjs doctor --machine <名字>` 能识别这台机器 |
-| 3 | 准备 agenvo fork 并构建（[runbook §1](runbook.md#1-准备-agenvo-fork每台机器)），再按 [runbook §3、§4](runbook.md#3-原生服务常驻) 接好 Codex 与 Herdr：`codex-app-server` 和 `herdr server` 常驻，添加、配对并批准 `agenvo-codex-app-server` 与 `agenvo-herdr` 实例，安装两者 connector 服务 | relay 上 Codex、Herdr 实例均 online；`fleet.mjs check` 中 `thread/list`、`session.list` 均为 ok；外部 Codex 交接按下述独立记录，不阻挡 dot 原生任务验收 |
+| 3 | 按 [runbook](runbook.md#1-原生服务常驻) 把 Codex app-server 与 Herdr server 常驻。fork 安装与旧 relay 配对已删除，见 [ADR-0002](decisions/0002-minimal-agenvo-fork.md) | `fleet.mjs doctor` 能看到这两项服务；外部 Codex 交接按下述独立记录，不阻挡 dot 原生任务验收 |
 | 4 | **装 DSH 插件**：`node scripts/fleet.mjs release dsh --sha <reviewed SHA>`（把 [adapters/dsh](../adapters/dsh/README.md) 链进 DSH 桌面版的 `desktop` profile） | 出现 `~/.local/state/agent-fleet-dsh/native.sock`，权限 0600 |
-| 5 | 挂 DSH 实例并配对：`agenvo-dsh instance add`，`fleet.mjs contexts --apply`，然后 `connect` 和 `service install`（[runbook §4](runbook.md#4-添加实例并配对每台机器每种-connector)）。这台机器没有管理员密钥时，用 `--no-browser` 拿到配对码，在有密钥的机器上批准 | relay 上这个实例显示 online 且已批准 |
+| 5 | 若 overlay 仍列出 DSH 实例：`fleet.mjs contexts --apply`。旧 connector 配对步骤已删除，见 [ADR-0001](decisions/0001-agenvo-as-control-plane.md) | `fleet.mjs doctor` 里该实例不是 NOT CONFIGURED，或确认这台机器不再挂该 connector |
 | 6 | 登录自启动：`fleet.mjs launchd desktop-agents-autostart` | 注销重登后 DSH 自己打开 |
-| 7 | **验收 DSH 后备能力**：`fleet.mjs check --dispatch` 必须在新会话里跑完一轮；再用 `--instance <id> --session <已有会话>` 往你手动开的会话里追加一轮 | 两项都 OK，DSH 桌面左栏能看到这两轮 |
+| 7 | **验收 DSH 后备能力**：在 DSH 桌面新建一轮并追加一轮，确认左栏可见。不要用已删除的 `check --dispatch` | 桌面左栏能看到这两轮 |
 | 8 | 把 overlay 的改动提交并推送 | `git -C ~/.config/agent-fleet status` 干净 |
 
 ## Codex 派活验收

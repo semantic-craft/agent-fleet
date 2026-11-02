@@ -7,9 +7,8 @@
 | 频率 | 做什么 | 命令 | 不通过时 |
 | --- | --- | --- | --- |
 | 每次改配置、升级、重启电脑后 | 本机自检 | `node scripts/fleet.mjs doctor` | 按缺的服务或 connector 去 [runbook](runbook.md) 对应小节处理 |
-| 每周（模板 `fleet-weekly-check`，周一 9:30，失败弹通知。主力 Mac 上这个任务在 `~/Library/LaunchAgents/_retired/`、overlay 的 services 也不列它：目前要手动跑，或用 `fleet.mjs launchd fleet-weekly-check` 重新生成并加载） | guard + CommHub 检查 | `npm run guard && node scripts/fleet.mjs check` | 先读 CommHub 输出。connector 全链路另跑 `check --legacy-agenvo --dispatch`；修好后在 [lessons.md](../lessons.md) 记一条 |
-| 每周（同一个 launchd 任务） | 跟进上游：上游一出新 release，就在 `~/Projects/.worktrees/agenvo/upstream-<tag>` 里试合并，并跑 check 和 test | `node scripts/fleet.mjs upstream --try-merge` | 结果是 READY：把 `xw/dispatch-connectors` 快进到那个分支，推送，重新部署 relay，`release agenvo`，跑 `check --dispatch`，再删掉 worktree。结果是冲突：只会落在 protocol 枚举和 releases 映射，手动合并 |
-| 上游支持外部 kind 时 | 去掉 fork | 按 [ADR-0002](decisions/0002-minimal-agenvo-fork.md) 的退出条件 | — |
+| 每周（模板 `fleet-weekly-check`，周一 9:30，失败弹通知。主力 Mac 上这个任务在 `~/Library/LaunchAgents/_retired/`、overlay 的 services 也不列它：目前要手动跑，或用 `fleet.mjs launchd fleet-weekly-check` 重新生成并加载） | guard + doctor | `npm run guard && node scripts/fleet.mjs doctor` | 按缺的服务去 [runbook](runbook.md)。本机派活验收另跑 anet `delegate --watch` 与 Cindy 插件 smoke |
+| 上游 fork | 不再跟进 | 历史命令已删除。档案见 [ADR-0002](decisions/0002-minimal-agenvo-fork.md) | — |
 | 组件没有消费者时 | 移除组件 | 按下文"移除组件" | — |
 
 ## 加东西之前先问
@@ -23,7 +22,7 @@
 
 1. 在 [landscape](landscape.md) 把它的状态改成"移除中"。
 2. 用 `launchctl bootout` 停掉服务，plist 移进 `~/Library/LaunchAgents/_retired/`。
-3. 跑一次 `fleet.mjs check`。
+3. 跑一次 `fleet.mjs doctor`。本机派活再按 [anet.md](anet.md) 做 smoke。
 4. 删除本地目录、部署副本、状态目录和 `_retired/` 里的 plist（先确认没有未推送的有用工作），并把这些仓库从每日维护任务里摘掉；最后删掉 landscape 里那一行。
 5. GitHub 仓库默认归档；删除须用户逐个确认后执行。
 
@@ -32,4 +31,4 @@
 - `~/Projects` 里每个 agent 相关目录在 [landscape](landscape.md) 都有一行，状态与实际一致。
 - `~/Projects` 符合 [landscape](landscape.md#projects-的布局) 的布局：每个仓库一份停在默认分支的干净克隆，已合并的 worktree 和本地分支已清理。 收尾须遵守根 [AGENTS.md](../AGENTS.md)「worktree 不遗留」。
 - overlay 是 connector 实例 context 的唯一来源，执行 `contexts` 显示全部 in sync。
-- `check --dispatch` 通过，relay 上除了用户自己的正式授权，没有残留的测试授权。
+- 本机派活以 anet `delegate --watch` 与 Cindy 插件 smoke 为准，见 [anet.md](anet.md)。

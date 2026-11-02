@@ -1,3 +1,5 @@
+> **SUPERSEDED / archive（2026-11-02）。** 本机派活正本是官方 anet：[docs/anet.md](../anet.md)。下文只作历史档案，不要按本文安装 fork 或发布 connector。
+
 # ADR-0002：只为 DSH/ZCode 维护一个最小 agenvo fork
 
 状态：已采纳（2026-10-19）。ZCode 部分不再派活（agent-fleet #34），`apps/dispatch` 与 `zcode` kind 仍在 fork 里，按 [landscape](../landscape.md) 的说明等用户决定是否移除。
