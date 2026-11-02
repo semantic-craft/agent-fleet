@@ -358,3 +358,4 @@ dot 原生平台任务通道不受本节阻断；DSH／GrokBot→Agenvo→Codex 
 - shell 残留错误 `ANET_HOME` 会让 `--id` 落到别的身份树；用 `env -u ANET_HOME ANET_DATA_DIR=$HOME/.anet anet …`。
 - 同一 anet 身份只能有一个常驻处理者；换 Cindy 插件（`turing-cindy-dispatch` → `cindy-anet`）先停旧插件再 smoke。
 - 自制派活插件住 `plugins/`，不放 agent-plugins（那里只做 marketplace）；名称表达宿主 × 协议，不写对端名。
+- Cindy 0.1.121 清单 `description`／`whenToUse`／工具描述上限 300 字符，超限安装时只报不合法的 .cindy 文件；`pack.py` 先校验再打包。

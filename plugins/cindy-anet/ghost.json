@@ -3,7 +3,7 @@
   "minCindyVersion": "0.1.121",
   "id": "cindy-anet",
   "name": "Cindy × Agent Network",
-  "description": "Connects this Cindy (host) to Agent Network (anet, protocol) as the local identity `cindy`: tasks from allowed peers (the operator's own AIDs on the allow list) become ordinary Cindy tasks, and Cindy's final reply goes back as the anet task result. No network listener; it talks to the local anet node over stdio.",
+  "description": "Cindy (host) on Agent Network (anet, protocol) as local identity `cindy`: tasks from allowed peers (own AIDs on the allow list) become Cindy tasks; Cindy's final reply goes back as the anet result. No network listener; stdio to the local anet node.",
   "whenToUse": "需要经 Agent Network 把消息或结果发给已允许的对端（自有 AID）时；查看 anet 桥接状态时",
   "version": "0.3.0",
   "kind": "chip",

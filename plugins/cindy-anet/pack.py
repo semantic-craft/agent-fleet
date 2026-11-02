@@ -6,6 +6,14 @@ import json, os, stat, sys, zipfile, hashlib
 src = os.path.abspath(sys.argv[1]); outdir = os.path.abspath(sys.argv[2])
 m = json.load(open(os.path.join(src, 'ghost.json')))
 out = os.path.join(outdir, f"{m['id']}-{m['version']}.cindy")
+# Cindy 0.1.121 validateGhostManifest limits; over-limit packs are rejected at install as an invalid .cindy file.
+import re
+if not re.fullmatch(r'[a-z0-9][a-z0-9-]{0,31}', m['id']): sys.exit('id must be 1-32 lowercase letters/digits/hyphens')
+if not 0 < len(m['name']) <= 64: sys.exit('name must be 1-64 chars')
+for k in ('description', 'whenToUse'):
+    if k in m and not 0 < len(m[k]) <= 300: sys.exit(f'{k} must be 1-300 chars (got {len(m[k])})')
+for t in m.get('tools', []):
+    if len(t.get('description', '')) > 300: sys.exit(f"tool {t['name']} description over 300 chars")
 SKIP_NAMES = {'.', 'node_modules', 'dist', 'evidence', 'pack.py', 'smoke.sh', 'readme.md'}
 def skip(n):
     low = n.lower()
