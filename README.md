@@ -1,5 +1,7 @@
 # agent-fleet
 
+**agent-fleet 是多 agent 协作的唯一正本**：协议说明、教训、当前实现和自制派活插件（[plugins/](plugins/README.md)）都在这里。当前传输是 Agent Network（anet），见 [docs/anet.md](docs/anet.md)。下文涉及 Agenvo relay／connector 的段落是历史／遗留说明，保留供维护旧部署时查。
+
 迁移与升级先读[兼容来源、模型选择保护及在途恢复门槛](docs/migration-and-upgrades.md)；历史通过不代表未知新版本可用。
 
 远程控制面是 CommHub（Agent Network／anet），见 [ADR-0001](docs/decisions/0001-agenvo-as-control-plane.md)。按调用方能力选择派活入口：dot 有原生平台任务工具时，直接给 Codex 创建任务、执行并读回结果。Grok 外环走 CommHub MCP；本机接收端走 #90 门铃桥。DSH、GrokBot 的 Codex Desktop 交接仍按调用方路由单独验收。
@@ -35,6 +37,8 @@ DSH／GrokBot 的 Codex Desktop 可见性另验
 本仓库不实现或替代平台任务服务，不承诺跨入口共享同一会话、writer 迁移或所有客户端具有同等工具。
 
 ## 组成
+
+> Agenvo 相关行（Codex/Herdr connector、`dsh` connector）为遗留；新派活不走 Agenvo。
 
 | 层 | 来源 | 本仓库做什么 |
 | --- | --- | --- |

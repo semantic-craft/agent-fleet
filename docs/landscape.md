@@ -1,6 +1,6 @@
 # `~/Projects` 里与 agent 协作相关的目录
 
-快照：2026-10-19。用来回答"这个目录能不能动、该去哪改"。状态的含义：
+快照：2026-10-19；2026-11-02 更新 `agent-fleet`、`agent-plugins`，新增 `outer-loop-kit`、`alma-relay-ops`、`dsh-superagent-prototype`。用来回答"这个目录能不能动、该去哪改"。状态的含义：
 
 - **核心**：本架构的组成部分。
 - **接收端**：桌面 app 的原生适配层。
@@ -18,9 +18,12 @@ ZCode 不再派活（#34 起仓库里没有它的接收端代码），但主力 
 
 | 目录 | 是什么 | 状态 |
 | --- | --- | --- |
-| `agent-fleet` | 本仓库：设计、清单、脚本、提示词，以及桌面端适配层 `adapters/dsh`（DSH 原生桥接插件），由 `fleet.mjs release` 部署 | 核心 |
+| `agent-fleet` | 本仓库：多 agent 协作正本——协议说明（[anet](anet.md)）、教训、实现（`adapters/`、`scripts/`）与自制派活插件 `plugins/`（如 `plugins/cindy-anet`）；`adapters/dsh` 由 `fleet.mjs release` 部署 | 核心 |
 | `_forks/agenvo` | 上游 Agenvo 的最小 fork（新增 `dsh`/`zcode` kind、原生 DSH connector `apps/dsh` 和 ZCode 用的 `apps/dispatch`）；relay 与所有 connector 都从这里构建，connector 由 `fleet.mjs release agenvo` 装进发布目录运行，checkout 可以随意切分支 | 核心 |
-| `agent-plugins` | 各 coding agent 自有插件的安装根（2026-10-20）：`claude/`（Claude mod，marketplace xw-claude）、`codex/`（writing-core 构建件，xw-codex）、`zcode/`（zlib 技能包）、`dsh/`（dsh-zlib、lcu-dsh 子模块，dsh-english-coach、dsh-pomodoro） | 无关：不是通信基础设施；其中 `dsh/lcu-dsh`（LCU Computer Use 插件）线上在用 |
+| `agent-plugins` | 只做 marketplace／安装根：`claude/`、`codex/`、`zcode/`、`dsh/` 等自有插件；多 agent 派活插件不放这里，在 `agent-fleet/plugins/` | 无关：不是通信基础设施；其中 `dsh/lcu-dsh`（LCU Computer Use 插件）线上在用 |
+| `outer-loop-kit` | 外环规则（outer-loop），协作协议与插件链到本仓库，不另存副本 | 治理 |
+| `alma-relay-ops` | 多设备穿透／回家底座的运维仓（上游 yetone/alma-relay） | 无关：网络底座，不是派活通道 |
+| `dsh-superagent-prototype` | DeepSeek 公开的 dsh-superagent 研究原型克隆（只读参考） | 无关 |
 | `_ref/esp32-iphone-agent`、`zotero-bridge` | 硬件 iPhone 操控实验；Zotero 文献桥 | 无关 |
 
 ## `~/Projects` 的布局
