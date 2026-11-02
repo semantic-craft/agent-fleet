@@ -17,6 +17,9 @@ const STATUS_FILE = path.join(DIR, 'status.json');
 const POLL_MS = 10000;
 const STATUS_EVERY_MS = 15000;
 const MAX_RUN_MS = 30 * 60 * 1000;
+// 30-minute observation window emits at most six 5-minute progress messages.
+// Keep a bounded 100-message window so our own progress cannot hide the request.
+const TASK_HISTORY_LENGTH = 100;
 
 const log = (...a) => { try { process.stderr.write('[agent-network-cindy] ' + a.join(' ') + '\n'); } catch {} };
 const write = (m) => process.stdout.write(JSON.stringify(m) + '\n');
@@ -174,14 +177,14 @@ async function tick() {
     for (const [aid, rec] of Object.entries(state.tasks)) {
       if (rec.phase === 'delivery-unverified') {
         // Read official state after uncertain delivery. Never repeat a terminal mutation.
-        const remote = await tool('get_task', { task_id: aid, history_length: 5 });
+        const remote = await tool('get_task', { task_id: aid, history_length: TASK_HISTORY_LENGTH });
         const task = remote.task || remote;
         if (officialState(task) === rec.pendingReply.state) {
           Object.assign(rec, { phase: 'delivery-state-observed', endedAt: new Date().toISOString() }); saveState();
         }
       } else if (rec.phase === 'creating') {
         if (!status.mainConnected) continue;
-        const t = await tool('get_task', { task_id: aid, history_length: 5 });
+        const t = await tool('get_task', { task_id: aid, history_length: TASK_HISTORY_LENGTH });
         const task = t.task || t;
         if (OFFICIAL_TERMINAL.has(officialState(task))) {
           Object.assign(rec, { phase: 'unverified', error: { code: 'OFFICIAL_TASK_ENDED_BEFORE_CREATE' } }); saveState(); continue;
@@ -211,7 +214,7 @@ async function tick() {
         if (!status.mainConnected) continue;
         if (rec.lastCheck && Date.now() - rec.lastCheck < STATUS_EVERY_MS) continue;
         rec.lastCheck = Date.now();
-        const officialResult = await tool('get_task', { task_id: aid, history_length: 5 });
+        const officialResult = await tool('get_task', { task_id: aid, history_length: TASK_HISTORY_LENGTH });
         const official = officialResult.task || officialResult;
         if (OFFICIAL_TERMINAL.has(officialState(official))) {
           Object.assign(rec, { phase: 'unverified', error: { code: 'OFFICIAL_TASK_ENDED_HOST_NOT_STOPPED' }, officialState: official.status.state }); saveState(); continue;

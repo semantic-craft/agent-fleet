@@ -121,6 +121,24 @@ test('latest attachment-only or empty user message never executes earlier text',
     assert.equal(worker.state.tasks.task.error.code, 'LATEST_USER_TEXT_UNAVAILABLE');
   }
 });
+test('long task retains its request after more than five progress messages', async () => {
+  const history = [...remote.history]; let completed = false; const replies = [];
+  reset(async (name, args) => {
+    if (name === 'list_tasks') return { tasks: [] };
+    if (name === 'get_task') return { ...remote, history: history.slice(-args.history_length), status: { state: 'working' } };
+    if (name === 'reply_task') { replies.push(args); history.push({ messageId: 'progress-' + replies.length, role: 'assistant', parts: [{ text: args.text }] }); }
+    return {};
+  }, async () => ({ ok: true, run: { status: completed ? 'completed' : 'working', outputMessageId: 'final' }, messages: [{ id: 'final', role: 'assistant', text: 'correct result' }] }));
+  worker.state.tasks.task = { phase: 'running', requestMessageId: 'request-1', acceptedAt: new Date().toISOString() };
+  for (let i = 0; i < 7; i++) {
+    worker.state.tasks.task.lastCheck = 0; worker.state.tasks.task.lastProgressAt = 0;
+    await worker.tick();
+  }
+  completed = true; worker.state.tasks.task.lastCheck = 0; await worker.tick();
+  assert.equal(replies.filter(r => r.state === 'working').length, 7);
+  assert.equal(replies.at(-1).state, 'completed'); assert.equal(replies.at(-1).text, 'correct result');
+  assert.equal(worker.state.tasks.task.phase, 'replied');
+});
 test('state write failure prevents host create', async () => {
   let creates = 0;
   reset(async name => name === 'list_tasks' ? { tasks: [remote] } : remote, async () => { creates++; });
