@@ -1,6 +1,6 @@
 # ANet 机制归属与 Projects 盘点
 
-2026-11-02 只读源码盘点。范围为 `~/Projects` 的活动仓库、技能源与安装产物，以及历史材料目录的分类。目标是让可复用派发、跟进、回流和宿主适配由 agent-fleet 维护；官方协议、身份和任务状态机仍由上游 Agent Network 实现。官方入口：<https://docs.agentnetwork.org.cn/docs/zh-cn/latest/intro/overview.html>；当前使用边界见 [anet.md](anet.md)。本表是源码证据，不是全机运行验收。
+2026-11-02 源码盘点与验证记录。范围为 `~/Projects` 的活动仓库、技能源与安装产物，以及历史材料目录的分类。目标是让可复用派发、跟进、回流和宿主适配由 agent-fleet 维护；官方协议、身份和任务状态机仍由上游 Agent Network 实现。官方入口：<https://docs.agentnetwork.org.cn/docs/zh-cn/latest/intro/overview.html>；当前使用边界见 [anet.md](anet.md)。本表是源码证据，不是全机运行验收。
 
 ## 现状、归属与处置
 
@@ -16,8 +16,8 @@
 | `xw-skills/xw-tooling/skills.toml` | 技能选择、安装及宿主接线 | 安装管理继续归 tooling；消费 fleet 技能源，不再维护 ANet 机制正文 | 主 checkout 第 488 行仍登记旧技能并指向 live；需核对当前发行清单后更新，未确认安装完成 |
 | `agent-plugins/codex/plugins/xw-stack/` | marketplace 安装产物；含旧 Agenvo 技能和来源记录 | 不是技能源；经分发流程更新，保留其他插件 | 主 checkout ahead 1 / behind 9；AGENTS、README、codex/README 已改，xw-stack 产物未跟踪 |
 | `agent-plugins/README.md` | 插件安装导航 | 独立 worktree 已修正旧 ZCode 源码路径，待审查合并 | 原文仍指 `agent-fleet/adapters/zcode`，该目录已不存在；文档修复不等于卸载运行服务 |
-| `magpie-ops/tools/agenvo_pilot.py`、`agenvo_config_guard.py` | 2026-10-25 一次性评估；guard 含恢复旧 MCP 配置的执行分支 | 远端已退役：`origin/main` 的 `70e7741`（PR #1）删除两脚本；本地脏 checkout 未快进。不运行恢复分支，不把模型路由并入 ANet | 已读脚本；本仓 AGENTS、README 有他人修改，NOTES 未跟踪；未读凭据或执行脚本 |
-| `alma-relay-ops/README.md` | 网络运维者；仍描述 CommHub 门铃 | 远端 `origin/main` 的 `6870966`（PR #2）已澄清 ANet 边界；本地主 checkout 尚未更新，网络底座保留 | 原第 13 行称旧控制面“不砍、本仓不改”；初查工作区干净；未停服务 |
+| `magpie-ops/tools/agenvo_pilot.py`、`agenvo_config_guard.py` | 2026-10-25 一次性评估；guard 含恢复旧 MCP 配置的执行分支 | 远端已退役：`origin/main` 的 `70e7741`（PR #1）删除两脚本；本地已安全快进，原有未提交文件哈希核对保持不变。不运行恢复分支，不把模型路由并入 ANet | 已读脚本；本仓 AGENTS、README 有他人修改，NOTES 未跟踪；未读凭据或执行脚本 |
+| `alma-relay-ops/README.md` | 网络运维者；仍描述 CommHub 门铃 | 远端 `origin/main` 的 `6870966`（PR #2）已澄清 ANet 边界；本地主 checkout 已安全快进，网络底座保留 | 原第 13 行称旧控制面“不砍、本仓不改”；初查工作区干净；未停服务 |
 | `_forks/agent-network/` | 官方上游 fork，ANet/agent-node 协议实现及测试 | 保留独立上游，fleet 消费而非复制协议实现 | 已列源码目录并查 Git 状态：初查干净；不证明已安装版本一致 |
 | `TeslaHub/`、`kotone/`、`vps-ops/` 等 | 共用 AGENTS、产品资料及历史运维引用 | 保留消费者及历史事实；关键词命中不构成冗余实现 | 检索发现引用；未发现需要吞并的 ANet 协议实现 |
 | `_status/`、`_artifacts/`、`_shared-work/` | 回执、测试输出、快照、历史证据 | 保留证据职责；与活动源码分开，不因旧名称批量删除 | 历史快照不是维护正本；未逐一阅读所有产物 |
@@ -34,9 +34,12 @@
 
 ## 本轮交付验证
 
-- Fleet `npm test`：319 项通过，private guard 与路由检查通过。Unix socket 测试在沙箱内返回 EPERM，获准在沙箱外临时测试环境重跑后通过；未启动真实 ANet 服务。
-- 最后删除未获实时 schema 确认的 `send_message.message_id` 参数后，Cindy 13 项定向测试再次通过；这里只承诺本地同 callId 不重复发送，不承诺网络幂等。
-- outer-loop `scripts/check.sh` 通过；xw-stack 全量检查停留在无关 progress-page 子进程并中断（130），不记全量通过。技能入口测试单独执行，结果随消费者 PR 记录。
-- 补充独立源码审查发现并推动修复旧结果误认、状态损坏、超长输入、未知发送和公开 reviewer 与隐私扫描冲突。该审查不替代仓库要求的 helios-codex 审查。
-- 沙箱内 `turing peers list` 返回 `daemon_not_running`；沙箱外只读核验确认节点实际在线，入站仍 closed，未启动或配置任何节点。旧 helios-codex 名称是历史 CommHub runtime 标签，官方 ANet discovery 未找到同名节点；本机独立 Codex 源码审查与真实双向回流验收分别执行。未安装 Cindy 包、改 trust/inbound 或更改网络设置；宿主取消/续问及部署仍未验证。消费者应等 Fleet 正本合并后再合并，不能提前发布断链入口。
-- 缺失关联账本、同文本续问、宿主取消以及超过本地观察期限的恢复仍需人工核对原任务与宿主；不声称完整生命周期自动化。未获得正式独立审查及运行证据前维持 draft。
+- 活动源码覆盖：明确枚举 39 个顶层或 xw-skills 子仓，搜索 `agenvo|agent.network|\banet\b`；排除隐藏/ignored、依赖、vendor、输出、二进制和日志。另检查相关全局技能入口；这是限定覆盖，不是全盘无残留承诺。
+- Fleet 最终源码 `npm test`：323 项通过，private guard 与路由检查通过。Unix socket 测试在沙箱内返回 EPERM，获准在沙箱外临时测试环境重跑后通过；未启动真实 ANet 服务。
+- Cindy 定向 17 项通过，生成包与源文件逐字节一致。本地 callId 账本防止同调用重发，不承诺网络幂等。请求消息 ID 与正文绑定到同一最新用户消息，非文本输入不回退旧正文；宿主状态读取失败不发送进度。
+- outer-loop `scripts/check.sh` 通过。xw-stack 全量检查退出 0：182 项（根 52、技能 130）通过；pstack-learn 检查通过，未设置 `PSTACK_SNAPSHOT` 时跳过上游快照哈希核对。此前中断的慢测已由完整重跑取代。
+- 本机独立只读 Codex 进程审查四仓精确提交。Fleet 三个 P2 经修复和两轮复审闭环，最终源码结论 merge-ready YES；其他三仓源码审查通过。此为独立源码审查，不是代用户执行 GitHub approval。GitHub 未提供 CI 检查项，不表述为 CI 通过。
+- 沙箱内 `turing peers list` 返回 `daemon_not_running`；沙箱外只读核验确认已有节点实际在线，入站仍 closed。没有运行 `anet up`、注册身份、变更 trust/inbound 或网络设置；“待启动许可”已撤销。
+- 已有安装版本完成一次真实标记任务：精确标记返回，task completed、delivery confirmed、receipt verified，effect_status 未提供。这证明既有 ANet→Cindy→ANet 通道，不证明本次 0.3.1 升级已安装验收。
+- 消费者须在 Fleet 正本进入 main 后合并。宿主安装/加载、新包双向回流、在途账本升级、实际技能发行与插件安装更新仍是独立运行验收，不因源码合并而标完成。
+- 缺失关联账本、宿主取消/续问转发及观察期限后的恢复仍需人工核对原任务与宿主。不声称完整生命周期自动化；未知效果不自动重派。
