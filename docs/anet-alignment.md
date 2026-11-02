@@ -35,10 +35,10 @@
 ## 本轮交付验证
 
 - 活动源码覆盖：明确枚举 39 个顶层或 xw-skills 子仓，搜索 `agenvo|agent.network|\banet\b`；排除隐藏/ignored、依赖、vendor、输出、二进制和日志。另检查相关全局技能入口；这是限定覆盖，不是全盘无残留承诺。
-- Fleet 最终源码 `npm test`：323 项通过，private guard 与路由检查通过。Unix socket 测试在沙箱内返回 EPERM，获准在沙箱外临时测试环境重跑后通过；未启动真实 ANet 服务。
-- Cindy 定向 17 项通过，生成包与源文件逐字节一致。本地 callId 账本防止同调用重发，不承诺网络幂等。请求消息 ID 与正文绑定到同一最新用户消息，非文本输入不回退旧正文；宿主状态读取失败不发送进度。
+- Fleet 源码 `npm test` 完整通过（精确提交和数量见 PR 验证记录），private guard 与路由检查通过。Unix socket 测试在沙箱内返回 EPERM，获准在沙箱外临时测试环境重跑后通过；未启动真实 ANet 服务。
+- Cindy 恢复与回流定向测试通过，生成包与源文件逐字节一致。本地 callId 账本防止同调用重发，不承诺网络幂等。请求消息 ID 与正文绑定到同一最新用户消息，非文本输入不回退旧正文；宿主状态读取失败不发送进度。
 - outer-loop `scripts/check.sh` 通过。xw-stack 全量检查退出 0：182 项（根 52、技能 130）通过；pstack-learn 检查通过，未设置 `PSTACK_SNAPSHOT` 时跳过上游快照哈希核对。此前中断的慢测已由完整重跑取代。
-- 本机独立只读 Codex 进程审查四仓精确提交。Fleet 三个 P2 经修复和两轮复审闭环，最终源码结论 merge-ready YES；其他三仓源码审查通过。此为独立源码审查，不是代用户执行 GitHub approval。GitHub 未提供 CI 检查项，不表述为 CI 通过。
+- 本机独立只读 Codex 进程审查四仓精确提交。Fleet 评审发现的 P2 经修复和复审闭环，最终源码结论 merge-ready YES；其他三仓源码审查通过。此为独立源码审查，不是代用户执行 GitHub approval。GitHub 未提供 CI 检查项，不表述为 CI 通过。
 - 沙箱内 `turing peers list` 返回 `daemon_not_running`；沙箱外只读核验确认已有节点实际在线，入站仍 closed。没有运行 `anet up`、注册身份、变更 trust/inbound 或网络设置；“待启动许可”已撤销。
 - 已有安装版本完成一次真实标记任务：精确标记返回，task completed、delivery confirmed、receipt verified，effect_status 未提供。这证明既有 ANet→Cindy→ANet 通道，不证明本次 0.3.1 升级已安装验收。
 - 消费者须在 Fleet 正本进入 main 后合并。宿主安装/加载、新包双向回流、在途账本升级、实际技能发行与插件安装更新仍是独立运行验收，不因源码合并而标完成。
