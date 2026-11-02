@@ -351,3 +351,17 @@ dot 原生平台任务通道不受本节阻断；DSH／GrokBot→Agenvo→Codex 
 - 修复与证据：Herdr context 与 operator 使用桌面 id，派活技能正本在 xw-stack 同步修改；本次核对文案和 live context，未重跑模型轮次。
 - 验证点：检查 `fleet.example.json`、`prompts/operator.md` 和 xw-stack `skills/delegate-via-agenvo/SKILL.md` 的 agy 命令均含 `--model gemini-4-argon-medium`；relay 返回的 Herdr context 同样使用此 id。
 - 复发记录：Seen 1x (2026-10-27)。
+
+### Agent Network 本机派活（2026-11-02）
+
+- `peers allow`／`trust` 要终端确认，非 TTY 得到 `tty_required`；代跑需 PTY 回 `yes`，仅限已批准的自有 AID。见 [docs/anet.md](docs/anet.md)。
+- shell 残留错误 `ANET_HOME` 会让 `--id` 落到别的身份树；用 `env -u ANET_HOME ANET_DATA_DIR=$HOME/.anet anet …`。
+- 同一 anet 身份只能有一个常驻处理者；换 Cindy 插件（`turing-cindy-dispatch` → `agent-network-cindy`）先停旧插件再 smoke。
+- 自制派活插件住 `plugins/`，不放 agent-plugins（那里只做 marketplace）；名称表达宿主 × 协议，不写对端名。
+- Cindy 0.1.121 清单 `description`／`whenToUse`／工具描述上限 300 字符，超限安装时只报不合法的 .cindy 文件；`pack.py` 先校验再打包。
+
+- Cindy 用户通道拒绝以 `cindy-` 开头的插件 id（官方保留前缀）；自制派活插件用 `agent-network-cindy` 这类宿主×协议名，不以 `cindy-` 开头。
+
+- 本机多 agent 派活只走官方 anet 0.3.9（docs/anet.md）；CommHub MCP／#90／Agenvo 是遗留附录，不再当作控制面教给新任务。
+
+- Cindy 对经 anet／插件转入的任务调用 `send_to_peer` 可能拒绝（需用户亲口确认发送）；用户在 Cindy 对话框亲口调用则可通过。smoke B 以用户对话为准，anet 代问作辅。

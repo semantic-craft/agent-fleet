@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 3,
+  "minCindyVersion": "0.1.121",
+  "id": "agent-network-cindy",
+  "name": "Cindy × Agent Network",
+  "description": "Cindy (host) on Agent Network (anet, protocol) as local identity `cindy`: tasks from allowed peers (own AIDs on the allow list) become Cindy tasks; Cindy's final reply goes back as the anet result. No network listener; stdio to the local anet node.",
+  "whenToUse": "需要经 Agent Network 把消息或结果发给已允许的对端（自有 AID）时；查看 anet 桥接状态时",
+  "version": "0.3.0",
+  "kind": "chip",
+  "entry": "main.js",
+  "launch": "resident",
+  "agent": {
+    "tasks": true
+  },
+  "tools": [
+    {
+      "name": "send_to_peer",
+      "description": "Send a short text message over Agent Network, as a new anet task from the local `cindy` identity, to the configured peer (peerAid: one of the allow-listed own AIDs). Returns the anet task id. Only text; no files.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "The message for the peer (1-8000 chars)."
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "bridge_status",
+      "description": "Read-only: show whether the anet bridge is connected and how many anet tasks it has handled.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    }
+  ],
+  "node": {
+    "entry": "node/worker.cjs",
+    "protocol": "json-rpc-stdio",
+    "lifecycle": "resident"
+  }
+}
