@@ -32,9 +32,10 @@ test('native prerequisites and three separate evidence rows prevent cross-route 
  assert.match(text,/离线 guard、probe mock 或 dot 原生任务成功均不能/);
 });
 
-test('copied prompts retain caller routing and require actual external callers',()=>{
+test('copied prompts point at anet and do not teach CommHub or Agenvo search/execute',()=>{
  const operator=read('prompts/operator.md').split('```text')[1];
- for(const phrase of ['原生平台任务工具','CommHub MCP','门铃桥','同入口继续和回读']) assert.ok(operator.includes(phrase),phrase);
+ for(const phrase of ['docs/anet.md','原生平台任务工具','同入口继续和回读']) assert.ok(operator.includes(phrase),phrase);
+ assert.doesNotMatch(operator,/CommHub MCP|门铃桥|#90|search \{"query"|Agenvo|execute 脚本/);
  assert.doesNotMatch(operator,/Codex exec 线程|改代码的任务.*全部/);
  const acceptance=read('prompts/acceptance-codex.md').split('```text')[1];
  assert.match(acceptance,/分别由 DSH 和 GrokBot 发出/);
