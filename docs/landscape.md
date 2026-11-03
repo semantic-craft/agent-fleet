@@ -21,7 +21,7 @@ ZCode 不再派活（#34 起仓库里没有它的接收端代码），但主力 
 | `agent-fleet` | 本仓库：多 agent 协作正本——协议说明（[anet](anet.md)）、教训、实现（`adapters/`、`scripts/`）与自制派活插件 `plugins/`（如 `plugins/agent-network-cindy`）；`adapters/dsh` 由 `fleet.mjs release` 部署 | 核心 |
 | `_forks/agent-network` | `sleep2agi/agent-network`（文档 anet.sh）的旧实现，与当前 Research 0.3.9 不同；不能作为当前协议来源或被吞并进 fleet | 旧实现，待核实消费者后退役 |
 | `xw-skills` | xw-stack 提供技能分发入口，xw-tooling 维护安装清单与宿主接线；ANet 派发机制正本归 fleet，消费者迁移状态见 [盘点](anet-alignment.md) | 分发消费者，保留 |
-| `_forks/agenvo` | 上游 Agenvo 的最小 fork（历史 connector／relay）。本机派活已改官方 anet，见 [anet.md](anet.md)。本仓库不再提供安装或发布命令；档案见 [ADR-0002](decisions/0002-minimal-agenvo-fork.md) | 遗留 |
+| `_forks/agenvo` | 上游 Agenvo 的最小 fork（历史 connector／relay）。本机派活已改官方 anet，见 [anet.md](anet.md)。本仓库不再提供安装或发布命令；档案见 [ADR-0002](legacy/0002-minimal-agenvo-fork.md) | 遗留 |
 | `agent-plugins` | 只做 marketplace／安装根：`claude/`、`codex/`、`zcode/`、`dsh/` 等自有插件；多 agent 派活插件不放这里，在 `agent-fleet/plugins/` | 无关：不是通信基础设施；其中 `dsh/lcu-dsh`（LCU Computer Use 插件）线上在用 |
 | `outer-loop-kit` | 外环业务规则（outer-loop）；ANet 通用派活契约应引用本仓，本轮发现的正文副本及迁移状态见 [盘点](anet-alignment.md) | 治理 |
 | `alma-relay-ops` | 多设备穿透／回家底座的运维仓（上游 yetone/alma-relay） | 无关：网络底座，不是派活通道 |

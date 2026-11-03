@@ -1,3 +1,5 @@
+> **遗留档案（2026-11-03）。** 本文描述旧 Agenvo connector 的桌面策略，不是现行派活。派活只走官方 Agent Network：[docs/anet.md](../anet.md)。DSH 插件退役另批。
+
 # ADR-0004：桌面可见优先、默认 full access
 
 状态：已采纳（2026-10-19）

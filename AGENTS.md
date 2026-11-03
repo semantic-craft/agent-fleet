@@ -6,6 +6,8 @@
 
 派活正本是官方 Agent Network（ANet）Research。本机身份、`delegate` 和插件以 agent-fleet 仓库的 `docs/anet.md` 与官方文档为准：<https://docs.agentnetwork.org.cn>。
 
+派活只走这一条。编码 agent 用官方 `anet agents wire` 与 `anet mcp` 接入（[接入编码 Agent](https://docs.agentnetwork.org.cn/docs/zh-cn/latest/howto/coding-agents.html)、[MCP](https://docs.agentnetwork.org.cn/docs/zh-cn/latest/howto/mcp.html)）。Herdr 只做 pane 宿主，不是派活入口，也不另造到 ANet 的桥。
+
 历史遗留，不要当作派活入口：agenvo、Hermes、LCU 自定义 MCP、CommHub、`anet.sonori.dev`。
 
 未点名时，派活交给 Codex。DSH 是同等能力的后备：须能列出、读输出、新建、追问、中断、看事件，任务在 DSH 桌面可见。Codex 不可用（额度或故障）时由 DSH 接上。不要把 DSH 退回到只能派任务的程度。

@@ -1,10 +1,13 @@
 # 给 Codex 的界面级验收提示词（computer use）
 
-先按[调用方路由](../docs/caller-routing.md)选范围：dot 原生平台任务独立验创建／执行／回读，依赖平台工具、连接授权与环境发现；不以外部交接为门槛。控制面烟雾是 `node scripts/fleet.mjs check`（CommHub `/mcp`）。以下正文验 DSH、GrokBot 的 Codex Desktop 交接和桌面附着，blocked 只记该外部项。
+> **历史验收稿，不要执行，也不要复制去派活。** 现行派活只走官方 Agent Network（[docs/anet.md](../docs/anet.md)）。`fleet.mjs check` 不再探测 CommHub。
+
+先按[调用方路由](../docs/caller-routing.md)选范围：dot 原生平台任务独立验创建／执行／回读，依赖平台工具、连接授权与环境发现；不以外部交接为门槛。以下正文是旧的 DSH、GrokBot Codex Desktop 交接记录，blocked 只记该外部项。
 
 把下面整段交给 Codex，在 <主力 Mac> 上用 computer use 执行。
 
 ```text
+【历史稿，不要执行。现行派活只看 docs/anet.md。下面保留旧 CommHub／Agenvo 验收原文。】
 你在我的 Mac（<主力 Mac>）上做一次端到端验收：先跑 `node scripts/fleet.mjs check` 确认 CommHub。再分别验证 dot 原生 Codex、DSH 与 GrokBot 的 Codex Desktop 交接，以及 DSH／Herdr 桌面附着。按 docs/caller-routing.md 选择实际入口；外部两条必须各自从真实调用方提交，不能用 ChatGPT 代理测试充当通过。用 computer use 操作真实界面，截图存到 <EVIDENCE_DIR>/evidence/，文件名带步骤号。只验收、不修代码；发现问题写进报告。
 
 ## 背景事实

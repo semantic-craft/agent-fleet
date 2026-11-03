@@ -1,6 +1,6 @@
 # 按调用方能力选择派活入口
 
-> **遗留附录（2026-11-02）。** 本机多 agent 派活的正本是官方 anet 0.3.9：[docs/anet.md](anet.md)、[plugins/agent-network-cindy](../plugins/agent-network-cindy/README.md)。下文描述 CommHub MCP、#90 门铃桥与 Agenvo connector，只供维护旧部署；新任务不要再按本节选控制面。
+> **遗留附录（2026-11-02）。不是现行操作手册。** 本机多 agent 派活的正本是官方 anet 0.3.9：[docs/anet.md](anet.md)。编码 agent 用 `anet agents wire` 与 `anet mcp`。Herdr 只做 pane 宿主。下文描述 CommHub MCP、#90 门铃桥与 Agenvo connector，不要按本节安装或派活。
 
 
 ## 入口分开，不互相冒充
@@ -39,8 +39,7 @@
 
 ## 外部调用方与迁移
 
-Grok 外环走 CommHub MCP。本机接收端走 #90 门铃桥。DSH、GrokBot 的 Codex Desktop 可见性仍单独验收；有 connector 方法时按
-[技能](https://github.com/semantic-craft/xw-stack/blob/main/skills/delegate-via-agenvo/SKILL.md)发现 schema。不能引导它们调用未提供的
+Grok 外环走 CommHub MCP。本机接收端走 #90 门铃桥。DSH、GrokBot 的 Codex Desktop 可见性仍单独验收；旧 connector 的 schema 发现已随 delegate-via-agenvo 退出。不能引导它们调用未提供的
 平台专属任务 API。外部创建／（仅跨 backend 的原生交接）／Desktop 可见／同线程 agent `turn/start`
 必须逐项验证；当前未通过就只报告该路线阻断，不废弃需求、不改写其他路线状态。
 

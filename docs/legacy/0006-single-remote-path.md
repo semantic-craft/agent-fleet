@@ -1,3 +1,5 @@
+> **遗留档案（2026-11-03）。** 自建 CommHub MCP 不是现行派活。派活只走官方 Agent Network：[docs/anet.md](../anet.md)。
+
 # ADR-0006：自建 MCP 远程派活统一 CommHub
 
 状态：已采纳（2026-10-31）。2026-10-19 曾统一到 Agenvo relay。

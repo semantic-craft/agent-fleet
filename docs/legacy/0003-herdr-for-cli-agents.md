@@ -1,3 +1,5 @@
+> **遗留档案（2026-11-03）。** Herdr 今天只做 pane 宿主，不是派活控制面。派活只走官方 Agent Network：[docs/anet.md](../anet.md)。下文的 `agenvo-herdr` 与旧派活技能不是现行步骤。
+
 # ADR-0003：CLI 型 agent 一律经 Herdr
 
 状态：CLI 通道仍采纳（2026-10-19）；外部 Agenvo→Codex 目标由 PR60 的 Desktop 空线程交接替代；dot 有原生平台任务工具及授权时优先原生通道，见[调用方路由](../caller-routing.md)。外部路线见[交接契约](../codex-desktop-handoff.md)。下述 Codex exec 记录只适用于明确选择 CLI 的历史/可选通道，不是默认派活或新机验收。

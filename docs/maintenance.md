@@ -8,7 +8,7 @@
 | --- | --- | --- | --- |
 | 每次改配置、升级、重启电脑后 | 本机自检 | `node scripts/fleet.mjs doctor` | 按缺的服务或 connector 去 [runbook](runbook.md) 对应小节处理 |
 | 每周（模板 `fleet-weekly-check`，周一 9:30，失败弹通知。主力 Mac 上这个任务在 `~/Library/LaunchAgents/_retired/`、overlay 的 services 也不列它：目前要手动跑，或用 `fleet.mjs launchd fleet-weekly-check` 重新生成并加载） | guard + doctor | `npm run guard && node scripts/fleet.mjs doctor` | 按缺的服务去 [runbook](runbook.md)。本机派活验收另跑 anet `delegate --watch` 与 Cindy 插件 smoke |
-| 上游 fork | 不再跟进 | 历史命令已删除。档案见 [ADR-0002](decisions/0002-minimal-agenvo-fork.md) | — |
+| 上游 fork | 不再跟进 | 历史命令已删除。档案见 [ADR-0002](legacy/0002-minimal-agenvo-fork.md) | — |
 | 组件没有消费者时 | 移除组件 | 按下文"移除组件" | — |
 
 ## 加东西之前先问

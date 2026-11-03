@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 const read = (p) => readFileSync(new URL('../' + p, import.meta.url), 'utf8');
 const fleet = JSON.parse(read('fleet.example.json'));
 const contexts = fleet.machines[0].instances.map((i) => i.context);
-const adr = read('docs/decisions/0003-herdr-for-cli-agents.md');
+const adr = read('docs/legacy/0003-herdr-for-cli-agents.md');
 
 test('fleet example instance contexts are anet placeholders without model params', () => {
   assert.ok(contexts.length >= 3);
