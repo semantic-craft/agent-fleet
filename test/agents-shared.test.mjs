@@ -20,7 +20,7 @@ test('root AGENTS.md is the regular-file shared body', () => {
   assert.match(text, /LCU 自定义 MCP/);
   assert.match(text, /CommHub/);
   assert.match(text, /anet\.sonori\.dev/);
-  assert.match(text, /helios-codex/);
+  assert.match(text, new RegExp('helios-codex'));
   assert.match(text, /worktree 不遗留（2026-10-29/);
   assert.match(text, /不改 `main` 的工作区/);
   assert.match(text, /archive\/<worktree名>/);
@@ -38,7 +38,7 @@ test('docs/AGENTS.shared.md only points at the root body', () => {
   assert.match(text, /正本是 agent-fleet 仓库根/);
   assert.ok(text.split('\n').length <= 2, text);
   assert.doesNotMatch(text, /Agent Network/);
-  assert.doesNotMatch(text, /helios-codex/);
+  assert.doesNotMatch(text, new RegExp('helios-codex'));
   assert.doesNotMatch(text, agenvoAsCanon);
   assert.doesNotMatch(text, /EGM/i);
 });
