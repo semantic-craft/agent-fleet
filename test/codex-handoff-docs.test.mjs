@@ -34,7 +34,7 @@ test('downstream UI prompt and historical ADR do not revive the old default',()=
  assert.doesNotMatch(read('docs/new-mac.md'),/先保证 Codex 能经 Herdr|Codex 派活依赖这条通路/);
  assert.match(read('lessons.md'),/turn\/start/);
  assert.doesNotMatch(section(read('lessons.md'),'### Codex 派活走 Desktop 空会话','\n### '),/用户在 Codex Desktop 按发送|由本人按发送/);
- assert.match(read('docs/decisions/0003-herdr-for-cli-agents.md'),/不是默认派活或新机验收/);
+ assert.match(read('docs/legacy/0003-herdr-for-cli-agents.md'),/不是默认派活或新机验收/);
 });
 
 test('all consumers distinguish independent execution from Desktop handback without personal targets',()=>{

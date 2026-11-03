@@ -5,7 +5,7 @@ description: Dispatch and follow work through official Agent Network; agent-flee
 
 # 经官方 Agent Network 派活
 
-本技能是可复用派活流程的唯一维护源。先读 [派活契约](../../docs/dispatch-contract.md) 和 [本机接入](../../docs/anet.md)，再读取目标仓 AGENTS.md。官方协议与工具 schema 以 [官方文档](https://docs.agentnetwork.org.cn/docs/zh-cn/latest/) 和已安装版本为准。
+本技能是可复用派活流程的唯一维护源。先读 [派活契约](../../docs/dispatch-contract.md) 和 [本机接入](../../docs/anet.md)，再读取目标仓 AGENTS.md。官方协议与工具 schema 以 [官方文档](https://docs.agentnetwork.org.cn/docs/zh-cn/latest/) 和已安装版本为准。编码 agent 用官方 `anet agents wire` 与 `anet mcp` 接入（[接入编码 Agent](https://docs.agentnetwork.org.cn/docs/zh-cn/latest/howto/coding-agents.html)、[MCP](https://docs.agentnetwork.org.cn/docs/zh-cn/latest/howto/mcp.html)）。Herdr 只做 pane 宿主。
 
 1. 明确目标、完整对端 AID、身份和已有授权。只使用已批准的对端；不得自行增加 trust、开放 inbound 或复制身份私钥。allow 与 trust 不等价。
 2. 写清任务上下文、仓库、约束、验收及提交权限。开发在独立 worktree；只读任务明确只读。审查者先依用户点名，再依目标仓默认；无覆盖时遵守 agent-fleet AGENTS.md，不能自行改成 agy。记录选择依据及被审提交。

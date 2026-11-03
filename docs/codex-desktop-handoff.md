@@ -1,6 +1,8 @@
-# Agenvo → Codex Desktop：执行与 writer 交接
+# Codex Desktop writer 交接（历史记录）
 
-适用者：DSH→Agenvo→Codex Desktop、GrokBot→Agenvo→Codex Desktop；blocked 不表示 Codex 整体不可用。dot 原生平台任务仍按[调用方路由](caller-routing.md)。操作步骤以[派活技能](https://github.com/semantic-craft/xw-stack/blob/main/skills/delegate-via-agenvo/SKILL.md#codex-desktop)为正本。
+> **不是现行派活。** 派活只走官方 Agent Network（[anet.md](anet.md)）。不要把本页或已退出的 agenvo 技能当作入口。
+
+适用者：DSH→Agenvo→Codex Desktop、GrokBot→Agenvo→Codex Desktop；blocked 不表示 Codex 整体不可用。dot 原生平台任务仍按[调用方路由](caller-routing.md)。下列步骤是历史交接记录。
 
 ## 独立执行与 Desktop 交接门槛
 
@@ -30,4 +32,4 @@ connector `kickstart` 不等于放锁，也不证明 native writer 已释放。�
 
 overlay 是实例 context 正本。安装修复后的 connector 后，在目标机运行 `node scripts/fleet.mjs contexts --apply`，仅重启变更的 connector，随后 `contexts` 和 Agenvo discovery 回读确认；context 不改变 scope，无需重新批准。回滚 context 时恢复私有备份再执行相同命令。
 
-全局 Grok／Magpie 消费方对齐 [xw-stack 派活技能](https://github.com/semantic-craft/xw-stack/blob/main/skills/delegate-via-agenvo/SKILL.md#codex-desktop) Desktop 正道五步（含 `thread/unsubscribe`）；不把消费者副本当成正本。合入后立刻 Skill 重载，使全局 workflows 与仓正本一致。分别从 DSH、GrokBot 发起的端到端验收独立记录，直接 Agenvo 烟雾不代替它们。
+全局 Grok／Magpie 消费方曾对齐已退出的 xw-stack `delegate-via-agenvo` Desktop 步骤（含 `thread/unsubscribe`）。该技能不再是正本。现行派活见 [delegate-via-anet](../skills/delegate-via-anet/SKILL.md)。不把消费者副本当成正本。分别从 DSH、GrokBot 发起的端到端验收独立记录，直接 Agenvo 烟雾不代替它们。

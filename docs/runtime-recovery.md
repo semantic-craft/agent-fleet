@@ -1,6 +1,8 @@
 # Runtime recovery and control-plane diagnosis
 
-远程任务控制面是 CommHub MCP。本页诊断 connector 与原生运行时：沿用调用方已有的授权客户端，不把模型回复当成派活健康。Magpie 模型路由与可选的 Magpie MCP 转发是另一路依赖。一次可用的搜索或模型回复不能证明控制面或 runtime 可用。不要为了绕过边缘规则改道、复制其他客户端凭据，或把重新授权当成诊断捷径。
+> **不是现行派活。** 远程控制面已不是 CommHub MCP。现行派活只走官方 Agent Network（[anet.md](anet.md)）。本页只诊断仍可能在跑的 connector 与原生运行时，不要按它重新接入 CommHub 或 Agenvo。
+
+本页诊断 connector 与原生运行时：沿用调用方已有的授权客户端，不把模型回复当成派活健康。Magpie 模型路由与可选的 Magpie MCP 转发是另一路依赖。一次可用的搜索或模型回复不能证明控制面或 runtime 可用。不要为了绕过边缘规则改道、复制其他客户端凭据，或把重新授权当成诊断捷径。
 
 ## Diagnose before changing anything
 

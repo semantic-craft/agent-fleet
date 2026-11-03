@@ -19,7 +19,7 @@ test('external guards keep their scope without denying native Codex or replacing
  assert.match(contract,/blocked_native_writer_release/);assert.match(contract,/turn\/start/);
  const probe=read('docs/codex-handoff-probe.md');
  assert.match(probe,/required external DSH\/GrokBot/);assert.match(probe,/cannot replace external callers/);
- assert.match(read('docs/decisions/0006-single-remote-path.md'),/不排除 dot.*原生平台任务/);
+ assert.match(read('docs/legacy/0006-single-remote-path.md'),/不排除 dot.*原生平台任务/);
 });
 test('native prerequisites and three separate evidence rows prevent cross-route success claims',()=>{
  const text=read('docs/caller-routing.md');
@@ -44,7 +44,7 @@ test('copied prompts point at anet and do not teach CommHub or Agenvo search/exe
  assert.match(acceptance,/CommHub/);
 });
 test('canonical control-plane wording names CommHub',()=>{
- for(const path of ['README.md','docs/architecture.md','docs/decisions/0001-agenvo-as-control-plane.md','docs/decisions/0006-single-remote-path.md','prompts/grok.md']) {
+ for(const path of ['README.md','docs/architecture.md','docs/legacy/0001-agenvo-as-control-plane.md','docs/legacy/0006-single-remote-path.md','prompts/grok.md']) {
   const text=read(path);
   assert.match(text,/CommHub/,path);
   assert.doesNotMatch(text,/以 Agenvo 作为唯一的远程控制面|以上游为底座：Agenvo|助手经 Agenvo 给自有电脑|自建 MCP 远程派活统一 Agenvo|自建 MCP 远程通路统一 Agenvo/,path);

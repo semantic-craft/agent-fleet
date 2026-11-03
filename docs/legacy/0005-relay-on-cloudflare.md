@@ -1,3 +1,5 @@
+> **遗留档案（2026-11-03）。** 旧 Agenvo relay 的托管决定。不是现行派活，不要按本文部署 relay。派活只走官方 Agent Network：[docs/anet.md](../anet.md)。
+
 # ADR-0005：relay 放 Cloudflare，用 Cloudflare 托管的自有域名
 
 状态：已采纳（2026-10-19）

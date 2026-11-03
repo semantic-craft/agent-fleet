@@ -2,7 +2,7 @@
 
 迁移与升级先读[兼容来源、模型选择保护及在途恢复门槛](migration-and-upgrades.md)；历史通过不代表未知新版本可用。
 
-本机派活正本是官方 anet，见 [anet.md](anet.md)。CommHub MCP 与 agenvo fork 的安装、relay 部署和旧验收命令已从本仓库删除。历史档案：[ADR-0001](decisions/0001-agenvo-as-control-plane.md)、[ADR-0002](decisions/0002-minimal-agenvo-fork.md)。
+本机派活正本是官方 anet，见 [anet.md](anet.md)。CommHub MCP 与 agenvo fork 的安装、relay 部署和旧验收命令已从本仓库删除。历史档案：[ADR-0001](legacy/0001-agenvo-as-control-plane.md)、[ADR-0002](legacy/0002-minimal-agenvo-fork.md)。
 
 dot→Codex 优先可用且已授权的原生平台任务通道。DSH、GrokBot 的 Codex Desktop 交接仍按[调用方路由](caller-routing.md)记载，阻断只作用于该外部路线。跨机先发现目标环境。
 

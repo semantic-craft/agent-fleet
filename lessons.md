@@ -101,8 +101,8 @@ dot 原生平台任务通道不受本节阻断；DSH／GrokBot→Agenvo→Codex 
 **Cloudflare Worker 上的 relay 不要为 Grok 打开 CIMD；让它走动态注册。**
 
 - 起因与后果：打开 `clientIdMetadataDocumentEnabled` 后，Grok 的授权请求返回 400。临时 Worker 探测 `https://grok.com/oauth/mcp-client.json` 得到的是 403 challenge 页。
-- 修复与证据：撤回改动，fork 保持上游原样；记入 [ADR-0006](docs/decisions/0006-single-remote-path.md)。
-- 验证点：`rg -n clientIdMetadataDocumentEnabled -g '!lessons.md' .` 无结果（fork 保持上游原样）；`docs/decisions/0006-single-remote-path.md` 存在。
+- 修复与证据：撤回改动，fork 保持上游原样；记入 [ADR-0006](docs/legacy/0006-single-remote-path.md)。
+- 验证点：`rg -n clientIdMetadataDocumentEnabled -g '!lessons.md' .` 无结果（fork 保持上游原样）；`docs/legacy/0006-single-remote-path.md` 存在。
 - 复发记录：Seen 1x (2026-10-19)。
 
 ### 链接进 DSH 桌面 profile 的插件，改工作树就可能直接进生产
@@ -372,5 +372,5 @@ dot 原生平台任务通道不受本节阻断；DSH／GrokBot→Agenvo→Codex 
 
 - 起因与后果：#104（bba15da）删 agenvo／CommHub 派活残留，PR 列了 KEEP／DELETE 清单但没做全仓关键词扫描；合入 6 分钟后发现 `prompts/operator.md`、`fleet.example.json`、`scripts/fleet.mjs doctor` 仍在教旧路径，只能补开 #106。
 - 修复：#106（2c80c61）清掉三处正文与 doctor 读取 `~/.config/agenvo/…/status.json`，钉旧文案的测试同步改；`npm test` 303 通过。
-- Done right: 清理类 PR 合前跑 `rg -n -i 'agenvo|commhub' -g '!lessons.md' -g '!docs/decisions/**' .`，把剩余命中逐条列进 PR 正文（保留的写理由），命中为零或全有理由才报完成。
+- Done right: 清理类 PR 合前跑 `rg -n -i 'agenvo|commhub' -g '!lessons.md' -g '!docs/legacy/**' .`，把剩余命中逐条列进 PR 正文（保留的写理由），命中为零或全有理由才报完成。
 - Seen 1x (2026-11-02)
