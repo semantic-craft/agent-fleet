@@ -275,7 +275,7 @@ async function sendToPeer(p, text) {
 }
 
 // ---------- stdio JSON-RPC from Cindy host (main.js) ----------
-if (require.main === module) readline.createInterface({ input: process.stdin }).on('line', async (line) => {
+if (!process.env.AGENT_NETWORK_CINDY_TEST) readline.createInterface({ input: process.stdin }).on('line', async (line) => {
   let req; try { req = JSON.parse(line); } catch { write({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }); return; }
   if (!req || req.id === undefined || req.id === null) return;
   const p = req.params || {};
@@ -297,9 +297,9 @@ if (require.main === module) readline.createInterface({ input: process.stdin }).
     return write({ jsonrpc: '2.0', id: req.id, error: { code: -32601, message: 'Method not found' } });
   } catch (e) { return fail(String(e.message || e).slice(0, 300)); }
 });
-if (require.main === module) process.stdin.on('end', () => { try { if (mcp) mcp.child.kill(); } catch {} process.exit(0); });
+if (!process.env.AGENT_NETWORK_CINDY_TEST) process.stdin.on('end', () => { try { if (mcp) mcp.child.kill(); } catch {} process.exit(0); });
 
-if (require.main === module) {
+if (!process.env.AGENT_NETWORK_CINDY_TEST) {
   loadConfig(); saveStatus();
   setInterval(tick, POLL_MS);
   setTimeout(tick, 1500);

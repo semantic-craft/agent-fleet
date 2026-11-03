@@ -366,6 +366,8 @@ dot 原生平台任务通道不受本节阻断；DSH／GrokBot→Agenvo→Codex 
 
 - Cindy 对经 anet／插件转入的任务调用 `send_to_peer` 可能拒绝（需用户亲口确认发送）；用户在 Cindy 对话框亲口调用则可通过。smoke B 以用户对话为准，anet 代问作辅。
 
+- Cindy 宿主通过 Electron `utilityProcess` 的包装脚本（`nodeRuntimeWorkerProcess.js`）用 `createRequire` 加载插件 `node/worker.cjs`，生产运行时 `require.main === module` 恒为 `false`。不要用 `require.main === module` 保护 worker 启动循环；单元测试用环境变量 `AGENT_NETWORK_CINDY_TEST=1` 跳过自动启动，并保留包装器加载回归测试（`test/cindy-worker.test.mjs`）。
+
 ### 删除旧路径后要全仓搜旧关键词再报完成（2026-11-02）
 
 - 起因与后果：#104（bba15da）删 agenvo／CommHub 派活残留，PR 列了 KEEP／DELETE 清单但没做全仓关键词扫描；合入 6 分钟后发现 `prompts/operator.md`、`fleet.example.json`、`scripts/fleet.mjs doctor` 仍在教旧路径，只能补开 #106。

@@ -40,6 +40,10 @@
 - outer-loop `scripts/check.sh` 通过。xw-stack 全量检查退出 0：182 项（根 52、技能 130）通过；pstack-learn 检查通过，未设置 `PSTACK_SNAPSHOT` 时跳过上游快照哈希核对。此前中断的慢测已由完整重跑取代。
 - 本机独立只读 Codex 进程审查四仓精确提交。Fleet 评审发现的 P2 经修复和复审闭环，最终源码结论 merge-ready YES；其他三仓源码审查通过。此为独立源码审查，不是代用户执行 GitHub approval。GitHub 未提供 CI 检查项，不表述为 CI 通过。
 - 沙箱内 `turing peers list` 返回 `daemon_not_running`；沙箱外只读核验确认已有节点实际在线，入站仍 closed。没有运行 `anet up`、注册身份、变更 trust/inbound 或网络设置；“待启动许可”已撤销。
-- 已有安装版本完成一次真实标记任务：精确标记返回，task completed、delivery confirmed、receipt verified，effect_status 未提供。这证明既有 ANet→Cindy→ANet 通道，不证明本次 0.3.1 升级已安装验收。
-- 消费者须在 Fleet 正本进入 main 后合并。宿主安装/加载、新包双向回流、在途账本升级、实际技能发行与插件安装更新仍是独立运行验收，不因源码合并而标完成。
+- 已有安装版本完成一次真实标记任务：精确标记返回，task completed、delivery confirmed、receipt verified，effect_status 未提供。
+- 四仓对齐 PR（`agent-fleet` #108、`outer-loop-kit` #16、`xw-stack` #47、`agent-plugins` #13）均已合并入 `main`，`xw-skills/live/xw-stack` 已快进到合并提交。
+- `agent-network-cindy` 0.3.1 修复宿主 `utilityProcess` 包装脚本下 `require.main !== module` 导致 worker 未启动的问题后重新打包（SHA-256 `e2fc9ef1f6f8a30edf47a89f2ffa3b3fea2d8ed9e1d0c4dc7bd5d7b6d3dde226`），已安装到本机 Cindy 宿主并完成双向实测：
+  - A 方向（`turing -> cindy -> turing`）：任务 `ix_899f66cdb2889af4e311661f71cbebc6` 返回精确标记 `CINDY_ANET_OK_20261102`，`TASK_STATE_COMPLETED`、`anet.delivery: confirmed`、`anet.receipt_verified: verified`；长任务期间 `[working] Cindy host run remains active; result not yet verified.` 正常回流。
+  - B 方向（`cindy -> send_to_peer -> turing`）：Cindy 插件工具 `send_to_peer` 向 `turing` 发起任务 `ix_7e86dae89c3663097931b47f18175c6d` 与用户确认后的 `ix_6d48cf1febec15622c96d403dba9157d`，`turing` provider 收件箱实收 `CINDY_ANET_ORIGIN_OK_20261102`。
+- `ps` 与 `lsof` 核实当前无运行进程占用 `~/Projects/_forks/agent-network`。
 - 缺失关联账本、宿主取消/续问转发及观察期限后的恢复仍需人工核对原任务与宿主。不声称完整生命周期自动化；未知效果不自动重派。

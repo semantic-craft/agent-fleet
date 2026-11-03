@@ -7,6 +7,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cindy-worker-'));
 process.env.AGENT_NETWORK_CINDY_DIR_TEST = dir;
+process.env.AGENT_NETWORK_CINDY_TEST = '1';
 fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ anetId: 'cindy', peerAid: 'peer', allowPeers: ['peer'] }));
 const worker = require('../plugins/agent-network-cindy/node/worker.cjs');
 const remote = { id: 'task', metadata: { 'anet.peer_aid': 'peer' }, history: [{ messageId: 'request-1', role: 'user', parts: [{ text: 'hello' }] }] };
@@ -166,6 +167,21 @@ test('corrupt persisted state fails startup without replaying tasks', async () =
     assert.notEqual(r.status, 0); assert.equal(r.error, undefined);
     assert.equal(fs.readFileSync(path.join(corrupt, 'state.json'), 'utf8'), '{broken');
   } finally { fs.rmSync(corrupt, { recursive: true, force: true }); }
+});
+test('host utility-process wrapper starts worker when require.main is the wrapper', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const boot = fs.mkdtempSync(path.join(os.tmpdir(), 'cindy-boot-'));
+  try {
+    const wrapper = path.join(boot, 'wrapper.cjs');
+    const workerPath = path.resolve(import.meta.dirname, '../plugins/agent-network-cindy/node/worker.cjs');
+    fs.writeFileSync(wrapper, `require(${JSON.stringify(workerPath)}); process.exit(0);\n`);
+    const env = { ...process.env, AGENT_NETWORK_CINDY_DIR_TEST: boot };
+    delete env.AGENT_NETWORK_CINDY_TEST;
+    const r = spawnSync(process.execPath, [wrapper], { env, encoding: 'utf8', timeout: 3000 });
+    assert.equal(r.status, 0);
+    assert.match(r.stderr, /\[agent-network-cindy\] started; config missing/);
+    assert.equal(fs.existsSync(path.join(boot, 'status.json')), true);
+  } finally { fs.rmSync(boot, { recursive: true, force: true }); }
 });
 test('host create/send partial failure preserves task id and long input never creates', async () => {
   const vm = await import('node:vm');
