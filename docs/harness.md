@@ -539,7 +539,7 @@ never retry a crashed smoke invocation as recovery. No new live acceptance is cl
 
 ## DSH outbound integration boundary (design, not installed)
 
-Reuse `TaskSpec`, `RunContext`, `HarnessRunner` and `FileJournal` contracts before adding another store or dispatcher. `DshProviderAdapter` currently permits six DSH session methods; it is not a Codex adapter and must not be widened into unrestricted RPC. A future Codex adapter needs target/backend + thread/turn binding and native readback before it can reuse that runner's DSH-specific follow semantics. The inbound `adapters/dsh/native-bridge.js` remains unchanged.
+Reuse `TaskSpec`, `RunContext`, `HarnessRunner` and `FileJournal` contracts before adding another store or dispatcher. `DshProviderAdapter` currently permits six DSH session methods; it is not a Codex adapter and must not be widened into unrestricted RPC. A future Codex adapter needs target/backend + thread/turn binding and native readback before it can reuse that runner's DSH-specific follow semantics. The inbound `adapters/dsh` plugin was removed with the Agenvo dsh connector. See docs/legacy/dsh-adapter.md.
 
 DSH Agent-scoped MCP availability, outbound OAuth authorization and unsolicited completion lifecycle hooks are pending. Do not reuse a check-only OAuth grant as persistent DSH authorization or enable an adapter from task-supplied booleans. The official MCP client is the preferred transport integration; a thin plugin is justified only for bounded tools/ownership and recovery. Initial completion can use explicit observe; ACK is not completion. No new module, relay or plugin was installed by this correction.
 

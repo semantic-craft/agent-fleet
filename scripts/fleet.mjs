@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// agent-fleet CLI: doctor | contexts [--apply] | launchd NAME | check | release dsh [--sha SHA] [--rollback]
+// agent-fleet CLI: doctor | contexts [--apply] | launchd NAME | check
 import { fleetCallerCreate } from "./dsh-native-caller.mjs";
 import { existsSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -7,7 +7,6 @@ import { homedir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import { releaseStateName } from "./release-lib.mjs";
 import {
   configPath,
   connectorConfigPath,
@@ -33,12 +32,10 @@ const { values: opt, positionals } = parseArgs({
   },
 });
 const [command, arg] = positionals;
-if (opt.connector !== undefined) {
-  if (command !== "release") throw new Error("--connector is only supported by release");
-  releaseStateName(arg, opt.connector);
+if (command === "release") {
+  console.error("fleet.mjs release 已退役。adapters/dsh 只服务已退出的 Agenvo dsh connector，不是现行派活。见 docs/legacy/dsh-adapter.md。");
+  process.exit(2);
 }
-if (command === "release" && opt.rollback && opt.sha !== undefined)
-  throw new Error("--rollback cannot be combined with --sha");
 const readJson = (p) => {
   try {
     return JSON.parse(readFileSync(p, "utf8"));
@@ -84,7 +81,7 @@ function contexts() {
 
 function launchd(name) {
   const file = join(root, "templates/launchd", `${name}.plist`);
-  if (!name || !existsSync(file)) throw new Error("usage: fleet.mjs launchd codex-app-server|herdr-server|desktop-agents-autostart|fleet-weekly-check");
+  if (!name || !existsSync(file)) throw new Error("usage: fleet.mjs launchd codex-app-server|desktop-agents-autostart|fleet-weekly-check");
   const home = homedir();
   process.stdout.write(
     render(readFileSync(file, "utf8"), {
@@ -107,10 +104,9 @@ const commands = {
   contexts,
   launchd: () => launchd(arg),
   check,
-  release: async () => (await import("./release.mjs")).release(arg, { sha: opt.sha, rollback: opt.rollback, connector: opt.connector }),
 };
 if (!commands[command]) {
-  console.error("usage: fleet.mjs caller-plan --session SID --workspace WID | doctor | contexts [--apply] | launchd NAME | check | release dsh [--sha SHA] [--rollback] [--machine NAME] [--config PATH]");
+  console.error("usage: fleet.mjs caller-plan --session SID --workspace WID | doctor | contexts [--apply] | launchd NAME | check [--machine NAME] [--config PATH]");
   process.exit(2);
 }
 await commands[command]();

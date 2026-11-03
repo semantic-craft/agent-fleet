@@ -39,10 +39,8 @@ release source through the approved repository/release process first.
    service install/release and new pairing are separate approved operations.
    Do not copy old device credentials. Reapprove the new fingerprint through the
    existing administrator and complete client OAuth with the user.
-2. **DSH adapter:** use the explicit reviewed agent-fleet SHA with `release dsh
-   --sha <SHA>` only after approval. The historical `ff35cd8` is provenance, not a
-   direction to downgrade. Confirm runtime compatibility before loading the
-   current reviewed plugin and restarting DSH at an idle window.
+2. **DSH adapter:** retired. Do not run `release dsh`. The historical `ff35cd8`
+   is provenance only. See [legacy/dsh-adapter.md](legacy/dsh-adapter.md).
 3. **Herdr:** obtain the architecture-specific official v0.9.3 asset; check the
    release digest before granting executable permission or installing it. The
    arm64 digest above does not apply to Intel. This avoids a floating shell

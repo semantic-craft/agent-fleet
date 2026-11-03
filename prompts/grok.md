@@ -4,4 +4,4 @@
 
 那些客户端与门铃已从本仓库删除。历史决定见 [ADR-0001](../docs/legacy/0001-agenvo-as-control-plane.md)。
 
-dot 的原生平台任务另见[调用方路由](../docs/caller-routing.md)。DSH、GrokBot 的 Codex Desktop 可见性仍按该页单独验收。
+dot 的原生平台任务与 anet 并列。DSH、GrokBot 的历史外部路线在 [docs/legacy/caller-routing.md](../docs/legacy/caller-routing.md)，不是现行验收。

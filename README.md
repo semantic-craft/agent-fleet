@@ -16,7 +16,7 @@ Herdr 只做 pane 宿主，不是派活控制面。不另造 Herdr 与 ANet 之�
 
 不另造控制面层，不经 CommHub MCP、不经 `anet.sonori.dev`、不经 #90 门铃桥做本机派活。那些是历史路径，见文末「遗留附录」。
 
-dot 的原生平台任务与 anet 并列，不互相替代。DSH、GrokBot 的历史外部路线见[调用方路由](docs/caller-routing.md)。交还 Desktop 时才涉及 `thread/unsubscribe`，见[交接契约](docs/codex-desktop-handoff.md)。
+dot 的原生平台任务与 anet 并列，不互相替代。DSH、GrokBot 的历史外部路线在 [docs/legacy/caller-routing.md](docs/legacy/caller-routing.md)。旧 Desktop 交接在 [docs/legacy/codex-desktop-handoff.md](docs/legacy/codex-desktop-handoff.md)，不是现行步骤。
 
 迁移与升级仍先读[兼容来源、模型选择保护及在途恢复门槛](docs/migration-and-upgrades.md)。
 
@@ -46,8 +46,7 @@ dot 的原生平台任务与 anet 并列，不互相替代。DSH、GrokBot 的�
 npm install
 git config core.hooksPath .githooks       # 一次性：提交前自动跑 guard
 npm test                                  # 配置解析、context 渲染与私有值检查
-node scripts/fleet.mjs doctor             # 本机 connector 与原生服务状态
-node scripts/fleet.mjs release dsh        # 把已推送的提交装进固定版本的发布目录并链到 DSH 桌面 profile（--rollback 回退）
+node scripts/fleet.mjs doctor             # 本机 overlay 里列出的 launchd 服务是否已加载
 ```
 
 License: Apache-2.0。
@@ -57,4 +56,4 @@ License: Apache-2.0。
 
 > **历史材料，不是现行派活，不要按本节安装、验收或派活。** 派活只走官方 Agent Network（[docs/anet.md](docs/anet.md)）。CommHub MCP、`anet.sonori.dev`、#90 门铃桥、Agenvo relay 与 `delegate-via-agenvo` 都已退出。
 
-档案（只读）：[docs/legacy/](docs/legacy/README.md) 下的 ADR-0001（CommHub 曾为远程控制面）、ADR-0002、ADR-0006。旧叙述仍在 [docs/architecture.md](docs/architecture.md) 与 [docs/caller-routing.md](docs/caller-routing.md)，文首已标遗留。DSH 桌面插件 [adapters/dsh](adapters/dsh/README.md) 的退役另批，不是本附录的派活入口。
+档案（只读）：[docs/legacy/](docs/legacy/README.md)。ADR、旧路由、旧 Desktop 交接、旧验收稿和已删除的 DSH socket 插件都在那里。[docs/caller-routing.md](docs/caller-routing.md) 只留指针。`adapters/dsh` 与 `fleet.mjs release dsh` 已删除，理由见 [docs/legacy/dsh-adapter.md](docs/legacy/dsh-adapter.md)。

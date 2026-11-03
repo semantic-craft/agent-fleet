@@ -7,7 +7,7 @@
     "node": ">=24.13.0"
   },
   "scripts": {
-    "test": "node --test test/*.test.mjs adapters/*/test/*.test.mjs && node scripts/guard.mjs private && node scripts/lint-routes.mjs",
+    "test": "node --test test/*.test.mjs && node scripts/guard.mjs private && node scripts/lint-routes.mjs",
     "guard": "node scripts/guard.mjs",
     "doctor": "node scripts/fleet.mjs doctor",
     "check": "node scripts/fleet.mjs check",

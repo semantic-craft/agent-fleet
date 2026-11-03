@@ -1,5 +1,5 @@
 {
-  "$comment": "Copy to ~/.config/agent-fleet/fleet.json (mode 0600) and fill in. Never commit the filled copy. Local multi-agent dispatch is official anet; see docs/anet.md. This overlay is for doctor, contexts, and release dsh.",
+  "$comment": "Copy to ~/.config/agent-fleet/fleet.json (mode 0600) and fill in. Never commit the filled copy. Local multi-agent dispatch is official anet; see docs/anet.md. This overlay is for doctor and contexts. release dsh and the herdr-server launchd template are retired; see docs/legacy/.",
   "machines": [
     {
       "name": "laptop",
@@ -10,7 +10,6 @@
       "projectsRoot": "~/Projects",
       "services": [
         "dev.example.codex-app-server",
-        "dev.example.herdr-server",
         "dev.example.desktop-agents-autostart"
       ],
       "instances": [
@@ -27,8 +26,7 @@
         {
           "id": "dsh-laptop",
           "connector": "dsh",
-          "endpoint": "unix://~/.local/state/agent-fleet-dsh/native.sock",
-          "context": "DSH 实例占位（laptop）。本机派活见 docs/anet.md。"
+          "context": "DSH 桌面占位（laptop）。socket 插件已退役。本机派活见 docs/anet.md。"
         }
       ]
     }
