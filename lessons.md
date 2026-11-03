@@ -41,13 +41,13 @@
 
 ### Codex 派活走 Desktop 空会话（仅外部 Agenvo 入口）
 
-dot 原生平台任务通道不受本节阻断；DSH／GrokBot→Agenvo→Codex Desktop 是需保留的外部目标，不能互相替代，见[调用方路由](docs/caller-routing.md)。
+历史记录，不要执行。dot 原生平台任务通道不受本节阻断。DSH／GrokBot→Agenvo→Codex Desktop 是当时记下的外部目标，现已归档，不是现行派活。见 [docs/legacy/caller-routing.md](docs/legacy/caller-routing.md)。
 
-**agenvo → Codex 实例 `thread/start` 建空桌面会话 → 释放写锁或已证实原生交接 → 打开 `codex://threads/<thread_id>?prompt=…` 确认 Desktop 可见 → 经 agenvo 对同一线程 `turn/start` 提交 → turn 终态后同一 connector `thread/unsubscribe` 交还 Desktop。**
+**当时的步骤（不要再执行）：** agenvo → Codex 实例 `thread/start` 建空桌面会话 → 释放写锁或已证实原生交接 → 打开 `codex://threads/<thread_id>?prompt=…` 确认 Desktop 可见 → 经 agenvo 对同一线程 `turn/start` 提交 → turn 终态后同一 connector `thread/unsubscribe` 交还 Desktop。
 
 - 起因与后果：用户要任务出现在 Codex Desktop，并由 agent 经 agenvo 提交开跑；会话仍须 Desktop 可见，且交还后左栏可操作（2026-10-25 10:18／16:58；thc-20261026）。
-- 修复与证据：Desktop 正道正文在 [xw-stack 派活技能](https://github.com/semantic-craft/xw-stack/blob/main/skills/delegate-via-agenvo/SKILL.md#codex-desktop) 与本仓[交接契约](docs/codex-desktop-handoff.md)；合入后立刻 Skill 重载验收（全局 workflows 与仓正本一致）。派活正道只留一条。
-**Desktop 交互控制交还门槛**：独立同 host 执行基线不以退订能力为创建前置，Desktop 项保持未验；仅当完成交还时，确认 connector 暴露 `thread/unsubscribe` 且 watcher 不抢其他 loaded 线程，否则 `blocked_native_writer_release`。同 host 共享 app-server 与 Desktop 自带 backend 也要交还 writer；本次 turn 终态后由同一 connector 退订，再截图核实项目下可见且无横幅。connector 重启不释放独立 native writer。目标仍为 Desktop 可见后 agent `turn/start`，见[交接契约](docs/codex-desktop-handoff.md)。
+- 修复与证据：当时的 Desktop 正文在已退出的 xw-stack `delegate-via-agenvo` 与本仓归档 [docs/legacy/codex-desktop-handoff.md](docs/legacy/codex-desktop-handoff.md)；合入后曾要求立刻 Skill 重载。现行派活只看 [docs/anet.md](docs/anet.md)。
+- 门槛全文（含独立同 host 执行基线与 `blocked_native_writer_release`）只留在归档，不是现行操作。
 - 验证点：`test/codex-handoff-docs.test.mjs` 检查 Desktop 正道含 `thread/unsubscribe` 与可见验收句；`test/codex-handoff.test.mjs` 检查目标/版本/线程关联、证据缺失与 unknown 不重发；离线文档回归不证明实际 writer 已释放。
 - 复发记录：Seen 3x（2026-10-25 保留 agent 提交目标；thc-20261026 写清 unsubscribe 交还与 Skill 重载）。
 
@@ -56,8 +56,8 @@ dot 原生平台任务通道不受本节阻断；DSH／GrokBot→Agenvo→Codex 
 **launchd 里运行 `herdr server`（headless），不要运行 `herdr`（TUI，需要终端）。**
 
 - 起因与后果：Herdr 平时只在打开 TUI 时运行，connector 附着不上。
-- 修复与证据：`templates/launchd/herdr-server.plist`；经 relay 调 `session.list` 正常。
-- 验证点：`rg -n '<string>server</string>' templates/launchd/herdr-server.plist` 有结果；目标 Mac 上 `launchctl print gui/$(id -u)/<前缀>.herdr-server` 在运行，经 relay 调 `session.list` 返回正常。
+- 修复与证据：当时的模板现归档在 `docs/legacy/herdr-server.plist`；经 relay 调 `session.list` 曾正常。不要用这份模板新装。Herdr 现在只做 pane 宿主，本仓没有另一份现行 plist。
+- 验证点（历史，不要当现行安装检查）：`rg -n '<string>server</string>' docs/legacy/herdr-server.plist` 有结果。机器上若仍加载 `<前缀>.herdr-server`，由外循环处理，不在本仓改 PATH。
 - 复发记录：Seen 1x (2026-10-19)。
 
 ### Workers 自定义域名要求 zone 在 Cloudflare
@@ -107,7 +107,7 @@ dot 原生平台任务通道不受本节阻断；DSH／GrokBot→Agenvo→Codex 
 
 ### 链接进 DSH 桌面 profile 的插件，改工作树就可能直接进生产
 
-**改 DSH 插件（`adapters/dsh`）等 `link:` 插件时，在单独的 worktree 里开发；被链接的 checkout 只在验证后切到 main。**
+**历史。** `adapters/dsh` 已删除。当时改这个 `link:` 插件要在单独的 worktree 里开发；被链接的 checkout 只在验证后切到 main。不要再按本条改插件。
 
 - 起因与后果：开发 native bridge 时直接编辑了被主力 Mac 桌面版链接的 checkout。另一个 agent 恰好给桌面版装插件，触发 profile 重载，桌面 Host 当场加载了半成品，其中一版在 listen 期间改了进程 umask（随后修掉）。没有发现损坏的文件或目录，但这是生产进程。
 - 修复与证据：插件去掉 umask 写法并加回归测试；插件日志显示 04:09:54Z、04:12:06Z 两次重载。
@@ -156,12 +156,12 @@ dot 原生平台任务通道不受本节阻断；DSH／GrokBot→Agenvo→Codex 
 - 起因与后果：第一次 `release zcode` 用 `-replace ProgramArguments.1 -string <新路径>`，结果数组变成 `[node, 新, 旧]`，接收端多带了一个旧路径参数启动（碰巧无害）。
 - 修复与证据：`scripts/release.mjs` 改为整体替换数组；重跑后 `plutil -extract ProgramArguments` 只有两项。
 - 正确做法：不要用带下标的 `-replace` 改数组元素。
-- 验证点：`rg -n '"-replace", "ProgramArguments\.' scripts/` 无结果（没有按下标改数组的 `plutil` 调用；`scripts/release.mjs:294` 注释里提到的 `ProgramArguments.1` 不算）；`rg -n '"-replace", "ProgramArguments", "-json"' scripts/release.mjs` 有结果；发布后 `plutil -extract ProgramArguments json -o - <plist>` 只有两项。
+- 验证点（历史）：不要用带下标的 `plutil -replace` 改数组。`scripts/release.mjs` 已删除，不要再对它跑 `rg`。
 - 复发记录：Seen 1x (2026-10-19)。
 
 ### 常驻服务不要从 git checkout 运行
 
-**launchd 指向 `~/.local/share/agent-fleet/releases/<组件>/<sha>/`，由 `fleet.mjs release` 切换。**
+**历史。** launchd 曾指向 `~/.local/share/agent-fleet/releases/<组件>/<sha>/`，由当时的 `fleet.mjs release` 切换。该发布命令已随 DSH socket 插件删除，不要再跑。
 
 - 起因与后果：4 个 connector 原来直接跑 `~/Projects/agenvo/apps/*/dist/cli.js`，在 checkout 里切分支、合并上游或重新构建都会在下次重启时改变线上行为。
 - 修复与证据：`scripts/release.mjs`；2026-10-19 切换后 `fleet.mjs check --dispatch` 全部 OK。
@@ -171,12 +171,12 @@ dot 原生平台任务通道不受本节阻断；DSH／GrokBot→Agenvo→Codex 
 
 ### 发布脚本要在无终端（无 TTY）下跑通再合
 
-**`fleet.mjs release` 这类会被 agent 或 launchd 调用的脚本，合并前用 `</dev/null` 在无 TTY 的环境实跑一次。**
+**历史。** 当时的 `fleet.mjs release` 会在无 TTY 下被调用；该命令已退役。不要再跑 `release dsh`。无 TTY 验收只作为当时的教训保留。
 
 - 起因与后果：#6（cccaff6）合并后在主力 Mac 首次 `release dsh`，pnpm 想重建 `node_modules` 时没有 TTY 直接中止，DSH 桥接随之断开，只能手工用同样参数重装。
 - 修复与证据：#7（46335b3）给 Host 的 pnpm 加 `CI=true --no-frozen-lockfile`，运行中的 DSH 不会加载新插件时直接说明、不再空等 60 秒；`npm test` 28/28。修正后的命令尚未在第二台 Mac 跑过（#7 自述）。
-- 正确做法：发布、安装类脚本的验收至少有一次无 TTY 实跑（`node scripts/fleet.mjs release <组件> </dev/null`），并在 PR 里写明在哪台机器跑过。
-- 验证点：`rg -n 'CI: "true"' scripts/release.mjs` 有结果；在目标 Mac 上 `node scripts/fleet.mjs release <组件> </dev/null` 退出码 0，并在 PR 里写明机器。
+- 正确做法（历史）：当时要求发布脚本至少有一次无 TTY 实跑。`scripts/release.mjs` 已删除，不要再执行 `fleet.mjs release`。
+- 验证点（历史，文件已不在）：曾用 `rg -n 'CI: "true"' scripts/release.mjs` 与无 TTY 实跑。不要把它们当现行检查。
 - 复发记录：Seen 1x (2026-10-19)。
 
 ### squash 合并时把 PR 正文带进 commit 正文
@@ -197,7 +197,7 @@ dot 原生平台任务通道不受本节阻断；DSH／GrokBot→Agenvo→Codex 
 - 起因与后果：调度方于 2026-10-22 在隔离 `dsh web`（临时 HOME/DSH_HOME）实测，`session/rename` 后 CLI 续写报 `already owned by an active write handle`，等待 45 秒仍未释放。
 - 修复与证据：派活技能将 `workspace/attachSession` 与 `session/rename` 分开；前者经 registry.create + attachSession 登记并推送 workspace/follow upsert，不拿会话写锁，CLI 可继续续写。2026-10-22 在隔离 dsh web 上用本插件实测：新路径返回 created:true 且重名规则生效；cwd 不一致返回 bridge/attach-failed，不新建空项目；登记后 CLI `--session-id` 续写不报写锁错误。
 - 正确做法：拿到 sessionId 立即登记并告知项目 title；完成全部 CLI 轮次后再改为 `[CLI] <任务名>`，之后追问走桌面或 DSH 实例的 `session/prompt`。详见[派活技能](https://github.com/semantic-craft/xw-stack/blob/main/skills/delegate-via-agenvo/SKILL.md#dsh-headless登记到桌面项目)。
-- 验证点：隔离环境中登记后 CLI `--session-id` 仍可续写；改名后 CLI 复现写锁错误，桌面或 DSH 实例接手。插件假注册表回归测试见 `adapters/dsh/test/native-bridge.test.mjs`，不替代真实写锁验收。
+- 验证点：隔离环境中登记后 CLI `--session-id` 仍可续写；改名后 CLI 复现写锁错误，桌面或 DSH 实例接手。插件假注册表回归测试曾在 `adapters/dsh/test/native-bridge.test.mjs`，该目录已随插件删除，不替代真实写锁验收。
 - 复发记录：Seen 1x (2026-10-22)。
 
 ### 命令行派 DSH 的会话要登记到桌面项目，用户才看得到
@@ -272,11 +272,11 @@ dot 原生平台任务通道不受本节阻断；DSH／GrokBot→Agenvo→Codex 
 
 ### 桌面项目下自动开跑用 DSH
 
-**Desktop 交互控制交还门槛**：独立同 host 执行基线不以退订能力为创建前置，Desktop 项保持未验；仅当完成交还时，确认 connector 暴露 `thread/unsubscribe` 且 watcher 不抢其他 loaded 线程，否则 `blocked_native_writer_release`。同 host 共享 app-server 与 Desktop 自带 backend 也要交还 writer；本次 turn 终态后由同一 connector 退订，再截图核实项目下可见且无横幅。connector 重启不释放独立 native writer。目标仍为 Desktop 可见后 agent `turn/start`，见[交接契约](docs/codex-desktop-handoff.md)。
+历史。门槛全文在 [docs/legacy/codex-desktop-handoff.md](docs/legacy/codex-desktop-handoff.md)，不要当现行步骤。
 
 - 起因与后果：用户有时要左栏项目下直接跑起来的会话。
 - 修复与证据：DSH 经 `workspace/create {path: <任务目录>}` 的会话在桌面左栏对应项目下（2026-10-20 验收）。
-- 正确做法：dot 有平台任务工具与授权时优先原生 Codex；DSH／GrokBot 的外部 Codex Desktop 需求仍保留且单独验收；Agenvo 项目下自动开跑用 DSH。见[派活技能](https://github.com/semantic-craft/xw-stack/blob/main/skills/delegate-via-agenvo/SKILL.md)。
+- 正确做法：现行派活只看 [docs/anet.md](docs/anet.md)。不要再打开已退出的 `delegate-via-agenvo`。DSH 桌面应用仍可当后备，socket 插件已退役。
 - 验证点：`rg -n 'Codex Desktop|项目下' ~/Projects/xw-skills/live/xw-stack/skills/delegate-via-agenvo/SKILL.md` 有对应表述。
 - 复发记录：Seen 1x (2026-10-23；2026-10-25 按 Desktop 正道改写)。
 
@@ -285,9 +285,9 @@ dot 原生平台任务通道不受本节阻断；DSH／GrokBot→Agenvo→Codex 
 **`unknown` 不重发：先读原生状态（`pane.get`、exit 文件、`worktree.list`、`session/list`）再决定；订阅事件也保留轮询。**
 
 - 起因与后果：2026-10-23 两台 Mac 的全部 connector 频繁断线重连（17:49–18:21 实测 31.5 分钟 30 次；relay 日志里的 `1006` 是滞后的孤儿连接清理，不能当断线计数）。断线时进行中的调用返回 `execution_unknown`，之后几秒返回 `device_offline`；同日实测同样的 `pane.run`，一次返回 `unknown` 但命令已执行，一次 `unknown` 且命令没送达。断线期间的事件不补发。
-- 修复与证据：技能、operator 与 dot-watcher 写明 unknown 与 `agenvo.resync_required` 的处理；`check --dispatch` 的 Herdr 一项容忍连续 3 次查询失败；证据与观察方法见[网络与桌面验收](docs/network-and-desktop-acceptance.md#重连可观察性)。断开的根因是 relay 主机走了机场线路，出口到 Cloudflare 的路由不稳，不是同一设备身份另有连接；relay 的 `1006` 多半是更早断掉的孤儿连接被清理，不代表当时断线（2026-10-23 17:49–18:21 实测）。用户批准后网关规则让 relay 主机直连，18:51–19:23 复测 31.6 分钟断 1 次（基线 31.5 分钟 30 次）。
+- 修复与证据：技能、operator 与 dot-watcher 写明 unknown 与 `agenvo.resync_required` 的处理；`check --dispatch` 的 Herdr 一项容忍连续 3 次查询失败；证据与观察方法见[网络与桌面验收](docs/legacy/network-and-desktop-acceptance.md#重连可观察性)。断开的根因是 relay 主机走了机场线路，出口到 Cloudflare 的路由不稳，不是同一设备身份另有连接；relay 的 `1006` 多半是更早断掉的孤儿连接被清理，不代表当时断线（2026-10-23 17:49–18:21 实测）。用户批准后网关规则让 relay 主机直连，18:51–19:23 复测 31.6 分钟断 1 次（基线 31.5 分钟 30 次）。
 - 正确做法：派活脚本返回 `unknown` 时，按任务名查 worktree、轮次 pane 和 `_status/<任务名>/`，确认没执行才重派。
-- 验证点：按[网络与桌面验收](docs/network-and-desktop-acceptance.md#重连可观察性)数本机 `status.json` 的重连次数和 `/api/admin/state` 的 `epoch` 变化，不数 tail 里的 `1006`；网关规则调整后取 30 分钟样本，对比 2026-10-23 基线（31.5 分钟 30 次）。
+- 验证点：按[网络与桌面验收](docs/legacy/network-and-desktop-acceptance.md#重连可观察性)数本机 `status.json` 的重连次数和 `/api/admin/state` 的 `epoch` 变化，不数 tail 里的 `1006`；网关规则调整后取 30 分钟样本，对比 2026-10-23 基线（31.5 分钟 30 次）。
 - 复发记录：Seen 1x (2026-10-23)。
 
 ### 派活接受、原生终态与目标验收必须分开
@@ -341,7 +341,7 @@ dot 原生平台任务通道不受本节阻断；DSH／GrokBot→Agenvo→Codex 
 
 - connector online、native available、调用方 OAuth、任务终态和主动事件是不同证据。DSH app 停止可使 socket 消失而 connector 仍在线；普通启动可恢复，无须先发布插件或重新授权。
 - Cloudflare 浏览器签名403不等于 Access 登录失败；按 Ray 查证，安全规则变更另批。模型网关和任务控制入口分开，不强制所有调用方经额外转发层。
-- 2026-10-26 新的 DSH 发起、两轮同 Codex thread、原会话回执已验；主动推送、GrokBot和桌面可见性未由此证明。见 [恢复流程](docs/runtime-recovery.md)。既有 FileJournal 回归保护未知准入只读恢复及跨进程去重；不要通过重放真实写操作测试去重。
+- 2026-10-26 新的 DSH 发起、两轮同 Codex thread、原会话回执已验；主动推送、GrokBot和桌面可见性未由此证明。见 [归档的恢复流程](docs/legacy/runtime-recovery.md)。既有 FileJournal 回归保护未知准入只读恢复及跨进程去重；不要通过重放真实写操作测试去重。
 
 ### agy 使用桌面登录态模型 id（2026-10-27）
 

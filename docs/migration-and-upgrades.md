@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | 控制面 | 官方 anet 0.3.9，见 [anet.md](anet.md)。CommHub／#90 门铃与 fork 安装已从本仓库删除，历史见 [ADR-0001](legacy/0001-agenvo-as-control-plane.md) | 身份与 allow 名单在本机 `~/.anet`，不进仓库 |
 | connector | `Xuanwo/agenvo`；自有 fork `semantic-craft/agenvo` 的 `xw/dispatch-connectors`；上游研究基线 `a89415e557c415faf5626354f8e87233eb69d877` | 研究 SHA 不是现役部署锁；从已批准 release.json / relay 发布记录核实实际 SHA，不能用浮动分支代替 |
-| DSH adapter | 本仓 `adapters/dsh`，由 `release dsh --sha <reviewed SHA>` 发布；本轮基础代码来自 agent-fleet `baf66e015fb89ab4876561910554444c57f7b075` | 安装后 Host 内部 Typert/workspaceRegistry 契约须再验；包的宽版本范围不代表兼容已验 |
+| DSH adapter | 已退役并删除。历史基础代码曾在 agent-fleet `baf66e015fb89ab4876561910554444c57f7b075`，见 [legacy/dsh-adapter.md](legacy/dsh-adapter.md) | 不要安装。现行派活不使用这条 socket |
 | Agent runtime | 官方 `deepseek-ai/deepseek-harness`；2026-10-24 线路证据 DSH 0.2.1-rc.3、安装依赖 pi-ai 1.1.0 | rc.3 tag `1f81c047fc48fa190a683e469daa699857e9afe8` 只供源码比较，不宣称等于已装二进制。Codex/Herdr 精确可重建版本本表 unknown，需从各官方发行及实际安装取证 |
 | Provider gateway | Magpie；模型路线已通过本机独立部署运行 | 实际已部署源码/构建/签名关系 unknown，必须补其正式发行来源、包哈希、补丁来源和版本；不能据历史测试源码冒认二进制 |
 | 模型 | `scripts/route-profiles.mjs`：provider、model、effort、preset 分开记录 | 模型别名同名也可能换后端，版本字符串不能证明行为不变 |
@@ -23,7 +23,7 @@
 1. 从本仓配置样例生成新的私有 overlay，替换主机名、projectsRoot、服务标签、实例 ID、端点，不复制旧机器的身份。`FLEET_BIN` 配置 CLI 安装位置；模板同时包含 Apple Silicon 和 Intel 常见 PATH，仍须 `command -v` 核验。安装 Node >=24.13、Git；持久 journal 还要求 Python 3 标准库及本地 POSIX 文件系统。
 2. 从各官方发行来源安装所需运行时并由用户重新登录。本机派活按 [anet.md](anet.md) 准备身份，不在本仓库重建旧 relay。仓库不保存或复制登录令牌、浏览器资料、配对凭据。
 3. Magpie 是这些模型路线的额外前提：先确认官方安装来源、实际构建和用户重新登录，再按其正式配置入口连接 DSH provider。逐项核对 OpenAI Responses、Anthropic、其他适用协议和模型目录；不能只复制模型名。当前来源关系 unknown 时暂停该模型路线的可重建声明，不下载猜测来源或永久覆盖签名应用。
-4. 安装已审固定 SHA 的 DSH adapter（`release dsh`），按 runbook 生成仍保留的 launchd，并检查权限与在线状态。桌面插件需要用户安全关闭/重开 DSH；先确认无活动任务。不得因安装失败回落 headless。fork 安装步骤已删除，见 [ADR-0002](legacy/0002-minimal-agenvo-fork.md)。
+4. 不要安装已退役的 DSH adapter，也不要运行 `release dsh`。见 [legacy/dsh-adapter.md](legacy/dsh-adapter.md)。launchd 只生成 runbook 仍列出的模板；不要用已归档的 `herdr-server.plist`。fork 安装步骤已删除，见 [ADR-0002](legacy/0002-minimal-agenvo-fork.md)。
 5. 用户项目、CLI 身份和原生会话数据属于独立备份范围。只拿仓库能重建代码和新服务，不能还原旧会话。设备/实例/session IDs 是迁移映射或历史证据，不可当新机模板值。
 6. 使用下面的证据门槛再准入生产；新授权、软件安装和现役部署变更仍需适用批准。
 
@@ -72,4 +72,4 @@ const check = reviewModelRestoration(plan, {
 
 证据等级：`offline`（合成契约）→ `local-live`（原生运行）→ `cloud-live`（真实授权入口）→ `new-host-live`（新机安装/重新授权/重启后）。等级不可替代；存储进程重启测试不等于机器掉电/硬件故障证明。部署审批与证据齐备是两个条件。
 
-离线入口：[契约API与演练](compatibility-contracts.md)，`node scripts/recovery-drill.mjs`。真实 FileJournal 进程崩溃/恢复与发布回滚算法回归分别用 `node --test test/file-journal.test.mjs test/release-lib.test.mjs test/release-scope.test.mjs`；它们仍是模拟原生端/文件系统 fixture，不会对现机运行时执行回滚。
+离线入口：[契约API与演练](compatibility-contracts.md)，`node scripts/recovery-drill.mjs`。真实 FileJournal 进程崩溃/恢复回归用 `node --test test/file-journal.test.mjs`。DSH 发布回滚测试已随 `release dsh` 删除。这些测试是文件系统 fixture，不会对现机运行时执行回滚。

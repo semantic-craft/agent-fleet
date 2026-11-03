@@ -18,7 +18,7 @@ ZCode 不再派活（#34 起仓库里没有它的接收端代码），但主力 
 
 | 目录 | 是什么 | 状态 |
 | --- | --- | --- |
-| `agent-fleet` | 本仓库：多 agent 协作正本——协议说明（[anet](anet.md)）、教训、实现（`adapters/`、`scripts/`）与自制派活插件 `plugins/`（如 `plugins/agent-network-cindy`）；`adapters/dsh` 由 `fleet.mjs release` 部署 | 核心 |
+| `agent-fleet` | 本仓库：多 agent 协作正本——协议说明（[anet](anet.md)）、教训、脚本与自制派活插件 `plugins/`（如 `plugins/agent-network-cindy`）。`adapters/dsh` 已退役，见 [legacy/dsh-adapter.md](legacy/dsh-adapter.md) | 核心 |
 | `_forks/agent-network` | `sleep2agi/agent-network`（文档 anet.sh）的旧实现，与当前 Research 0.3.9 不同；不能作为当前协议来源或被吞并进 fleet | 旧实现，待核实消费者后退役 |
 | `xw-skills` | xw-stack 提供技能分发入口，xw-tooling 维护安装清单与宿主接线；ANet 派发机制正本归 fleet，消费者迁移状态见 [盘点](anet-alignment.md) | 分发消费者，保留 |
 | `_forks/agenvo` | 上游 Agenvo 的最小 fork（历史 connector／relay）。本机派活已改官方 anet，见 [anet.md](anet.md)。本仓库不再提供安装或发布命令；档案见 [ADR-0002](legacy/0002-minimal-agenvo-fork.md) | 遗留 |

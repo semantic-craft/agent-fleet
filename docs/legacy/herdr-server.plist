@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- Headless Herdr server; attach a UI any time with `herdr`. PATH must reach claude/codex/agy for agent.start. -->
+<!-- ARCHIVED 2026-11-03. Not a current install template. Herdr is a pane host; do not bootstrap this plist. Helios LaunchAgent PATH is outside this repo. -->
 <plist version="1.0">
 <dict>
   <key>Label</key><string>{{LABEL_PREFIX}}.herdr-server</string>

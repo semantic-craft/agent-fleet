@@ -13,7 +13,7 @@ test('entry points distinguish native capability from the required external rout
  }
 });
 test('external guards keep their scope without denying native Codex or replacing external needs',()=>{
- const contract=read('docs/codex-desktop-handoff.md');
+ const contract=read('docs/legacy/codex-desktop-handoff.md');
  assert.match(contract,/dot.*原生平台任务/);assert.match(contract,/blocked 不表示 Codex 整体不可用/);
  assert.match(contract,/DSH→Agenvo→Codex Desktop、GrokBot→Agenvo→Codex Desktop/);
  assert.match(contract,/blocked_native_writer_release/);assert.match(contract,/turn\/start/);
@@ -22,7 +22,7 @@ test('external guards keep their scope without denying native Codex or replacing
  assert.match(read('docs/legacy/0006-single-remote-path.md'),/不排除 dot.*原生平台任务/);
 });
 test('native prerequisites and three separate evidence rows prevent cross-route success claims',()=>{
- const text=read('docs/caller-routing.md');
+ const text=read('docs/legacy/caller-routing.md');
  for(const term of ['电脑连接授权','跨机先发现环境','schema','不自动跨入口接续','blocked 是待解决','同会话继续','结果返回']) assert.ok(text.includes(term),term);
  const rows=text.split('## 按三个调用方分别验收')[1].split('\n').filter(x=>/^\| (dot → 原生平台|DSH → Agenvo|GrokBot → Agenvo)/.test(x));
  assert.equal(rows.length,3);
@@ -37,7 +37,8 @@ test('copied prompts point at anet and do not teach CommHub or Agenvo search/exe
  for(const phrase of ['docs/anet.md','原生平台任务工具','同入口继续和回读']) assert.ok(operator.includes(phrase),phrase);
  assert.doesNotMatch(operator,/CommHub MCP|门铃桥|#90|search \{"query"|Agenvo|execute 脚本/);
  assert.doesNotMatch(operator,/Codex exec 线程|改代码的任务.*全部/);
- const acceptance=read('prompts/acceptance-codex.md').split('```text')[1];
+ const acceptance=read('docs/legacy/acceptance-codex.md').split('```text')[1];
+ assert.doesNotMatch(read('prompts/acceptance-codex.md'),/确认 CommHub|经 agenvo/);
  assert.match(acceptance,/分别由 DSH 和 GrokBot 发出/);
  assert.match(acceptance,/不能用 ChatGPT 代理测试充当通过/);
  assert.doesNotMatch(acceptance,/都在 ChatGPT 里用自然语言下达|每个任务截两张图：ChatGPT|本次是 Desktop 空线程交接/);

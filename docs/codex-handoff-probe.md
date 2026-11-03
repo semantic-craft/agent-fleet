@@ -1,13 +1,13 @@
 # Codex handoff probe candidate (not deployed)
 
-> 历史隔离 probe 候选，未部署。当前共享 app-server → Desktop 正式流程是[持有订阅的连接调用 thread/unsubscribe](codex-desktop-handoff.md)，同 host 也适用；kickstart 不释放 native writer。本候选不作为该流程前置，其额外隔离门槛仅适用于启动本候选。
+> 历史隔离 probe 候选，未部署。旧的共享 app-server → Desktop 流程在[归档](legacy/codex-desktop-handoff.md)；kickstart 不释放 native writer。本候选不是现行派活，也不是那份归档的前置。
 
 Scope: the required external DSH/GrokBot → Agenvo → Codex Desktop route.
 It does not gate dot’s available, authorized native platform task route; that route
-cannot replace external callers’ needs. See [caller routing](caller-routing.md).
+cannot replace external callers’ needs. See the archived [caller routing](legacy/caller-routing.md).
 
 This is offline preparation for one explicitly authorized canary, not a working
-Desktop handoff route. Apply the [handoff gate](codex-desktop-handoff.md) only to cross-backend transfer, never ordinary same-host execution.
+Desktop handoff route. The archived [handoff note](legacy/codex-desktop-handoff.md) applied only to cross-backend transfer, never ordinary same-host execution.
 The desired UX remains Desktop visibility followed by agent `turn/start` on the
 same thread. A source patch, a successful unsubscribe, or elapsed time is not
 writer ownership evidence.
