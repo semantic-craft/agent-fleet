@@ -374,3 +374,10 @@
 - 修复：#106（2c80c61）清掉三处正文与 doctor 读取 `~/.config/agenvo/…/status.json`，钉旧文案的测试同步改；`npm test` 303 通过。
 - Done right: 清理类 PR 合前跑 `rg -n -i 'agenvo|commhub' -g '!lessons.md' -g '!docs/legacy/**' .`，把剩余命中逐条列进 PR 正文（保留的写理由），命中为零或全有理由才报完成。
 - Seen 1x (2026-11-02)
+
+### Hub 匿名请求需要隔离连接池（2026-11-04）
+
+- 起因与后果：Slice C 首版让 session 与 capability 投递共用 HTTP client。即使 capability 没有身份头，keep-alive 连接仍会把它关联到 session。
+- 修复：每次 send 和 status 使用独立 client，禁用重定向与自动重试。未验证 dack 保留后续回读能力，响应 wire 版本不兼容时拒绝作为证据。
+- 验证点：`cargo test -p fleet-hub` 的 `session_and_capability_sends_use_separate_connections` 在服务端比较连接；`unverified_done_can_be_read_again_for_core_verification` 和 `conflicting_response_wire_version_is_rejected` 覆盖收据边界。
+- Seen 1x (2026-11-04)
