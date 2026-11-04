@@ -31,7 +31,7 @@ mkdir -p ~/Library/Logs/codex-app-server
 for f in codex-app-server desktop-agents-autostart; do launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.yourname.$f.plist; done
 ```
 
-Herdr 只做 pane 宿主。本仓不再提供 `herdr-server` 的现行 launchd 模板；旧文件在 [legacy/herdr-server.plist](legacy/herdr-server.plist)，不要用它新装。本仓没有另一份现行 plist。Helios 上若仍加载该任务，或要改 LaunchAgent PATH，由外循环在本机处理。
+Herdr 只做 pane 宿主。本仓不再提供 `herdr-server` 的现行 launchd 模板；旧文件在 [legacy/herdr-server.plist](legacy/herdr-server.plist)，不要用它新装。本仓没有另一份现行 plist。宿主机上若仍加载该任务，或要改 LaunchAgent PATH，由外循环在本机处理。
 
 DSH 桌面 socket 插件和 `fleet.mjs release dsh` 已退役，见 [legacy/dsh-adapter.md](legacy/dsh-adapter.md)。不要再装 `agent-fleet-dsh`。
 

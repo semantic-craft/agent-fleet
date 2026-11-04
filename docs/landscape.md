@@ -28,8 +28,9 @@ ZCode 不再派活（#34 起仓库里没有它的接收端代码），但主力 
 | `agent-plugins` | 只做 marketplace／安装根：`claude/`、`codex/`、`zcode/`、`dsh/` 等自有插件；多 agent 派活插件不放这里，在 `agent-fleet/plugins/` | 无关：不是通信基础设施；其中 `dsh/lcu-dsh`（LCU Computer Use 插件）线上在用 |
 | `outer-loop-kit` | 外环业务规则（outer-loop）；ANet 通用派活契约应引用本仓，本轮发现的正文副本及迁移状态见 [盘点](anet-alignment.md) | 治理 |
 | `alma-relay-ops` | 多设备穿透／回家底座的运维仓（上游 yetone/alma-relay） | 无关：网络底座，不是派活通道 |
-| `dsh-superagent-prototype` | DeepSeek 公开的 dsh-superagent 研究原型克隆（只读参考） | 无关 |
 | `_ref/esp32-iphone-agent`、`zotero-bridge` | 硬件 iPhone 操控实验；Zotero 文献桥 | 无关 |
+
+2026-11-04 目录复核：历史条目 `dsh-superagent-prototype` 当前不在 `~/Projects`、`_ref` 或 `_forks` 下，因此移出当前目录表。其迁移或移除原因未核实，不据此声称已归档，也不据此删除或恢复任何内容。
 
 源码盘点与部署状态分开记录；[ANet 对齐盘点](anet-alignment.md)列出重复机制、消费者及未验证项。历史目录行不代表当前目录存在或服务仍运行。
 

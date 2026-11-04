@@ -47,3 +47,5 @@
   - B 方向（`cindy -> send_to_peer -> turing`）：Cindy 插件工具 `send_to_peer` 向 `turing` 发起任务 `ix_7e86dae89c3663097931b47f18175c6d` 与用户确认后的 `ix_6d48cf1febec15622c96d403dba9157d`，`turing` provider 收件箱实收 `CINDY_ANET_ORIGIN_OK_20261102`。
 - `ps` 与 `lsof` 核实当前无运行进程占用 `~/Projects/_forks/agent-network`。
 - 缺失关联账本、宿主取消/续问转发及观察期限后的恢复仍需人工核对原任务与宿主。不声称完整生命周期自动化；未知效果不自动重派。
+
+2026-11-04 目录复核更正：上文“继续保留”是此前盘点结论；当前未发现 `dsh-superagent-prototype` 的本机目录。当前目录表已据实更新，迁移或移除原因尚未核实。
