@@ -603,3 +603,44 @@ fn conflicting_response_wire_version_is_rejected() {
     );
     assert_single_send(&hub, 1);
 }
+
+#[test]
+fn smoke_restart_readback_preserves_task_without_claiming_completion() {
+    let hub = Hub::new(vec![
+        queued("queued"),
+        Response::json(json!({"items":[{"state":"done","dack":encoded(80)}]})),
+    ]);
+    let journal = tempfile::tempdir().unwrap();
+    let submitted = hub
+        .client(&journal)
+        .dispatch(&task(), &capability())
+        .unwrap();
+    assert_eq!(submitted.tier(), fleet_proto::DeliveryTier::Accepted);
+
+    // Restart with only the durable correlation; no send credentials or envelope needed.
+    let recovered = hub.client(&journal).reconcile("operation-1").unwrap();
+    assert_eq!(recovered.association, submitted.association);
+    assert_eq!(recovered.tier(), fleet_proto::DeliveryTier::Unknown);
+    assert_eq!(
+        observation(&recovered),
+        &RelayObservation::DoneUnverified { dack: encoded(80) }
+    );
+    let stored = std::fs::read_dir(journal.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| path.to_string_lossy().ends_with("receipt.json"))
+        .unwrap();
+    let persisted: DeliveryReceipt =
+        serde_json::from_slice(&std::fs::read(stored).unwrap()).unwrap();
+    assert_eq!(persisted, recovered);
+    assert_single_send(&hub, 1);
+    let requests = hub.requests();
+    assert_eq!(
+        requests[1]
+            .headers
+            .keys()
+            .filter(|key| key.starts_with("x-anet-"))
+            .collect::<Vec<_>>(),
+        vec!["x-anet-wire"]
+    );
+}

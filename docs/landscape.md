@@ -19,6 +19,7 @@ ZCode 不再派活（#34 起仓库里没有它的接收端代码），但主力 
 | 目录 | 是什么 | 状态 |
 | --- | --- | --- |
 | `agent-fleet` | 本仓库：多 agent 协作的接线正本。不实现 ANet／Reason／codex-host。协议说明（[anet](anet.md)、[reason](reason.md)）、契约、薄技能、脚本与自制派活插件 `plugins/`（如 `plugins/agent-network-cindy`）。`adapters/dsh` 已退役，见 [legacy/dsh-adapter.md](legacy/dsh-adapter.md) | 核心 |
+| `agent-fleet-wt-rust-engine-20261105` | 用户指定的 Rust engine 文档与 smoke 临时 worktree；分支 `agent/rust-engine-docs-smoke-20261105`，PR 待审期间保留，收尾时移除此行 | 临时开发 |
 | Reason（无目录） | 投递层。源码在上游，不 clone 进 `~/Projects`，不 fork。接线说明见 [reason.md](reason.md)。签到另线，不宣称已通 | 核心＝接线文档；源码仍上游 |
 | codex-host（无目录） | 壳。源码在上游，不 clone 进 `~/Projects`，不 fork，不在本仓实现 | 核心＝接线文档；源码仍上游 |
 | PODAS（无目录） | 伞名。`~/Projects` 里没有这个目录，也不是 Git 仓，不是第三正本 | 伞名，无目录 |
