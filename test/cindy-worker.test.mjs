@@ -140,6 +140,27 @@ test('long task retains its request after more than five progress messages', asy
   assert.equal(replies.at(-1).state, 'completed'); assert.equal(replies.at(-1).text, 'correct result');
   assert.equal(worker.state.tasks.task.phase, 'replied');
 });
+test('operator reconciliation returns the original exact result without creating a host run', async () => {
+  let replies = 0; let hostReads = 0;
+  reset(async (name, args) => {
+    if (name === 'reply_task') { replies++; assert.equal(args.text, 'original final'); return {}; }
+    return { ...remote, status: { state: 'working' } };
+  }, async job => { hostReads++; assert.equal(job.kind, 'status'); assert.equal(job.runId, 'original-run'); return { ok: true, run: { status: 'completed', outputMessageId: 'exact' }, messages: [{ id: 'exact', role: 'assistant', text: 'original final' }] }; });
+  worker.state.tasks.task = { phase: 'unverified', error: { code: 'EXACT_OUTPUT_UNAVAILABLE' }, peer: 'peer', requestMessageId: 'request-1', cindyTaskId: 'owned', runId: 'original-run' };
+  const result = await worker.reconcileResult('task');
+  assert.equal(result.reconciled, true); assert.equal(replies, 1); assert.equal(hostReads, 1);
+  assert.equal((await worker.reconcileResult('task')).reconciled, false); assert.equal(replies, 1);
+});
+test('reconciliation cannot repeat uncertain delivery or accept a changed initiating message', async () => {
+  let replies = 0; let hostReads = 0;
+  reset(async name => { if (name === 'reply_task') replies++; return { ...remote, history: [{ messageId: 'different', role: 'user', parts: [{ text: 'hello' }] }] }; }, async () => { hostReads++; });
+  worker.state.tasks.task = { phase: 'unverified', error: { code: 'EXACT_OUTPUT_UNAVAILABLE' }, peer: 'peer', requestMessageId: 'request-1', cindyTaskId: 'owned', runId: 'run' };
+  assert.equal((await worker.reconcileResult('task')).reconciled, false);
+  worker.state.tasks.task.phase = 'delivery-unverified';
+  assert.equal((await worker.reconcileResult('task')).reconciled, false);
+  assert.equal(hostReads, 0); assert.equal(replies, 0);
+});
+
 test('state write failure prevents host create', async () => {
   let creates = 0;
   reset(async name => name === 'list_tasks' ? { tasks: [remote] } : remote, async () => { creates++; });

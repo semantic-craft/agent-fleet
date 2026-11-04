@@ -5,7 +5,7 @@
   "name": "Cindy × Agent Network",
   "description": "Cindy (host) on Agent Network (anet, protocol) as local identity `cindy`: tasks from allowed peers (own AIDs on the allow list) become Cindy tasks; Cindy's final reply goes back as the anet result. No network listener; stdio to the local anet node.",
   "whenToUse": "需要经 Agent Network 把消息或结果发给已允许的对端（自有 AID）时；查看 anet 桥接状态时",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "kind": "chip",
   "entry": "main.js",
   "launch": "resident",
@@ -36,6 +36,23 @@
       "parameters": {
         "type": "object",
         "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "reconcile_result",
+      "description": "Recover an existing result held as EXACT_OUTPUT_UNAVAILABLE. Reads the original owned host run and matches its exact output ID; never creates or reruns a task. Refuses changed requests, ended tasks, or uncertain prior delivery.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "taskId": {
+            "type": "string",
+            "description": "Existing ANet task ID to reconcile."
+          }
+        },
+        "required": [
+          "taskId"
+        ],
         "additionalProperties": false
       }
     }

@@ -32,12 +32,29 @@ async function statusJob(job) {
   if (job.runId) {
     try { out.run = await cindy.tasks.getRun({ runId: job.runId }); } catch (e) { out.runError = errInfo(e); }
   }
-  try {
-    const page = await cindy.tasks.readMessages({ taskId: job.taskId, limit: 100 });
-    const msgs = (page && (page.messages || page.items)) || [];
-    out.messages = msgs.map(m => ({ id: m.id || m.messageId || null, role: m.role || null,
-      text: partText(m.text !== undefined ? m.text : m.content) }));
-  } catch (e) { out.messagesError = errInfo(e); }
+  out.messages = [];
+  const outputId = out.run && out.run.outputMessageId;
+  if (out.run && out.run.status === 'completed' && typeof outputId === 'string' && outputId) {
+    try {
+      let after;
+      const cursors = new Set();
+      for (let pageNumber = 0; pageNumber < 32; pageNumber++) {
+        const page = await cindy.tasks.readMessages({ taskId: job.taskId, limit: 100, ...(after ? { after } : {}) });
+        const msgs = (page && (page.messages || page.items)) || [];
+        const exact = msgs.find(m => (m.id || m.messageId) === outputId && m.role === 'assistant');
+        if (exact) {
+          out.messages = [{ id: outputId, role: 'assistant', text: partText(exact.text !== undefined ? exact.text : exact.content) }];
+          break;
+        }
+        const next = page && page.nextCursor;
+        if (!next) break;
+        if (typeof next !== 'string' || cursors.has(next)) throw new Error('Invalid or repeated message cursor');
+        cursors.add(next);
+        after = next;
+        if (pageNumber === 31) throw new Error('Message pagination limit reached');
+      }
+    } catch (e) { out.messagesError = errInfo(e); }
+  }
   return out;
 }
 async function handleJob(job) {
@@ -56,6 +73,8 @@ async function toolCall(msg) {
       return;
     }
     r = await node('anet/send_to_peer', { text, callId: msg.callId }, 60000);
+  } else if (msg.tool === 'reconcile_result') {
+    r = await node('anet/reconcile_result', { taskId: msg.args && msg.args.taskId }, 60000);
   } else if (msg.tool === 'bridge_status') {
     r = await node('bridge/status', {}, 15000);
   } else return;

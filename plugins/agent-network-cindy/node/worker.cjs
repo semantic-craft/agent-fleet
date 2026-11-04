@@ -274,6 +274,37 @@ async function sendToPeer(p, text) {
       } catch (e) { return ({ sent: false, outcome: 'unverified', messageId: rec.messageId, message: String(e.message || e).slice(0, 300) }); }
 }
 
+async function reconcileResult(aid) {
+  loadConfig();
+  if (!config || typeof aid !== 'string') throw new Error('configured bridge and task id required');
+  const rec = state.tasks[aid];
+  if (!rec || rec.phase !== 'unverified' || rec.error?.code !== 'EXACT_OUTPUT_UNAVAILABLE' ||
+      !rec.cindyTaskId || !rec.runId || !rec.requestMessageId || !config.allowPeers.includes(rec.peer)) {
+    return { reconciled: false, reason: 'not-eligible', taskId: aid };
+  }
+  if (busy || !status.mainConnected) return { reconciled: false, reason: 'bridge-busy-or-disconnected', taskId: aid };
+  busy = true;
+  try {
+    const remote = await tool('get_task', { task_id: aid, history_length: TASK_HISTORY_LENGTH });
+    const task = remote.task || remote;
+    if (OFFICIAL_TERMINAL.has(officialState(task)) || lastUserMessageId(task) !== rec.requestMessageId || !lastUserText(task).trim()) {
+      return { reconciled: false, reason: 'official-task-ended-or-request-changed', taskId: aid };
+    }
+    const st = await runJob({ kind: 'status', taskId: rec.cindyTaskId, runId: rec.runId }, 30000);
+    if (!st?.ok || st.runError || st.messagesError || st.run?.status !== 'completed') {
+      return { reconciled: false, reason: 'host-output-not-ready', taskId: aid };
+    }
+    const text = pickOutput(st);
+    if (!text || text.length > 60000) return { reconciled: false, reason: 'exact-output-unavailable', taskId: aid };
+    Object.assign(rec, { phase: 'delivery-unverified', pendingReply: { task_id: aid, state: 'completed', text } });
+    saveState();
+    await tool('reply_task', rec.pendingReply);
+    Object.assign(rec, { phase: 'replied', error: null, reconciledAt: new Date().toISOString(), endedAt: new Date().toISOString() });
+    saveState();
+    return { reconciled: true, taskId: aid, state: 'completed' };
+  } finally { busy = false; saveStatus(); }
+}
+
 // ---------- stdio JSON-RPC from Cindy host (main.js) ----------
 if (!process.env.AGENT_NETWORK_CINDY_TEST) readline.createInterface({ input: process.stdin }).on('line', async (line) => {
   let req; try { req = JSON.parse(line); } catch { write({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }); return; }
@@ -289,6 +320,7 @@ if (!process.env.AGENT_NETWORK_CINDY_TEST) readline.createInterface({ input: pro
       return ok({ ok: true });
     }
     if (req.method === 'bridge/status') { loadConfig(); saveStatus(); return ok(readJson(STATUS_FILE, {})); }
+    if (req.method === 'anet/reconcile_result') return ok(await reconcileResult(p.taskId));
     if (req.method === 'anet/send_to_peer') {
       loadConfig(); if (!config) return fail('bridge not configured');
       const text = String(p.text || '').trim(); if (!text || text.length > 8000) return fail('text must be 1-8000 characters');
@@ -305,4 +337,4 @@ if (!process.env.AGENT_NETWORK_CINDY_TEST) {
   setTimeout(tick, 1500);
   log('started; config', config ? 'ok' : 'missing');
 }
-module.exports = { tick, state, status, sendToPeer, setTestDependencies(deps) { tool = deps.tool; runJob = deps.runJob; startMcp = () => {}; } };
+module.exports = { tick, state, status, sendToPeer, reconcileResult, setTestDependencies(deps) { tool = deps.tool; runJob = deps.runJob; startMcp = () => {}; } };
