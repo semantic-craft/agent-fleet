@@ -10,7 +10,9 @@
 
 舰队身份、任务账本和跨身份委派只走 ANet。要进已经打开的 Desktop 窗口，并且 cwd 等于 `~/Projects` 里的项目时，投递走 Reason：边界见 `docs/reason.md`，选用见 `skills/dispatch-desktop-reason`。同一件活只选一条，禁止同时发 ANet 任务和 Reason 进窗。Reason 签到另线，未签到不写成已通。体系落在专属的 `~/Projects`（少仓；主 A 可换 Grok、Dots 或 Cindy），叙事见 `docs/architecture.md`。
 
-历史遗留，不要当作派活入口：agenvo、Hermes、LCU 自定义 MCP、CommHub、`anet.sonori.dev`。
+Hub 正本（2026-11-04 社长／现网）：自建 `https://anet.sonori.dev`（ANetHub 0.3.3）；本机五身份 Registered。官方 `hub.agentnetwork.org.cn` 已清仓，不作现行正本。
+
+历史遗留，不要当作派活入口：agenvo、Hermes、LCU 自定义 MCP、旧 CommHub MCP／#90 门铃桥。**勿把自建 Hub URL 与旧 CommHub MCP 混称遗留。**
 
 未点名时，派活交给 Codex。DSH 是同等能力的后备：须能列出、读输出、新建、追问、中断、看事件，任务在 DSH 桌面可见。Codex 不可用（额度或故障）时由 DSH 接上。不要把 DSH 退回到只能派任务的程度。
 
