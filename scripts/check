@@ -1,0 +1,82 @@
+#!/usr/bin/env python3
+"""Run offline checks and retain command output with a source fingerprint."""
+import hashlib
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+from datetime import datetime, timezone
+
+root = Path(__file__).resolve().parent.parent
+os.chdir(root)
+stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
+artifacts = root / ".scratch" / "pstack-relay" / "checks" / stamp
+artifacts.mkdir(parents=True)
+def source_hashes():
+    paths = subprocess.check_output(
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"]
+    ).split(b"\0")
+    sources = {}
+    for raw in sorted(set(paths)):
+        if raw:
+            path = Path(os.fsdecode(raw))
+            if path.is_file():
+                sources[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return sources
+
+
+sources = source_hashes()
+receipt = {
+    "started_at": stamp,
+    "head": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+    "sources": sources,
+    "commands": [],
+    "passed": False,
+}
+commands = [
+    ["cargo", "check", "--workspace"],
+    ["cargo", "test", "--workspace"],
+    ["cargo", "test", "--workspace", "session_directory"],
+    ["cargo", "test", "-p", "fleet-hub"],
+    ["cargo", "test", "-p", "fleet-daemon", "cwd_follows_session", "--", "--nocapture"],
+    ["cargo", "test", "-p", "fleet-daemon", "desktop_delivery", "--", "--nocapture"],
+    ["cargo", "test", "--workspace", "delivery_tier"],
+    ["cargo", "test", "--workspace", "brief_policy"],
+    ["python3", "scripts/pstack-relay", "selftest"],
+    ["npm", "test"],
+]
+exit_code = 1
+try:
+    with tempfile.TemporaryDirectory(prefix="fleet-check-target-") as target:
+        env = dict(os.environ, CARGO_TARGET_DIR=target)
+        for index, command in enumerate(commands):
+            log = artifacts / f"{index + 1}.log"
+            print("$ " + " ".join(command), flush=True)
+            with log.open("w") as output:
+                process = subprocess.Popen(command, stdout=subprocess.PIPE,
+                                           stderr=subprocess.STDOUT, text=True, env=env)
+                for line in process.stdout:
+                    print(line, end="", flush=True)
+                    output.write(line)
+                code = process.wait()
+            receipt["commands"].append({"argv": command, "exit_code": code,
+                                         "log": str(log.relative_to(root))})
+            if code:
+                exit_code = code
+                break
+        else:
+            final_sources = source_hashes()
+            changed = sorted(path for path in sources.keys() | final_sources.keys()
+                             if sources.get(path) != final_sources.get(path))
+            receipt["changed_during_check"] = changed
+            receipt["passed"] = not changed
+            exit_code = 1 if changed else 0
+            if changed:
+                print("Source changed during checks: " + ", ".join(changed), flush=True)
+finally:
+    destination = artifacts / "receipt.json"
+    destination.write_text(json.dumps(receipt, indent=2) + "\n")
+    print(f"CHECK_RECEIPT={destination}", flush=True)
+sys.exit(exit_code)

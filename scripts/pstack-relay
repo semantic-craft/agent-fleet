@@ -1,0 +1,491 @@
+#!/usr/bin/env python3
+"""Universal PStack cross-chat relay manager and Antigravity lifecycle hook handler.
+
+Encodes Lauren Tan's (poteto) pstack guide workflow for outcome-only operators:
+- Panorama slice queue (`docs/pstack-relay.md`) with falsifiable Done Predicates
+- Append-only decision trail (`.scratch/pstack-relay/decisions.tsv` for `/show-me-your-work`)
+- Automatic next-chat `/poteto-mode` prompt generation (`.scratch/pstack-relay/NEXT_PROMPT.md` + `pbcopy`)
+  that follows poteto's prompting rules (Goal + Done check + Proof + Constraints; never pre-listing skills)
+"""
+from __future__ import annotations
+
+import argparse
+from datetime import datetime, timezone
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+from typing import Any
+
+SLICE_HEADER_RE = re.compile(
+    r"^### \[(?P<mark>[ x~])\] Slice (?P<id>[A-Z0-9]+): (?P<title>.+)$",
+    re.MULTILINE,
+)
+
+HOOKS_TEMPLATE = {
+    "pstack-relay": {
+        "SessionStart": [
+            {
+                "type": "command",
+                "command": "python3 scripts/pstack-relay hook SessionStart",
+                "timeout": 10,
+            }
+        ],
+        "Stop": [
+            {
+                "type": "command",
+                "command": "python3 scripts/pstack-relay hook Stop",
+                "timeout": 10,
+            }
+        ],
+    }
+}
+
+AGENTS_RELAY_BULLET = (
+    "- **PStack 自动接力约定（A → B → C 跨对话推进）**：全景切片队列在 [docs/pstack-relay.md](docs/pstack-relay.md)，"
+    "决策账本在 `.scratch/pstack-relay/decisions.tsv`。每次对话完成一个切片并通过验证后，必须运行 "
+    "`scripts/pstack-relay advance <SLICE_ID> --evidence \"<sha/receipt>\" --copy`（若仅查询状态则运行 "
+    "`scripts/pstack-relay status --copy`），并在回复末尾附上生成的 `## Next Chat Prompt (Copy & Paste)` 代码块，"
+    "供用户直接粘贴到下一个新对话。"
+)
+
+
+def repo_root(explicit_root: str | None = None) -> Path:
+    if explicit_root:
+        return Path(explicit_root).resolve()
+    override = os.environ.get("MI_PSTACK_RELAY_ROOT") or os.environ.get("PSTACK_RELAY_ROOT")
+    if override:
+        return Path(override).resolve()
+    here = Path(__file__).resolve()
+    if here.parent.name == "scripts" and (here.parent.parent / "docs" / "pstack-relay.md").exists():
+        return here.parent.parent
+    if here.parent.name == "scripts" and (here.parent.parent / ".git").exists():
+        return here.parent.parent
+    return Path.cwd().resolve()
+
+
+def relay_doc_path(root: Path) -> Path:
+    return root / "docs" / "pstack-relay.md"
+
+
+def scratch_dir(root: Path) -> Path:
+    d = root / ".scratch" / "pstack-relay"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def decisions_path(root: Path) -> Path:
+    path = scratch_dir(root) / "decisions.tsv"
+    if not path.exists():
+        path.write_text("ts\tphase\tdecision\twhy\tevidence\tresult\n", encoding="utf-8")
+    return path
+
+
+def next_prompt_path(root: Path) -> Path:
+    return scratch_dir(root) / "NEXT_PROMPT.md"
+
+
+def state_json_path(root: Path) -> Path:
+    return scratch_dir(root) / "state.json"
+
+
+def detect_verify_entry(root: Path) -> str:
+    skills_dir = root / "skills"
+    if skills_dir.is_dir():
+        for child in sorted(skills_dir.iterdir()):
+            if child.is_dir() and child.name.startswith("verify-") and (child / "SKILL.md").is_file():
+                return f"skills/{child.name}/SKILL.md"
+    if (root / "scripts" / "verify-offline").exists():
+        return "scripts/verify-offline"
+    if (root / "scripts" / "check").exists():
+        return "scripts/check"
+    return "NONE_DETECTED (build verification harness in Slice A via project-verification / create-verification-skill)"
+
+
+def parse_slices(markdown: str) -> list[dict[str, str]]:
+    matches = list(SLICE_HEADER_RE.finditer(markdown))
+    slices: list[dict[str, str]] = []
+    for idx, m in enumerate(matches):
+        start = m.end()
+        end = matches[idx + 1].start() if idx + 1 < len(matches) else len(markdown)
+        body = markdown[start:end]
+
+        def extract_field(label: str) -> str:
+            pattern = re.compile(rf"^- \*\*{re.escape(label)}\*\*:\s*(.+)$", re.MULTILINE)
+            fm = pattern.search(body)
+            return fm.group(1).strip() if fm else ""
+
+        slices.append(
+            {
+                "id": m.group("id").strip(),
+                "mark": m.group("mark"),
+                "title": m.group("title").strip(),
+                "playbook": extract_field("Playbook"),
+                "outcome": extract_field("Outcome"),
+                "predicate": extract_field("Done Predicate"),
+                "evidence": extract_field("Evidence"),
+            }
+        )
+    return slices
+
+
+def current_and_last_slice(slices: list[dict[str, str]]) -> tuple[dict[str, str] | None, dict[str, str] | None]:
+    last_done: dict[str, str] | None = None
+    for s in slices:
+        if s["mark"] == "x":
+            last_done = s
+    for s in slices:
+        if s["mark"] in ("~", " "):
+            return s, last_done
+    return None, last_done
+
+
+def append_decision(root: Path, phase: str, decision: str, why: str, evidence: str, result: str) -> None:
+    def clean(cell: str) -> str:
+        c = re.sub(r"[\t\r\n]+", " ", cell).strip()
+        if c and c[0] in ("=", "+", "-", "@"):
+            c = "'" + c
+        return c
+
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    row = "\t".join([ts, clean(phase), clean(decision), clean(why), clean(evidence), clean(result)]) + "\n"
+    with decisions_path(root).open("a", encoding="utf-8") as f:
+        f.write(row)
+
+
+def render_prompt(root: Path, slices: list[dict[str, str]]) -> str:
+    nxt, last_done = current_and_last_slice(slices)
+    verify_entry = detect_verify_entry(root)
+    if nxt is None:
+        return (
+            "/poteto-mode\n"
+            "new task. All slices in `docs/pstack-relay.md` are marked `[x]`.\n"
+            "- Goal: Run the morning audit over `.scratch/pstack-relay/decisions.tsv` (`show-me-your-work`) and present a plain-language catch-up (`ketchup`) of everything shipped and any remaining physical/human-only checks.\n"
+            "- Done check: `scripts/pstack-relay status --require-all-done` exits 0.\n"
+        )
+    last_summary = (
+        f"Slice {last_done['id']} ({last_done['title']}) — evidence: {last_done['evidence']}"
+        if last_done
+        else "None (starting first slice)"
+    )
+    return (
+        "/poteto-mode\n"
+        "new task. Take over this repo from `docs/pstack-relay.md` and `.scratch/pstack-relay/decisions.tsv` (treat the prior trail as authoritative; do not redo finished slices).\n"
+        f"- Last completed: {last_summary}\n"
+        f"- Goal (**Slice {nxt['id']}: {nxt['title']}**): {nxt['outcome']}\n"
+        f"- Done means (falsifiable check): {nxt['predicate']}\n"
+        f"- Proof to show: real command output and artifact receipt from `{verify_entry}` (`prove-it-works`, not 'it compiles').\n"
+        "- Real constraints:\n"
+        "  1. In your first message, restate my goal and the smallest change in plain words, then proceed immediately without waiting for confirmation (`never-block-on-the-human`).\n"
+        "  2. I am the product owner and do not make code or architecture choices; settle all technical forks yourself with running code or prototypes instead of asking me.\n"
+        "  3. Keep a decision trail in `.scratch/pstack-relay/decisions.tsv` (`show-me-your-work`).\n"
+        f"  4. When the done check passes, run `scripts/pstack-relay advance {nxt['id']} --evidence \"<commit-or-receipt>\" --copy` and end your reply with the `## Next Chat Prompt (Copy & Paste)` code block.\n"
+    )
+
+
+def copy_to_clipboard(text: str) -> bool:
+    if os.environ.get("MI_DISABLE_PBCOPY") == "1" or os.environ.get("PSTACK_DISABLE_PBCOPY") == "1":
+        return False
+    try:
+        proc = subprocess.run(["pbcopy"], input=text.encode("utf-8"), check=False, timeout=3)
+        return proc.returncode == 0
+    except Exception:
+        return False
+
+
+def sync_files(root: Path, copy: bool = False) -> tuple[str, dict[str, Any]]:
+    doc = relay_doc_path(root)
+    if not doc.exists():
+        raise SystemExit(f"missing relay doc: {doc} (run `pstack-relay init --goal '...'` first)")
+    slices = parse_slices(doc.read_text(encoding="utf-8"))
+    prompt = render_prompt(root, slices)
+    next_prompt_path(root).write_text(prompt, encoding="utf-8")
+    decisions_path(root)
+    nxt, last_done = current_and_last_slice(slices)
+    copied = copy_to_clipboard(prompt) if copy else False
+    state = {
+        "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "verify_entry": detect_verify_entry(root),
+        "next_slice": nxt["id"] if nxt else None,
+        "next_title": nxt["title"] if nxt else None,
+        "last_completed_slice": last_done["id"] if last_done else None,
+        "completed_count": sum(1 for s in slices if s["mark"] == "x"),
+        "total_count": len(slices),
+        "next_prompt_path": str(next_prompt_path(root)),
+        "decisions_path": str(decisions_path(root)),
+        "copied_to_clipboard": copied,
+    }
+    state_json_path(root).write_text(json.dumps(state, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return prompt, state
+
+
+def ensure_exclude_line(root: Path, pattern: str) -> None:
+    git_dir = root / ".git"
+    if git_dir.is_file():
+        # git worktree file pointing to gitdir
+        raw = git_dir.read_text(encoding="utf-8").strip()
+        if raw.startswith("gitdir:"):
+            git_dir = (root / raw.split(":", 1)[1].strip()).resolve()
+    info_dir = git_dir / "info"
+    if not info_dir.is_dir():
+        return
+    exclude = info_dir / "exclude"
+    existing = exclude.read_text(encoding="utf-8") if exclude.exists() else ""
+    lines = [line.strip() for line in existing.splitlines()]
+    if pattern not in lines:
+        prefix = "" if (not existing or existing.endswith("\n")) else "\n"
+        exclude.write_text(existing + f"{prefix}{pattern}\n", encoding="utf-8")
+
+
+def cmd_init(root: Path, goal: str, reference: str | None, copy: bool) -> int:
+    (root / "docs").mkdir(parents=True, exist_ok=True)
+    (root / "scripts").mkdir(parents=True, exist_ok=True)
+    target_script = root / "scripts" / "pstack-relay"
+    this_script = Path(__file__).resolve()
+    if this_script != target_script.resolve():
+        target_script.write_text(this_script.read_text(encoding="utf-8"), encoding="utf-8")
+        target_script.chmod(0o755)
+
+    # Wire .agents/hooks.json
+    agents_dir = root / ".agents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    hooks_path = agents_dir / "hooks.json"
+    hooks_data: dict[str, Any] = {}
+    if hooks_path.exists():
+        try:
+            hooks_data = json.loads(hooks_path.read_text(encoding="utf-8"))
+        except Exception:
+            hooks_data = {}
+    hooks_data["pstack-relay"] = {
+        "SessionStart": [
+            {
+                "type": "command",
+                "command": f"python3 '{target_script}' hook SessionStart",
+                "timeout": 10,
+            }
+        ],
+        "Stop": [
+            {
+                "type": "command",
+                "command": f"python3 '{target_script}' hook Stop",
+                "timeout": 10,
+            }
+        ],
+    }
+    hooks_path.write_text(json.dumps(hooks_data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    ensure_exclude_line(root, ".agents/")
+    ensure_exclude_line(root, ".scratch/")
+
+    # Wire AGENTS.md if present
+    agents_md = root / "AGENTS.md"
+    if agents_md.exists():
+        content = agents_md.read_text(encoding="utf-8")
+        if "docs/pstack-relay.md" not in content:
+            lines = content.splitlines()
+            if lines and lines[0].startswith("# "):
+                lines.insert(1, "")
+                lines.insert(2, AGENTS_RELAY_BULLET)
+                agents_md.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            else:
+                agents_md.write_text(AGENTS_RELAY_BULLET + "\n\n" + content, encoding="utf-8")
+
+    doc = relay_doc_path(root)
+    verify_entry = detect_verify_entry(root)
+    if not doc.exists():
+        ref_line = f"- 参考实现/材料：`{reference}`\n" if reference else ""
+        template = (
+            f"# PStack 接力队列（{goal}）\n\n"
+            "本文件是 PStack 跨对话自动接力的唯一全景队列（对应 Lauren Tan `pstack` 的 `figure-it-out`、`sequence-verifiable-units` 与 `Session pickup`）。\n"
+            "只维护每个对话切片（Slice）的**用户可感知效果（Outcome）**与**可证伪验收条件（Done Predicate）**，不在此写死内部代码实现。\n\n"
+            f"- 总目标：{goal}\n"
+            f"{ref_line}"
+            f"- 自动验收入口：`{verify_entry}`\n"
+            "- 决策账本（`show-me-your-work`）：`.scratch/pstack-relay/decisions.tsv`\n"
+            "- 下一棒提示词快照：`.scratch/pstack-relay/NEXT_PROMPT.md`\n\n"
+            "---\n\n"
+            "## 全景切片队列（A → D）\n\n"
+            "### [ ] Slice A: 现状摸底、验证杠杆就位与全景切片细化\n"
+            "- **Playbook**: `Investigation` + `figure-it-out`\n"
+            f"- **Outcome**: 用只读调查摸清当前代码库与目标「{goal}」的差距；确认或建立自动验收入口（若无则用 `project-verification` / `create-verification-skill` 补齐）；将后续 Slice B–D 细化为按风险排序、各自可独立验证的切片。\n"
+            "- **Done Predicate**: `docs/pstack-relay.md` 中的后续切片均已具备可执行命令级 Done Predicate，且 `scripts/pstack-relay selftest` 通过。\n"
+            "- **Evidence**: `PENDING`\n\n"
+            "### [ ] Slice B: 核心领域模型与首个高风险闭环交付\n"
+            "- **Playbook**: `Feature`\n"
+            "- **Outcome**: 交付目标中最核心、最不确定的第一项用户可感知功能，通过原型或架构对比自主解决技术分叉，并在真实产物上完成验证。\n"
+            f"- **Done Predicate**: `{verify_entry}` 与新增行为测试全部 `PASS`。\n"
+            "- **Evidence**: `PENDING`\n\n"
+            "### [ ] Slice C: 完整交互体验与边界保护\n"
+            "- **Playbook**: `Feature`\n"
+            "- **Outcome**: 补齐剩余用户可见交互与异常回退保护，确保与现有功能零冲突。\n"
+            f"- **Done Predicate**: `{verify_entry}` 全量回归 `PASS`。\n"
+            "- **Evidence**: `PENDING`\n\n"
+            "### [ ] Slice D: 对抗审查、清理与最终收口\n"
+            "- **Playbook**: `Shipping`\n"
+            "- **Outcome**: 对照总目标执行对抗审查（`interrogate`）、清理冗余代码与注释（`unslop` / `no-comments`），完成全量验证并生成晨间审计摘要（`show-me-your-work` + `ketchup`）。\n"
+            f"- **Done Predicate**: `{verify_entry}` 与 `scripts/pstack-relay status --require-all-done` 全部 `PASS`。\n"
+            "- **Evidence**: `PENDING`\n"
+        )
+        doc.write_text(template, encoding="utf-8")
+        append_decision(
+            root,
+            phase="init",
+            decision=f"Initialized pstack-relay panorama queue for goal: {goal}",
+            why="Bootstrap zero-coding copy-paste relay workflow",
+            evidence="docs/pstack-relay.md;scripts/pstack-relay;.agents/hooks.json",
+            result="OPEN",
+        )
+
+    return cmd_status(root, require_all_done=False, copy=copy)
+
+
+def cmd_status(root: Path, require_all_done: bool, copy: bool) -> int:
+    prompt, state = sync_files(root, copy=copy)
+    print(
+        f"PStack Relay Progress: {state['completed_count']}/{state['total_count']} slices completed. "
+        f"Next: {('Slice ' + state['next_slice'] + ' (' + state['next_title'] + ')') if state['next_slice'] else 'ALL DONE'}"
+    )
+    print(
+        f"Saved next prompt to: {state['next_prompt_path']} (clipboard={'yes' if state['copied_to_clipboard'] else 'no'})"
+    )
+    print("\n## Next Chat Prompt (Copy & Paste)\n")
+    print("```text")
+    print(prompt.rstrip())
+    print("```")
+    if require_all_done and state["next_slice"] is not None:
+        return 1
+    return 0
+
+
+def cmd_advance(root: Path, slice_id: str, evidence: str, why: str, copy: bool) -> int:
+    doc = relay_doc_path(root)
+    text = doc.read_text(encoding="utf-8")
+    slices = parse_slices(text)
+    target = next((s for s in slices if s["id"].upper() == slice_id.upper()), None)
+    if target is None:
+        raise SystemExit(f"unknown slice ID: {slice_id}")
+
+    header_pattern = re.compile(
+        rf"^(### \[)[ x~](\] Slice {re.escape(target['id'])}: .+)$",
+        re.MULTILINE,
+    )
+    text, count = header_pattern.subn(r"\1x\2", text, count=1)
+    if count != 1:
+        raise SystemExit(f"failed to update header for Slice {target['id']}")
+
+    matches = list(SLICE_HEADER_RE.finditer(text))
+    for idx, m in enumerate(matches):
+        if m.group("id").strip().upper() == target["id"].upper():
+            start = m.end()
+            end = matches[idx + 1].start() if idx + 1 < len(matches) else len(text)
+            section = text[start:end]
+            section = re.sub(
+                r"^(- \*\*Evidence\*\*:\s*)(.+)$",
+                lambda em: em.group(1) + evidence,
+                section,
+                count=1,
+                flags=re.MULTILINE,
+            )
+            text = text[:start] + section + text[end:]
+            break
+
+    doc.write_text(text, encoding="utf-8")
+    append_decision(
+        root,
+        phase=f"slice-{target['id'].lower()}",
+        decision=f"Completed Slice {target['id']}: {target['title']}",
+        why=why or "Done predicate satisfied and verified",
+        evidence=evidence,
+        result="VERIFIED",
+    )
+    return cmd_status(root, require_all_done=False, copy=copy)
+
+
+def cmd_hook(root: Path, event: str) -> int:
+    try:
+        payload = json.load(sys.stdin)
+    except Exception:
+        payload = {}
+
+    if not relay_doc_path(root).exists():
+        print("{}")
+        return 0
+
+    prompt, state = sync_files(root, copy=False)
+    nxt = state.get("next_slice")
+    if event == "SessionStart":
+        if nxt:
+            msg = (
+                f"[PStack Relay Hook] Active panorama queue: {state['completed_count']}/{state['total_count']} done. "
+                f"Current target is Slice {nxt} ({state['next_title']}). "
+                f"Read `docs/pstack-relay.md` and `.scratch/pstack-relay/decisions.tsv`. "
+                f"Before ending your final turn, run `scripts/pstack-relay status --copy` (or `advance`) and output the `## Next Chat Prompt (Copy & Paste)` block."
+            )
+            print(json.dumps({"injectSteps": [{"systemMessage": {"systemMessage": msg}}]}))
+            return 0
+        print("{}")
+        return 0
+
+    if event == "Stop":
+        if isinstance(payload, dict) and payload.get("terminationReason") == "NO_TOOL_CALL":
+            sync_files(root, copy=True)
+        print("{}")
+        return 0
+
+    print("{}")
+    return 0
+
+
+def cmd_selftest(root: Path) -> int:
+    prompt, state = sync_files(root, copy=False)
+    assert state["total_count"] >= 2, "expected at least 2 slices in panorama queue"
+    assert Path(state["next_prompt_path"]).exists(), "NEXT_PROMPT.md must exist"
+    assert Path(state["decisions_path"]).exists(), "decisions.tsv must exist"
+    assert "/poteto-mode" in prompt, "prompt must start with /poteto-mode"
+    print("pstack-relay selftest: PASS")
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="PStack cross-chat relay manager")
+    parser.add_argument("--root", help="Repository root path override")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    p_init = sub.add_parser("init", help="Bootstrap pstack-relay in a repository")
+    p_init.add_argument("--goal", required=True, help="Plain-language product outcome")
+    p_init.add_argument("--reference", help="Optional reference repo or doc path")
+    p_init.add_argument("--copy", action="store_true", help="Copy generated prompt to clipboard")
+
+    p_status = sub.add_parser("status", help="Show relay progress and print next prompt")
+    p_status.add_argument("--require-all-done", action="store_true")
+    p_status.add_argument("--copy", action="store_true", help="Copy next prompt to macOS clipboard")
+
+    p_adv = sub.add_parser("advance", help="Mark a slice completed, log decision, and emit next prompt")
+    p_adv.add_argument("slice_id", help="Slice letter, e.g. A, B, C")
+    p_adv.add_argument("--evidence", required=True, help="Commit SHA, PR, or receipt path")
+    p_adv.add_argument("--why", default="Done predicate verified", help="Reason/summary for decisions.tsv")
+    p_adv.add_argument("--copy", action="store_true", help="Copy next prompt to macOS clipboard")
+
+    p_hook = sub.add_parser("hook", help="Antigravity lifecycle hook entrypoint")
+    p_hook.add_argument("event", choices=["SessionStart", "Stop", "PreInvocation"])
+
+    sub.add_parser("selftest", help="Verify relay files and prompt generation")
+
+    args = parser.parse_args()
+    root = repo_root(args.root)
+    if args.cmd == "init":
+        return cmd_init(root, goal=args.goal, reference=args.reference, copy=args.copy)
+    if args.cmd == "status":
+        return cmd_status(root, require_all_done=args.require_all_done, copy=args.copy)
+    if args.cmd == "advance":
+        return cmd_advance(root, args.slice_id, args.evidence, args.why, copy=args.copy)
+    if args.cmd == "hook":
+        return cmd_hook(root, args.event)
+    if args.cmd == "selftest":
+        return cmd_selftest(root)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

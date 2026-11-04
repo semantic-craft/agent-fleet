@@ -6,3 +6,6 @@ fleet.json
 
 # plugin smoke evidence (local only)
 plugins/**/evidence/
+
+# Rust build output
+/target/

@@ -1,0 +1,86 @@
+# Rust fleet engine 接力队列
+
+总目标：ANet-based Rust fleet engine absorbing agenvo + Reason delivery；兼容 `https://anet.sonori.dev`。Slice A–G 已按各自验收边界完成。G 沿用外循环代选 A，真实 Sonori Hub 同任务经当前 Codex CLI 恢复执行并回读签名收据。原生 Desktop 可见性、自动回复成功及 Rust Hub client 线上发送仍未获证。实现尚未提交、合并或部署；外循环收据见 `.scratch/pstack-relay/slice-g-receipt.md`。
+
+## 工作源与约束
+
+- 基线为 main `33ebed6`；本任务在 `agent/slice-a-pstack-20261104` worktree。外循环接续前先检查工作区，不覆盖 PR #114 所在线与其他 agent 的改动。
+- 当前工作区：`~/Projects/.worktrees/agent-fleet/slice-a-pstack-20261104`。日志在 `~/Projects/_status/agent-fleet-rust-engine-20261104/`，账本在 `.scratch/pstack-relay/decisions.tsv`。
+- Rust 是目标实现。vendor/anet 仅作协议参考；旧 agenvo 仅提供机制线索。现有线上路径保持到真实验收通过。
+- 不读 PRIVATE 或业务仓；不改 Hub 身份、Reason 配置或部署。禁止同活同时发 ANet task 和 Reason 进窗。
+- 模型由 dispatcher 配置。brief 禁止 model self-attest 和 MODEL_WRONG 回路，不以 agent 自报作为模型证据。
+- 技术分叉自行用隔离原型判断。不可逆外部操作停止交外循环。
+
+## 现状 vs 目标差距与防冲突护栏
+
+| 项目 | 本轮现场 | 目标与缺口 |
+| --- | --- | --- |
+| 实现 | Slice B 已建立 Rust 四 crates 与只读 session directory | Slice C 已增加 Hub transport；Slice D 增加 daemon 执行核心，Slice E 已有原生已加载线程 adapter，Desktop 自带 stdio 接线仍未完成 |
+| Hub | 旧 architecture 有排除 Sonori Hub 的陈述，与当前 brief 冲突 | 本轮架构说明采用 Sonori 正本；不声称已做线上探测 |
+| Reason | docs/reason.md 仅定义投递边界，签到另线 | 五项机制均须 Rust 实现与行为证据 |
+| 并行工作 | fleet-canon-workdir-hub worktree 存在，另有未提交 Rust 工作线索 | 不复制、不覆盖；B 先核对所属分支与实现差异 |
+| 验证 | scripts/check 汇总 Cargo、隔离 fixture、relay selftest 与 npm test | 真实 Hub/Desktop 证据仍缺；不运行生产 fleet check |
+| hooks | init 写 .agents/hooks.json | 文件生成不代表宿主已加载；本轮手动 advance 验证 |
+
+## 验证杠杆与吞吐检查点
+
+运行 `scripts/check`。它运行 `cargo check --workspace`、`cargo test --workspace`、`cargo test --workspace session_directory`、`cargo test -p fleet-hub`、`cargo test -p fleet-daemon cwd_follows_session -- --nocapture`、`cargo test -p fleet-daemon desktop_delivery -- --nocapture`、`cargo test --workspace delivery_tier`、`cargo test --workspace brief_policy`、接力控制器自测和现有 `npm test`，不加载凭据、不运行生产 fleet check。
+Slice B 已将 Cargo 编译与 session directory 隔离行为测试接入同一入口。Slice C 增加隔离 Hub HTTP fixture。Slice D 增加两个临时项目中的真实子进程执行和拒绝时零执行检查。每次运行保留完整输出与源码 SHA-256 清单，回执位于 `.scratch/pstack-relay/checks/<时间>/receipt.json`。Desktop 可见性保留至 G 的真实验收，不由 E 的放宽验收推导。
+先用可重复离线检查完成 A；最高不确定性是 session 识别与进已开线程，B 优先建立目录契约，E 必须补真实 Desktop 证据。其余切片按依赖顺序推进，不并发改同一工作区。
+
+本轮结果：`scripts/check` 退出 0，311 tests pass，private guard 与 caller routing 均 OK。relay selftest 通过。初次检查发现 hooks/scratch 未被 worktree 的 exclude 忽略及文档含机器别名，已在 Git common exclude 和文档中修正，重跑通过。
+
+## 切片表
+
+| Slice | 交付 | 验收位置 |
+| --- | --- | --- |
+| A | 盘点与接力入口 | 下方 Slice A 的 Done Predicate |
+| B | Rust crates 与 session directory | 下方 Slice B 的 Done Predicate |
+| C | Hub client 与单通道收据 | 下方 Slice C 的 Done Predicate |
+| D | Node daemon 与 cwd-follows-session | 下方 Slice D 的 Done Predicate |
+| E | Inject opened Desktop/thread | 下方 Slice E 的 Done Predicate |
+| F | Delivery tier 与 brief 边界 | 下方 Slice F 的 Done Predicate |
+| G | 外循环验收与收口 | 下方 Slice G 的 Done Predicate |
+
+### [x] Slice A: 盘点与接力入口
+- **Playbook**: `Investigation`
+- **Outcome**: 建立现状清单、离线验证入口与 Reason 五项契约，生成 B 提示词后停止。
+- **Done Predicate**: `scripts/check` 通过，或完整记录既有回归缺口；`scripts/pstack-relay selftest` 通过；五项契约与后续命令齐全。
+- **Evidence**: ~/Projects/_status/agent-fleet-rust-engine-20261104/slice-a-receipt.md;docs/architecture.md;scripts/check
+
+### [x] Slice B: Rust crates 与 session directory
+- **Playbook**: `Feature`
+- **Outcome**: 建立 fleet-proto、fleet-hub、fleet-daemon、fleet-cli；实现 session directory 的发现、稳定 thread 标识与过期记录拒绝，先用隔离夹具验证。只做 B，完成后交棒。沿用本页约束，禁止模型自证。
+- **Done Predicate**: `cargo check --workspace`、`cargo test --workspace session_directory` 和 `scripts/check` 通过；测试覆盖缺失、歧义、过期 session，断言不会误建线程。
+- **Evidence**: .scratch/pstack-relay/slice-b-receipt.md;.scratch/pstack-relay/checks/20261104T135837.838871Z/receipt.json
+
+### [x] Slice C: Hub client 与单通道收据
+- **Playbook**: `Feature`
+- **Outcome**: Rust Hub client 对接 Sonori Hub 协议；task 与 delivery 共用关联标识，超时先回读，不跨通道重复投递。
+- **Done Predicate**: `cargo test -p fleet-hub`、`scripts/check` 通过；隔离 Hub fixture 重放鉴权失败、超时、重复响应和回读，断言单次投递与收据关联。
+- **Evidence**: .scratch/pstack-relay/slice-c-receipt.md;.scratch/pstack-relay/checks/20261104T141116.956677Z/receipt.json
+
+### [x] Slice D: Node daemon 与 cwd-follows-session
+- **Playbook**: `Feature`
+- **Outcome**: daemon 从被选 session 读取项目 cwd；拒绝缓存目录、缺失目录和 session 变化，不用启动 daemon 的 cwd 覆盖会话目录。
+- **Done Predicate**: `cargo test -p fleet-daemon cwd_follows_session`、`scripts/check` 通过；在两个临时项目切换 session，观察执行命令返回正确 cwd，失效时零执行。
+- **Evidence**: .scratch/pstack-relay/slice-d-receipt.md;.scratch/pstack-relay/checks/20261104T141628.592823Z/receipt.json
+
+### [x] Slice E: Inject opened Desktop/thread
+- **Playbook**: `Feature`
+- **Outcome**: Rust 投递接口吸收 Reason 进窗机制，复用已经打开的 Desktop/thread；回读输出、续问、中断与事件留在同一线程。
+- **Done Predicate**: `cargo test -p fleet-daemon desktop_delivery`、`scripts/check` 通过；开发机 真实已开线程完成一次可见投递与结果回读，保存 thread id、cwd 和关联收据；mock 不能代替此证据。
+- **Evidence**: .scratch/pstack-relay/slice-e-receipt.md;~/Projects/_status/agent-fleet-rust-engine-20261104/slice-E-receipt-outer.md;.scratch/pstack-relay/checks/20261104T142841.176788Z/receipt.json
+
+### [x] Slice F: Delivery tier 与 brief 边界
+- **Playbook**: `Feature`
+- **Outcome**: 收据区分 accepted、thread-visible、running、completed、failed、unknown；模型配置归 dispatcher，brief 禁止模型自证及 MODEL_WRONG 门槛。
+- **Done Predicate**: `cargo test --workspace delivery_tier`、`cargo test --workspace brief_policy`、`scripts/check` 通过；拒绝虚报可见或完成层级；带自证门槛的 brief 被边界检查拒绝，正常 brief 可投递。
+- **Evidence**: .scratch/pstack-relay/slice-f-receipt.md;.scratch/pstack-relay/checks/20261104T144603.182728Z/receipt.json
+
+### [x] Slice G: 外循环验收与收口
+- **Playbook**: `Shipping`
+- **Outcome**: 开发机 Desktop 可见完成一次 Rust 引擎任务；Hub 保持兼容；说明实现、合并、部署和人工验收各自状态。
+- **Done Predicate**: `cargo check --workspace`、`cargo test --workspace`、`scripts/check` 通过；真实 Sonori Hub 与 开发机 Desktop 同一任务收据闭环，独立审查后由外循环收口。
+- **Evidence**: .scratch/pstack-relay/slice-g-receipt.md;.scratch/pstack-relay/checks/20261104T144947.302679Z/receipt.json;.scratch/pstack-relay/slice-g-final-audit.md
+
