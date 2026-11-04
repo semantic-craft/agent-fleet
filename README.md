@@ -1,10 +1,12 @@
 # agent-fleet
 
-**agent-fleet 是多 agent 协作的唯一正本**：协议说明、教训、当前实现和自制派活插件（[plugins/](plugins/README.md)）都在这里。
+**agent-fleet 是多 agent 协作的接线正本**：协议说明、派活契约、薄技能、教训和自制插件（[plugins/](plugins/README.md)）在这里。本仓库不实现 Agent Network，也不实现 Reason 或 codex-host。上游源码留在上游；这里只接线、插件和契约。
+
+体系落在专属的 `~/Projects`（少仓；主 A 可换 Grok、Dots 或 Cindy）。四层、外循环 orchestrator、内循环编排和 worker 互派见 [docs/architecture.md](docs/architecture.md)。PODAS 只是伞名，没有目录。
 
 ## 当前派活（本机）
 
-本机多 agent 派活只走**官方 Agent Network（anet）0.3.9**。正本：[docs/anet.md](docs/anet.md)。官方文档只认 <https://docs.agentnetwork.org.cn>。
+舰队身份、任务账本和跨身份委派只走**官方 Agent Network（anet）0.3.9**。正本：[docs/anet.md](docs/anet.md)。官方文档只认 <https://docs.agentnetwork.org.cn>。
 
 编码 agent 接入官方网络：`anet agents wire` 写入客户端条目，`anet mcp` 提供 stdio MCP（[接入编码 Agent](https://docs.agentnetwork.org.cn/docs/zh-cn/latest/howto/coding-agents.html)、[MCP](https://docs.agentnetwork.org.cn/docs/zh-cn/latest/howto/mcp.html)）。
 
@@ -18,22 +20,28 @@ Herdr 只做 pane 宿主，不是派活控制面。不另造 Herdr 与 ANet 之�
 
 dot 的原生平台任务与 anet 并列，不互相替代。DSH、GrokBot 的历史外部路线在 [docs/legacy/caller-routing.md](docs/legacy/caller-routing.md)。旧 Desktop 交接在 [docs/legacy/codex-desktop-handoff.md](docs/legacy/codex-desktop-handoff.md)，不是现行步骤。
 
+Desktop 进窗（窗口里看得见、结果回得来、cwd 等于 `~/Projects` 里的项目）走 Reason，边界见 [docs/reason.md](docs/reason.md)。同一件活不要既走 ANet 又走 Reason。Reason 签到另线，本文不宣称已通。薄技能：[skills/dispatch-desktop-reason](skills/dispatch-desktop-reason/SKILL.md)。
+
 迁移与升级仍先读[兼容来源、模型选择保护及在途恢复门槛](docs/migration-and-upgrades.md)。
 
 ## 组成（当前）
 
 | 层 | 来源 | 本仓库做什么 |
 | --- | --- | --- |
-| 协议与本机节点 | 官方 anet 0.3.9 | [docs/anet.md](docs/anet.md)：身份、inbound、delegate、env 教训 |
+| A 规矩 | outer-loop-kit | 不复制分流长文和版本钉。体验与四层见 [docs/architecture.md](docs/architecture.md) |
+| B 舰队 | 官方 anet 0.3.9（上游） | 不实现协议。[docs/anet.md](docs/anet.md)：身份、inbound、delegate、env 教训 |
+| C 投递 | Reason（上游；签到另线） | 不实现、不宣称已通。边界 [docs/reason.md](docs/reason.md) |
+| D 壳 | codex-host（上游） | 不实现、不 fork、不抢壳 |
 | 自制派活插件 | 本仓库 [plugins/](plugins/README.md) | 一宿主一目录；Cindy 见 [agent-network-cindy](plugins/agent-network-cindy/README.md) |
 | 跨仓库约定与教训 | 本仓库 | 根 [AGENTS.md](AGENTS.md)（其他仓库的同步源）、[lessons.md](lessons.md) |
 | 机器清单／脚本（遗留部署仍可用） | 本仓库 | [scripts/fleet.mjs](scripts/fleet.mjs)、[templates/](templates/)、[prompts/](prompts/) |
 
-通用派发契约：[docs/dispatch-contract.md](docs/dispatch-contract.md)。技能正文：[skills/delegate-via-anet](skills/delegate-via-anet/SKILL.md)。跨 Projects 来源与迁移：[docs/anet-alignment.md](docs/anet-alignment.md)。
+通用派发契约：[docs/dispatch-contract.md](docs/dispatch-contract.md)。ANet 技能：[skills/delegate-via-anet](skills/delegate-via-anet/SKILL.md)。Desktop 进窗选用：[skills/dispatch-desktop-reason](skills/dispatch-desktop-reason/SKILL.md)。跨 Projects 来源与迁移：[docs/anet-alignment.md](docs/anet-alignment.md)。
 
 ## 从哪里开始
 
-- 本机派活与协议：[docs/anet.md](docs/anet.md)、官方 <https://docs.agentnetwork.org.cn>。
+- 本机舰队与协议：[docs/anet.md](docs/anet.md)、官方 <https://docs.agentnetwork.org.cn>。
+- Desktop 进窗边界（未签到，不宣称已通）：[docs/reason.md](docs/reason.md)。
 - 判断 `~/Projects` 目录能不能动：[docs/landscape.md](docs/landscape.md)。
 - Agent 接手：跨仓库约定是根 [AGENTS.md](AGENTS.md)。[docs/AGENTS.shared.md](docs/AGENTS.shared.md) 只指向它。本仓再读 [lessons.md](lessons.md)、[docs/architecture.md](docs/architecture.md)。
 - 新 Mac／旧 connector 运维（遗留）：[docs/new-mac.md](docs/new-mac.md)、[docs/runbook.md](docs/runbook.md)、文末附录。

@@ -13,6 +13,10 @@ description: Dispatch and follow work through official Agent Network; agent-flee
 4. 对同一 task id 用 `get_task` / `wait_task` 或 CLI 跟进；续问使用同一任务。超时、断连或响应未知先回读，不新建第二次委派。调用之间不要忙等；长任务定期报告状态与未验项。
 5. 对照业务验收检查产物，保存契约要求的收据。ANet completed 只证明协议终态；不能代替测试、真实宿主回流、交付或合并证据。
 
+## 同活只走一条
+
+无头、烟雾、Cindy 和任务账本用上面的 ANet 步骤。要进已经打开的 Desktop 窗口，并让 cwd 等于 `~/Projects` 里的项目，改走 [dispatch-desktop-reason](../dispatch-desktop-reason/SKILL.md)，边界在 [docs/reason.md](../../docs/reason.md)。同一件活选定一条之后，不要再从另一条补发。本技能不复制 Reason 命令，也不把未签到的 Reason 写成已通。不要用 ANet auto-reply 代替 Desktop 进窗。
+
 Magpie 属独立可选模型路由。点名模型时核对实际运行模型，不修改私人默认。点名其他执行环境时依该环境现行文档和可用工具；本技能不提供退役 Agenvo/CommHub/Herdr 复活步骤。
 
 来源：从 xw-stack 的 delegate-via-anet 与 outer-loop-kit 派活契约提取；2026-11-03 收敛维护权。消费者只保留入口、业务角色与展示规范。

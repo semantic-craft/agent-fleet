@@ -2,6 +2,8 @@
 
 **这是跨 ANet 身份委派的唯一传输。** 平台原生子任务是执行环境，不注册第二套网络身份或任务协议。 不经 CommHub MCP、不经 `anet.sonori.dev`、不经 #90 门铃桥。那些见 README「遗留附录」。
 
+Desktop 进窗、把 cwd 钉在 `~/Projects` 的项目上，不是这条传输。边界在 [reason.md](reason.md)。同一件活不要既 `delegate` 又进窗。签到另线，本页不宣称 Reason 已通。
+
 只引用官方文档：<https://docs.agentnetwork.org.cn>。本页只记本机用法，不另造层。
 
 ## 现状

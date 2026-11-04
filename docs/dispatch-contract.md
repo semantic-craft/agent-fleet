@@ -2,6 +2,8 @@
 
 维护源为 agent-fleet；消费者引用本页，不复制 CLI、任务恢复或回流机制。操作入口为 [delegate-via-anet](../skills/delegate-via-anet/SKILL.md)。上游协议来自 [Agent Network 官方文档](https://docs.agentnetwork.org.cn/docs/zh-cn/latest/)，Fleet 不定义第二套身份或任务状态机。
 
+本页只覆盖 ANet：无头、烟雾、Cindy 和任务账本。Desktop 进窗、cwd 等于 `~/Projects` 中的项目，见 [reason.md](reason.md) 与 [dispatch-desktop-reason](../skills/dispatch-desktop-reason/SKILL.md)。同一任务不要双发。Reason 签到另线，本页不宣称已通。
+
 ## 派出
 
 使用已安装版本的官方 CLI / MCP。节点持有身份、权限与任务；插件和 agents wire 是接入替代方案，不能为同一身份装两个处理者。环境根目录按 [anet.md](anet.md) 核实；不要把机器配置或 ~/.anet 状态提交到 Git。对端必须是完整 AID，授权扩展须用户明确批准。
