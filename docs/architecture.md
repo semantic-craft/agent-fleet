@@ -1,6 +1,19 @@
 # 架构
 
-> **舰队与任务账本的正本是官方 anet 0.3.9。** 本仓库不实现 Agent Network、Reason 或 codex-host，只做接线、插件、契约和薄技能。身份与 `delegate` 见 [anet.md](anet.md)。Desktop 进窗的边界见 [reason.md](reason.md)。Cindy 插件见 [plugins/agent-network-cindy](../plugins/agent-network-cindy/README.md)。CommHub MCP、#90 门铃桥与 agenvo fork 的安装步骤已退出；档案在 [legacy/](legacy/README.md)。
+> **舰队与任务账本的正本是官方 anet 0.3.9。** 本仓库不实现 Agent Network、Reason 或 codex-host，实现基于 ANet 的舰队编排、宿主插件、派活契约、workdir＋new-mac 脚本和验收门禁。身份与 `delegate` 见 [anet.md](anet.md)。Desktop 进窗的边界见 [reason.md](reason.md)。Cindy 插件见 [plugins/agent-network-cindy](../plugins/agent-network-cindy/README.md)。CommHub MCP、#90 门铃桥与 agenvo fork 的安装步骤已退出；档案在 [legacy/](legacy/README.md)。
+
+## 仓库职责分层
+
+| 仓库 | 职责 |
+| --- | --- |
+| Reason Network | 会话目录＋跨机会话总线引擎仓 |
+| agenvo | 助手↔本机 runtime 的 MCP 中继／连接器引擎仓；旧控制面已退出 |
+| ANet | 上游 Hub＋节点派活 runtime |
+| agent-fleet | 基于 ANet 的自有舰队编排引擎仓：宿主插件、派活契约、workdir＋new-mac 脚本、验收门禁；不是经验笔记，也不再造 Hub |
+
+Hub 正本是 **https://anet.sonori.dev（ANetHub 0.3.3）**。官方 `hub.agentnetwork.org.cn` 已清仓，不是现行正本。CommHub MCP／#90 门铃与 agenvo-as-control-plane 是遗留，不能与现行 Hub URL 混称。
+
+工作目录正本与门禁见 [workdir.md](workdir.md)。下面 A–D 是运行模块视角，不替代以上仓库命名。
 
 ## 体验验收
 
@@ -37,7 +50,7 @@
 
 ## 当前舰队路径
 
-跨 ANet 身份委派只走官方 anet。不经 CommHub MCP、不经 `anet.sonori.dev`、不经 #90 门铃桥。做法见 [anet.md](anet.md)。编码 agent 用官方 `anet agents wire` 与 `anet mcp` 接入。Herdr 只做 pane 宿主，不是派活控制面。dot 若已有原生平台任务工具且电脑已授权，Codex 可走原生通道（平台执行环境，不是另一套 ANet 控制面，也不是 Reason）。DSH、GrokBot 的历史外部路线在 [legacy/caller-routing.md](legacy/caller-routing.md)，不是现行入口。
+跨 ANet 身份委派只走官方 anet。不经 CommHub MCP、不经 #90 门铃桥。做法见 [anet.md](anet.md)。编码 agent 用官方 `anet agents wire` 与 `anet mcp` 接入。Herdr 只做 pane 宿主，不是派活控制面。dot 若已有原生平台任务工具且电脑已授权，Codex 可走原生通道（平台执行环境，不是另一套 ANet 控制面，也不是 Reason）。DSH、GrokBot 的历史外部路线在 [legacy/caller-routing.md](legacy/caller-routing.md)，不是现行入口。
 
 DSH 桌面 socket 插件已退役，见 [legacy/dsh-adapter.md](legacy/dsh-adapter.md)。它不是控制面。
 

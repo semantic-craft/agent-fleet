@@ -13,6 +13,12 @@ description: Dispatch and follow work through official Agent Network; agent-flee
 4. 对同一 task id 用 `get_task` / `wait_task` 或 CLI 跟进；续问使用同一任务。超时、断连或响应未知先回读，不新建第二次委派。调用之间不要忙等；长任务定期报告状态与未验项。
 5. 对照业务验收检查产物，保存契约要求的收据。ANet completed 只证明协议终态；不能代替测试、真实宿主回流、交付或合并证据。
 
+## HOST_CWD 硬门禁
+
+工作目录正本是 `anet status --json` → `auto_reply.work_dir`，不是 ANet cache cwd。派活前对执行身份设置 `anet --id <身份> autoreply set --work-dir <项目绝对路径>`，换项目重设；用 `scripts/anet-workdir.mjs --id <身份> assert --require <项目绝对路径>` 核对。材料在 work_dir 内或用 `--attach`。详细边界见 [workdir](../../docs/workdir.md)。
+
+实际宿主 cwd 仍在 cache、与项目根不符时必须报 `HOST_CWD_WRONG`，不能报 Done。旧 `codex -C` 应急 bypass 已 deprecated；外循环代跑当 Done 已废止，不能替代 ANet 目录修复与宿主验收。今日 G 的 SEEN 吸收官方能力，不是 agenvo／Reason 的完整迁移。
+
 ## 同活只走一条
 
 无头、烟雾、Cindy 和任务账本用上面的 ANet 步骤。要进已经打开的 Desktop 窗口，并让 cwd 等于 `~/Projects` 里的项目，改走 [dispatch-desktop-reason](../dispatch-desktop-reason/SKILL.md)，边界在 [docs/reason.md](../../docs/reason.md)。同一件活选定一条之后，不要再从另一条补发。本技能不复制 Reason 命令，也不把未签到的 Reason 写成已通。不要用 ANet auto-reply 代替 Desktop 进窗。

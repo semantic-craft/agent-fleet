@@ -13,7 +13,15 @@
 - 本机派活传输是官方 anet，见 [anet.md](anet.md)。[ADR-0006](legacy/0006-single-remote-path.md) 只记录旧的单远程通路，不替代原生平台任务。
 - 这台机器的个人值（名字、地址、项目目录）只写进私有 overlay，不写进本仓库。
 
-## 步骤
+## ANet 重建清单
+
+1. 安装并核对 `anet --version` 为 **0.3.9**；按当前 binary guide 配置 Hub 为 `https://anet.sonori.dev`（ANetHub 0.3.3），不用已清仓的官方 Hub。
+2. 按官方流程建立五身份：`default`／`turing`／`cindy`／`agy`／`dsh`。每个身份核对 Hub 目标后执行 `anet --id <身份> hub-register`；用 `node scripts/anet-hub-state.mjs --id <身份>` 确认 Registered 的 URL 是 Sonori。私密注册材料只留受控凭据位置，不放 Git 或本文。
+3. 每个执行身份设置 `anet --id <身份> autoreply set --work-dir /absolute/project`，用 [workdir 门禁](workdir.md) assert；换项目重新设置。
+4. 保持 inbound closed，只对已批准的自有 AID 执行 `anet --id <身份> peers allow <AID>`。operator 在终端确认；allow 不等于 trust，不由 agent 代答。
+5. 接好官方 MCP／宿主插件，派一条受控任务，分别核对协议结果、实际 cwd 和业务产物。配置通过不等于宿主验收通过。
+
+## 既有机器 overlay 步骤
 
 | # | 做什么 | 检查 |
 | --- | --- | --- |

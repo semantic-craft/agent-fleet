@@ -1,6 +1,15 @@
 # agent-fleet
 
-**agent-fleet 是多 agent 协作的接线正本**：协议说明、派活契约、薄技能、教训和自制插件（[plugins/](plugins/README.md)）在这里。本仓库不实现 Agent Network，也不实现 Reason 或 codex-host。上游源码留在上游；这里只接线、插件和契约。
+**agent-fleet 是基于 ANet 的自有舰队编排引擎仓，也是整套舰队编排引擎的唯一正本仓。**
+
+| 仓库 | 职责 |
+| --- | --- |
+| Reason Network | 会话目录＋跨机会话总线引擎仓 |
+| agenvo | 助手↔本机 runtime 的 MCP 中继／连接器引擎仓；旧控制面已退出 |
+| ANet | 上游 Hub＋节点派活 runtime |
+| agent-fleet | 基于 ANet 的自有舰队编排引擎仓：宿主插件、派活契约、workdir＋new-mac 脚本、验收门禁；不是经验笔记，也不再造 Hub |
+
+Hub 正本是 **https://anet.sonori.dev（ANetHub 0.3.3）**。官方 `hub.agentnetwork.org.cn` 已清仓，不是现行正本。CommHub MCP／#90 门铃与 agenvo-as-control-plane 是遗留，不能与现行 Hub URL 混称。
 
 体系落在专属的 `~/Projects`（少仓；主 A 可换 Grok、Dots 或 Cindy）。四层、外循环 orchestrator、内循环编排和 worker 互派见 [docs/architecture.md](docs/architecture.md)。PODAS 只是伞名，没有目录。
 
@@ -12,11 +21,11 @@
 
 Herdr 只做 pane 宿主，不是派活控制面。不另造 Herdr 与 ANet 之间的桥。
 
-- 身份：`default`／`turing`／`cindy`；inbound `closed`；只 allow 自有 AID。
+- 身份：`default`／`turing`／`cindy`／`agy`／`dsh`；inbound `closed`；只 allow 自有 AID。
 - 派活：`env -u ANET_HOME ANET_DATA_DIR=$HOME/.anet ~/.local/bin/anet --id turing delegate <AID> "…" --watch`。
 - Cindy 宿主插件：[plugins/agent-network-cindy](plugins/agent-network-cindy/README.md)（显示名 Cindy × Agent Network；工具 `send_to_peer`、`bridge_status`）。
 
-不另造控制面层，不经 CommHub MCP、不经 `anet.sonori.dev`、不经 #90 门铃桥做本机派活。那些是历史路径，见文末「遗留附录」。
+不另造控制面层，不经 CommHub MCP、不经 #90 门铃桥做本机派活。那些是历史路径，见文末「遗留附录」。
 
 dot 的原生平台任务与 anet 并列，不互相替代。DSH、GrokBot 的历史外部路线在 [docs/legacy/caller-routing.md](docs/legacy/caller-routing.md)。旧 Desktop 交接在 [docs/legacy/codex-desktop-handoff.md](docs/legacy/codex-desktop-handoff.md)，不是现行步骤。
 
@@ -44,9 +53,12 @@ Desktop 进窗（窗口里看得见、结果回得来、cwd 等于 `~/Projects` 
 - Desktop 进窗边界（未签到，不宣称已通）：[docs/reason.md](docs/reason.md)。
 - 判断 `~/Projects` 目录能不能动：[docs/landscape.md](docs/landscape.md)。
 - Agent 接手：跨仓库约定是根 [AGENTS.md](AGENTS.md)。[docs/AGENTS.shared.md](docs/AGENTS.shared.md) 只指向它。本仓再读 [lessons.md](lessons.md)、[docs/architecture.md](docs/architecture.md)。
-- 新 Mac／旧 connector 运维（遗留）：[docs/new-mac.md](docs/new-mac.md)、[docs/runbook.md](docs/runbook.md)、文末附录。
+- 新 Mac 重建与旧 connector 运维：[docs/new-mac.md](docs/new-mac.md)、[docs/runbook.md](docs/runbook.md)、文末附录。
+- 项目工作目录与门禁：[docs/workdir.md](docs/workdir.md)。
 
 ## 检查
+
+本地验证入口：`scripts/check`（运行 `npm test`，不调用 live daemon）。
 
 - [scripts/gate.sh](scripts/gate.sh)：只读 PR 合并门禁，`gate.sh <owner/repo> <pr> <sha>`；离线正文检查用 `gate.sh --check-body <文件>`。
 
@@ -62,6 +74,6 @@ License: Apache-2.0。
 
 ## 遗留附录：Agenvo 与 CommHub
 
-> **历史材料，不是现行派活，不要按本节安装、验收或派活。** 派活只走官方 Agent Network（[docs/anet.md](docs/anet.md)）。CommHub MCP、`anet.sonori.dev`、#90 门铃桥、Agenvo relay 与 `delegate-via-agenvo` 都已退出。
+> **历史材料，不是现行派活，不要按本节安装、验收或派活。** 派活只走官方 Agent Network（[docs/anet.md](docs/anet.md)）。CommHub MCP、#90 门铃桥、Agenvo relay 与 `delegate-via-agenvo` 都已退出。
 
 档案（只读）：[docs/legacy/](docs/legacy/README.md)。ADR、旧路由、旧 Desktop 交接、旧验收稿和已删除的 DSH socket 插件都在那里。[docs/caller-routing.md](docs/caller-routing.md) 只留指针。`adapters/dsh` 与 `fleet.mjs release dsh` 已删除，理由见 [docs/legacy/dsh-adapter.md](docs/legacy/dsh-adapter.md)。

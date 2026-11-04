@@ -1,5 +1,12 @@
 # 项目教训
 
+### ANet cache cwd 不是项目根目录
+
+- 起因与后果：2026-11-04 G 验收发现 cache cwd 与目标项目不符，外循环 `codex -C` 代跑不能证明 ANet 已在项目中执行。
+- 正确做法：正本是 `auto_reply.work_dir`；换项目重设 `anet autoreply set --work-dir`，材料在该目录内或 `--attach`。外循环 `codex -C` 作为 Done 替代已废止。
+- 修复与验证点：`docs/workdir.md` 与 `scripts/anet-workdir.mjs`；`test/anet-state.test.mjs` 覆盖错配、设置回读和脱敏失败。真实宿主 cwd 不符报 HOST_CWD_WRONG，mock 不代替 live 验收。
+- 复发记录：Seen 1x (2026-11-04)。
+
 ### 显式模型选择必须落在所请求的会话层级
 
 - 证据：2026-10-25 创建原生独立会话时漏传 model/thinking，默认 Astra/medium；提示词里的 DeepSeek/high 子 agent 不能改变输入框主会话选择。此前本文件已记录 Claude Code 不显式传模型落到默认值的失败，故“显式模型丢失”是跨入口第二个案例；独立会话/子 agent 混淆只确认本次一次。

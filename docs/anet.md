@@ -1,16 +1,29 @@
-# Agent Network：当前派活传输（2026-11-02）
+# Agent Network：当前派活传输（2026-11-04）
 
-**这是跨 ANet 身份委派的唯一传输。** 平台原生子任务是执行环境，不注册第二套网络身份或任务协议。 不经 CommHub MCP、不经 `anet.sonori.dev`、不经 #90 门铃桥。那些见 README「遗留附录」。
+**这是跨 ANet 身份委派的唯一传输。** 平台原生子任务是执行环境，不注册第二套网络身份或任务协议。 不经 CommHub MCP、不经 #90 门铃桥。那些见 README「遗留附录」。
 
 Desktop 进窗、把 cwd 钉在 `~/Projects` 的项目上，不是这条传输。边界在 [reason.md](reason.md)。同一件活不要既 `delegate` 又进窗。签到另线，本页不宣称 Reason 已通。
 
 只引用官方文档：<https://docs.agentnetwork.org.cn>。本页只记本机用法，不另造层。
 
+Hub 正本是 **https://anet.sonori.dev（ANetHub 0.3.3）**。官方 `hub.agentnetwork.org.cn` 已清仓，不是现行正本。CommHub MCP／#90 门铃与 agenvo-as-control-plane 是遗留，不能与现行 Hub URL 混称。
+
+仓库职责分层：
+
+| 仓库 | 职责 |
+| --- | --- |
+| Reason Network | 会话目录＋跨机会话总线引擎仓 |
+| agenvo | 助手↔本机 runtime 的 MCP 中继／连接器引擎仓；旧控制面已退出 |
+| ANet | 上游 Hub＋节点派活 runtime |
+| agent-fleet | 基于 ANet 的自有舰队编排引擎仓：宿主插件、派活契约、workdir＋new-mac 脚本、验收门禁；不是经验笔记，也不再造 Hub |
+
+项目切换与 HOST_CWD_WRONG 门禁见 [workdir.md](workdir.md)。
+
 ## 现状
 
 - 版本：官方 anet **0.3.9**（[llms.txt](https://docs.agentnetwork.org.cn/llms.txt)：Current release 0.3.9）。
-- 本机身份：`default`、`turing`、`cindy`，一机多身份，各自 `~/.anet/ids/<name>`（`default` 用 `~/.anet`）。见 [Identity](https://docs.agentnetwork.org.cn/docs/en/latest/topics/identity.html)、[CLI：Identity and data directory](https://docs.agentnetwork.org.cn/docs/en/latest/reference/cli.html)。
-- 入站：三个身份都是 `inbound policy closed`（默认值），只接 allow／trust 名单上的对端。见 [Delegation：inbound policy](https://docs.agentnetwork.org.cn/docs/en/latest/topics/delegation.html)、[Config：inbound.policy](https://docs.agentnetwork.org.cn/docs/en/latest/reference/config.html)。
+- 本机身份：`default`、`turing`、`cindy`、`agy`、`dsh`，一机多身份，各自 `~/.anet/ids/<name>`（`default` 用 `~/.anet`）。见 [Identity](https://docs.agentnetwork.org.cn/docs/en/latest/topics/identity.html)、[CLI：Identity and data directory](https://docs.agentnetwork.org.cn/docs/en/latest/reference/cli.html)。
+- 入站：五个身份都是 `inbound policy closed`（默认值），只接 allow／trust 名单上的对端。见 [Delegation：inbound policy](https://docs.agentnetwork.org.cn/docs/en/latest/topics/delegation.html)、[Config：inbound.policy](https://docs.agentnetwork.org.cn/docs/en/latest/reference/config.html)。
 - 名单：只 allow 自有 AID（`turing` ⇄ `cindy` 互相 allow）。不加外人，不放宽 policy。
 - 派活：`anet --id turing delegate <AID> "…" --watch`。`--watch` 在 completed 时退出 0，failed／rejected／canceled 退出 1，input-required 退出 3（[CLI：Exit status](https://docs.agentnetwork.org.cn/docs/en/latest/reference/cli.html)）。参数只收完整 AID。
 - 宿主插件：Cindy 侧是 [plugins/agent-network-cindy](../plugins/agent-network-cindy/README.md)，经 `anet --id cindy mcp`（stdio）用官方 MCP 工具 `list_tasks`／`get_task`／`reply_task`／`send_message`（[MCP tools](https://docs.agentnetwork.org.cn/docs/en/latest/reference/mcp-tools.html)）。
