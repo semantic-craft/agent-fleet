@@ -1278,6 +1278,11 @@ impl DesktopHostAdapter for DeepSeekHarnessAdapter {
                 None,
                 &request.prompt,
             )?;
+            crate::tri_hosts::sync_dsh_session_title_in_projcache(
+                dsh_root,
+                &session_id,
+                &request.title,
+            )?;
             crate::tri_hosts::attach_dsh_session_to_workspace(
                 dsh_root,
                 &project.project_id,
@@ -1402,6 +1407,11 @@ impl DesktopHostAdapter for DeepSeekHarnessAdapter {
             );
         };
         if let (Some(dsh_root), Some(dsh_bin)) = (&runtime.dsh_root, &runtime.dsh_bin) {
+            let existing_title = self
+                .core
+                .session(&request.session_id)
+                .map(|s| s.title.clone())
+                .unwrap_or_default();
             let (returned_sid, turn_id) = crate::tri_hosts::run_dsh_headless_command(
                 dsh_root,
                 dsh_bin,
@@ -1415,6 +1425,16 @@ impl DesktopHostAdapter for DeepSeekHarnessAdapter {
                     request.session_id
                 )));
             }
+            crate::tri_hosts::sync_dsh_session_title_in_projcache(
+                dsh_root,
+                &request.session_id,
+                &existing_title,
+            )?;
+            crate::tri_hosts::attach_dsh_session_to_workspace(
+                dsh_root,
+                &project.project_id,
+                &request.session_id,
+            )?;
             let snap = self.read_dsh_session(&request.session_id)?;
             if snap.cwd != project.project_dir {
                 return Err(HostAdapterError::ProjectDirMismatch {
@@ -1959,6 +1979,19 @@ impl DesktopHostAdapter for AntigravityDesktopAdapter {
             None => slug.to_string(),
         };
         let hubs = crate::antigravity::discover_antigravity_hubs(&runtime.daemon_dir())?;
+        if let Some(hub) = hubs
+            .first()
+            .filter(|h| crate::antigravity::is_desktop_hub_agentapi_available(&runtime, Some(h)))
+        {
+            let project_id = crate::antigravity::ensure_antigravity_desktop_project(
+                hub,
+                &project_name,
+                &dir.path,
+            )?;
+            return self
+                .core
+                .ensure_sidebar_project_with_override(slug, title, Some(project_id));
+        }
         let args = vec![
             "--new-project".into(),
             "--project".into(),
@@ -2000,43 +2033,60 @@ impl DesktopHostAdapter for AntigravityDesktopAdapter {
             );
         };
         let hubs = crate::antigravity::discover_antigravity_hubs(&runtime.daemon_dir())?;
-        let mut args: Vec<std::ffi::OsString> = vec![
-            "--project".into(),
-            request.project_id.clone().into(),
-            "--add-dir".into(),
-            project.project_dir.as_os_str().to_os_string(),
-            "--output-format".into(),
-            "json".into(),
-        ];
-        if let Some(model) = &request.model {
-            args.push("--model".into());
-            args.push(model.into());
-        }
-        args.push("-p".into());
-        args.push(request.prompt.clone().into());
+        let (conversation_id, turn_id) = if let Some(hub) = hubs
+            .first()
+            .filter(|h| crate::antigravity::is_desktop_hub_agentapi_available(&runtime, Some(h)))
+        {
+            let (cid, tid) = crate::antigravity::run_agentapi_new_conversation(
+                &runtime,
+                hub,
+                &request.project_id,
+                &project.project_dir,
+                &request.title,
+                request.model.as_deref(),
+                &request.prompt,
+            )?;
+            (cid, Some(tid))
+        } else {
+            let mut args: Vec<std::ffi::OsString> = vec![
+                "--project".into(),
+                request.project_id.clone().into(),
+                "--add-dir".into(),
+                project.project_dir.as_os_str().to_os_string(),
+                "--output-format".into(),
+                "json".into(),
+            ];
+            if let Some(model) = &request.model {
+                args.push("--model".into());
+                args.push(model.into());
+            }
+            args.push("-p".into());
+            args.push(request.prompt.clone().into());
 
-        let payload = crate::antigravity::run_agy_command(
-            &runtime,
-            &project.project_dir,
-            &args,
-            hubs.first(),
-        )?;
-        let conversation_id = payload
-            .get("conversation_id")
-            .or_else(|| payload.get("conversationId"))
-            .or_else(|| payload.get("session_id"))
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_string)
-            .ok_or_else(|| {
-                HostAdapterError::AntigravityProtocol(
-                    "agy create_session output did not include conversation_id".into(),
-                )
-            })?;
-        let turn_id = payload
-            .get("turn_id")
-            .or_else(|| payload.get("turnId"))
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_string);
+            let payload = crate::antigravity::run_agy_command(
+                &runtime,
+                &project.project_dir,
+                &args,
+                hubs.first(),
+            )?;
+            let cid = payload
+                .get("conversation_id")
+                .or_else(|| payload.get("conversationId"))
+                .or_else(|| payload.get("session_id"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+                .ok_or_else(|| {
+                    HostAdapterError::AntigravityProtocol(
+                        "agy create_session output did not include conversation_id".into(),
+                    )
+                })?;
+            let tid = payload
+                .get("turn_id")
+                .or_else(|| payload.get("turnId"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string);
+            (cid, tid)
+        };
 
         let summary = crate::antigravity::read_conversation_summary(
             &runtime.sqlite3_bin,
@@ -2080,46 +2130,61 @@ impl DesktopHostAdapter for AntigravityDesktopAdapter {
             );
         };
         let hubs = crate::antigravity::discover_antigravity_hubs(&runtime.daemon_dir())?;
-        let mut args: Vec<std::ffi::OsString> = vec![
-            "--conversation".into(),
-            request.session_id.clone().into(),
-            "--project".into(),
-            request.project_id.clone().into(),
-            "--add-dir".into(),
-            project.project_dir.as_os_str().to_os_string(),
-            "--output-format".into(),
-            "json".into(),
-        ];
-        if let Some(model) = &request.model {
-            args.push("--model".into());
-            args.push(model.into());
-        }
-        args.push("-p".into());
-        args.push(request.prompt.clone().into());
-
-        let payload = crate::antigravity::run_agy_command(
-            &runtime,
-            &project.project_dir,
-            &args,
-            hubs.first(),
-        )?;
-        if let Some(returned_conv) = payload
-            .get("conversation_id")
-            .or_else(|| payload.get("conversationId"))
-            .and_then(serde_json::Value::as_str)
+        let turn_id = if let Some(hub) = hubs
+            .first()
+            .filter(|h| crate::antigravity::is_desktop_hub_agentapi_available(&runtime, Some(h)))
         {
-            if returned_conv != request.session_id {
-                return Err(HostAdapterError::AntigravityProtocol(format!(
-                    "agy --conversation {} returned mismatched conversation_id {returned_conv}",
-                    request.session_id
-                )));
+            let tid = crate::antigravity::run_agentapi_send_message(
+                &runtime,
+                hub,
+                &request.project_id,
+                &project.project_dir,
+                &request.session_id,
+                &request.prompt,
+            )?;
+            Some(tid)
+        } else {
+            let mut args: Vec<std::ffi::OsString> = vec![
+                "--conversation".into(),
+                request.session_id.clone().into(),
+                "--project".into(),
+                request.project_id.clone().into(),
+                "--add-dir".into(),
+                project.project_dir.as_os_str().to_os_string(),
+                "--output-format".into(),
+                "json".into(),
+            ];
+            if let Some(model) = &request.model {
+                args.push("--model".into());
+                args.push(model.into());
             }
-        }
-        let turn_id = payload
-            .get("turn_id")
-            .or_else(|| payload.get("turnId"))
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_string);
+            args.push("-p".into());
+            args.push(request.prompt.clone().into());
+
+            let payload = crate::antigravity::run_agy_command(
+                &runtime,
+                &project.project_dir,
+                &args,
+                hubs.first(),
+            )?;
+            if let Some(returned_conv) = payload
+                .get("conversation_id")
+                .or_else(|| payload.get("conversationId"))
+                .and_then(serde_json::Value::as_str)
+            {
+                if returned_conv != request.session_id {
+                    return Err(HostAdapterError::AntigravityProtocol(format!(
+                        "agy --conversation {} returned mismatched conversation_id {returned_conv}",
+                        request.session_id
+                    )));
+                }
+            }
+            payload
+                .get("turn_id")
+                .or_else(|| payload.get("turnId"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+        };
 
         let summary = crate::antigravity::read_conversation_summary(
             &runtime.sqlite3_bin,

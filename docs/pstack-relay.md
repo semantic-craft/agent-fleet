@@ -46,6 +46,10 @@ Slice B 已将 Cargo 编译与 session directory 隔离行为测试接入同一�
 | J | 落地 Antigravity Desktop 侧栏建项目与会话投递适配器 | 下方 Slice J 的 Done Predicate |
 | K | 打通 OpenAI Dots (Codex Desktop)、DSH、Cindy 三端侧栏建目录与会话投递 | 下方 Slice K 的 Done Predicate |
 | L | 四端 /poteto-mode (pstack-relay) 跨 Agent 自我开发闭环验收 | 下方 Slice L 的 Done Predicate |
+| M | 收尾 Maitra 旧挂起通道、放宽 DeepSeek 思考模式超时并更新未知账目单次重试授权 | 下方 Slice M 的 Done Predicate |
+| N | 经 fleet-cli 向 DeepSeek Harness (DSH) 分派 glaux-book 会话并完成 Maitra 全文翻译 | 下方 Slice N 的 Done Predicate |
+| O | 在 DSH 会话下完成 Maitra 译文导入、源文对照审校、中文 EPUB 构建与 Agent Acceptance | 下方 Slice O 的 Done Predicate |
+| P | 经 DSH 完成 Maitra 中文 EPUB 挂回 Zotero PQ9G5JUI、字节回读核验与全链路收口 | 下方 Slice P 的 Done Predicate |
 
 ### [x] Slice A: 盘点与接力入口
 - **Playbook**: `Investigation`
@@ -118,5 +122,30 @@ Slice B 已将 Cargo 编译与 session directory 隔离行为测试接入同一�
 - **Outcome**: 通过 `fleet-cli` 向 OpenAI Dots、Cindy、DeepSeek Harness、Antigravity Desktop 四个桌面宿主执行跨 Agent `/poteto-mode` (`pstack-relay`) 自我开发投递验收，留存四端侧栏会话可见证据、目录创建证据与收据闭环。
 - **Done Predicate**: `cargo check --workspace`、`cargo test --workspace` 与 `scripts/check` 通过；四端收据与验证证据齐全并完成独立审查。
 - **Evidence**: crates/fleet-daemon/src/relay_self_dev.rs;crates/fleet-cli/src/main.rs;crates/fleet-cli/tests/poteto_relay_four_hosts.rs;.scratch/pstack-relay/slice-l-four-hosts/four-hosts-closure-bundle.json;.scratch/pstack-relay/slice-l-receipt.md;.scratch/pstack-relay/slice-l-final-audit.md;.scratch/pstack-relay/checks/20261105T025915.381857Z/receipt.json
+
+### [x] Slice M: 收尾 Maitra 旧挂起通道、放宽 DeepSeek 思考模式超时并更新未知账目单次重试授权
+- **Playbook**: `Feature`
+- **Outcome**: 终止挂起的旧 `codex exec` 进程以保障单通道投递；将生产 runtime `15c46390` 的 `providers.toml` 中 `deepseek-default` (`thinking = "enabled"`, `concurrency_limit = 1`) 客户端超时从 `120` 秒提升至 `600` 秒；按用户明确授权更新 `qa/second-leg-authorization.json` 与 `provider_usage.py`，在完整保留全部 29 条原调用记录（含 `call-00000013`、`call-00000027`、`call-00000029`）的前提下，对 `chapter_001 / reflect / chunkIndex=1` 与 `chapter_002 / first-pass / chunkIndex=1` 各开放 1 次续跑重试。
+- **Done Predicate**: `~/.cache/glaux-book/runtimes/15c46390fad61027006032ccd452a4a3b1d90e8e/.venv/bin/python ~/Projects/_status/maitra-zh-epub-20261104/evidence/check-second-leg-authorization.py` 与 `scripts/check` 通过；原账本 29 条记录字节不变且零网络调用。
+- **Evidence**: docs/pstack-relay.md;~/Projects/_status/maitra-zh-epub-20261104/evidence/check-second-leg-authorization.py;~/Projects/_status/maitra-zh-epub-20261104/receipt.md;.scratch/pstack-relay/checks/20261105T044112.870592Z/receipt.json
+
+### [x] Slice N: 经 fleet-cli 向 DeepSeek Harness (DSH) 分派 glaux-book 会话并完成 Maitra 全文翻译
+- **Playbook**: `Feature`
+- **Outcome**: 通过 `fleet-cli hosts create-session --host deepseek-harness`（携带 `--dsh-root ~/.dsh --dsh-bin ~/.local/bin/dsh --project-dir ~/Projects/glaux-book`）向 DeepSeek Harness 分派续跑任务，在 DSH 桌面侧栏挂载会话并从既有断点续跑 `061_不受著作权保护的代码_Maitra` 剩余 28 次 `deepseek-flash` (`thinking = "enabled"`) 翻译调用，直至 `chapter_001` 与 `chapter_002` 两个单元全部完成。
+- **Done Predicate**: `~/.dsh/storages/workspace.json` 与 `~/.dsh/storages/session_projcache/sessions/<session_id>.json` 落盘可查；`~/Library/Application Support/glaux-book/zh-Hans/061_不受著作权保护的代码_Maitra/chapters/translated/chapter_001.md` 与 `chapter_002.md` 均生成且 `qa/translation-run-report.json` 中 2/2 单元状态为 `completed`。
+- **Evidence**: ~/.dsh/storages/workspace.json;~/.dsh/storages/session_projcache/sessions/session-5430ab10-379d-4b28-a5b1-aa99cfad563e.json;~/Projects/_status/maitra-zh-epub-20261104/evidence/slice-n-summary.json;~/Projects/_status/maitra-zh-epub-20261104/evidence/dsh-desktop-sidebar-glaux-book.png;.scratch/pstack-relay/checks/20261105T055244.597955Z/receipt.json
+
+### [x] Slice O: 在 DSH 会话下完成 Maitra 译文导入、源文对照审校、中文 EPUB 构建与 Agent Acceptance
+- **Playbook**: `Feature`
+- **Outcome**: 在 DSH 的 `glaux-book` 会话中继续执行译文导入 (`translate import`)、源文与 351 条注释绑定核验、阅读版中文 EPUB 构建 (`output/reading/Sonali Maitra_2026_不受著作权保护的代码.epub`) 及 `glaux-book` Agent Acceptance 验收。
+- **Done Predicate**: `test -f "$HOME/Library/Application Support/glaux-book/zh-Hans/061_不受著作权保护的代码_Maitra/output/reading/Sonali Maitra_2026_不受著作权保护的代码.epub"` 通过，记录 EPUB 绝对路径与 SHA-256，且项目 QA / Agent Acceptance 证据齐全。
+- **Evidence**: ~/Projects/_status/maitra-zh-epub-20261104/receipt.md;~/Projects/_status/maitra-zh-epub-20261104/evidence/agy-desktop-vis-glaux-book.json;~/Projects/_status/maitra-zh-epub-20261104/evidence/dsh-desktop-sidebar-glaux-book.png;.scratch/pstack-relay/checks/20261105T063504.739850Z/receipt.json
+
+### [x] Slice P: 经 DSH 完成 Maitra 中文 EPUB 挂回 Zotero PQ9G5JUI、字节回读核验与全链路收口
+- **Playbook**: `Shipping`
+- **Outcome**: 在 DSH 会话中将验收通过的中文 EPUB 作为 imported attachment 挂回 Zotero 父条目 `PQ9G5JUI`（严禁使用废条 `XW32DCWX`，严禁推送 Kobo/Boox），回读新附件 key 并比对落盘文件与产出 EPUB 的 SHA-256 字节一致，更新 `~/Projects/_status/maitra-zh-epub-20261104/receipt.md` 为 `DONE`。
+- **Done Predicate**: `zotero-cli` 回读 `PQ9G5JUI` 下新增中文 EPUB 附件 key 且 SHA-256 与构建产物一致；`~/Projects/_status/maitra-zh-epub-20261104/receipt.md` 与 `scripts/check` 全部通过。
+- **Evidence**: ~/Projects/_status/maitra-zh-epub-20261104/receipt.md;~/Projects/_status/maitra-zh-epub-20261104/evidence/agy-desktop-sidebar-glaux-book.png;~/Projects/_status/maitra-zh-epub-20261104/evidence/dsh-desktop-sidebar-glaux-book.png;.scratch/pstack-relay/checks/20261105T063504.739850Z/receipt.json
+
 
 

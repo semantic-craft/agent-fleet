@@ -5,12 +5,15 @@ use fleet_proto::{
     CreateSessionRequest, DeliverTurnRequest, DeliveryTier, DesktopHostKind, HostSessionReceipt,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::{
     ffi::OsString,
     fmt, fs,
+    io::{Read, Write},
+    net::{SocketAddr, TcpStream},
     path::{Path, PathBuf},
     process::Command,
+    time::Duration,
 };
 
 const FORBIDDEN_PROJECT_BUCKETS: &[&str] = &[
@@ -51,6 +54,20 @@ impl AntigravityRuntimeConfig {
         self.antigravity_root
             .join("presence")
             .join(format!("{conversation_id}.lock"))
+    }
+
+    pub fn agentapi_bin(&self) -> PathBuf {
+        self.antigravity_root.join("bin").join("agentapi")
+    }
+
+    pub fn conversations_dir(&self) -> PathBuf {
+        self.antigravity_root.join("conversations")
+    }
+
+    pub fn has_desktop_conversation_body(&self, conversation_id: &str) -> bool {
+        self.conversations_dir()
+            .join(format!("{conversation_id}.db"))
+            .exists()
     }
 }
 
@@ -230,7 +247,8 @@ pub fn read_conversation_summary(
          FROM conversation_summaries WHERE conversation_id = '{conversation_id}' LIMIT 1;"
     );
     let output = Command::new(sqlite3_bin)
-        .arg("-readonly")
+        .arg("-cmd")
+        .arg("PRAGMA query_only=ON;")
         .arg("-json")
         .arg(db_path)
         .arg(query)
@@ -416,6 +434,430 @@ pub(crate) fn run_agy_command(
         }
     }
     Ok(Value::String(trimmed.to_string()))
+}
+
+fn fnv1a_u64(seed: u64, bytes: &[u8]) -> u64 {
+    let mut hash = seed;
+    for &b in bytes {
+        hash ^= u64::from(b);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
+}
+
+fn deterministic_antigravity_uuid(seed: &str) -> String {
+    let bytes = seed.as_bytes();
+    let h1 = fnv1a_u64(0xcbf29ce484222325, bytes);
+    let h2 = fnv1a_u64(0x84222325cbf29ce4, bytes);
+    let p1 = (h1 >> 32) as u32;
+    let p2 = ((h1 >> 16) & 0xffff) as u16;
+    let p3 = ((h1 & 0x0fff) | 0x4000) as u16;
+    let p4 = (((h2 >> 48) & 0x3fff) | 0x8000) as u16;
+    let p5 = h2 & 0x0000_ffff_ffff_ffff;
+    format!("{p1:08x}-{p2:04x}-{p3:04x}-{p4:04x}-{p5:012x}")
+}
+
+fn decode_chunked_http_body(raw: &str) -> String {
+    let mut rest = raw.as_bytes();
+    let mut out = Vec::new();
+    loop {
+        let Some(pos) = rest.windows(2).position(|w| w == b"\r\n") else {
+            break;
+        };
+        let len_hex = String::from_utf8_lossy(&rest[..pos]);
+        let len_clean = len_hex.split(';').next().unwrap_or("").trim();
+        let Ok(chunk_len) = usize::from_str_radix(len_clean, 16) else {
+            break;
+        };
+        rest = &rest[pos + 2..];
+        if chunk_len == 0 || rest.len() < chunk_len {
+            break;
+        }
+        out.extend_from_slice(&rest[..chunk_len]);
+        rest = &rest[chunk_len..];
+        if rest.starts_with(b"\r\n") {
+            rest = &rest[2..];
+        }
+    }
+    String::from_utf8_lossy(&out).to_string()
+}
+
+/// Calls a Connect/JSON RPC method on `/exa.language_server_pb.LanguageServerService/<method>`
+/// over the discovered loopback `http_port` using the in-memory `csrf_token`.
+pub fn hub_rpc_request(
+    hub: &AntigravityHubInfo,
+    method: &str,
+    body: &Value,
+    timeout: Duration,
+) -> Result<Value, HostAdapterError> {
+    let addr = SocketAddr::from(([127, 0, 0, 1], hub.http_port));
+    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(3)).map_err(|e| {
+        HostAdapterError::AntigravityProtocol(format!(
+            "failed to connect to Antigravity Hub 127.0.0.1:{} for {method}: {e}",
+            hub.http_port
+        ))
+    })?;
+    stream.set_read_timeout(Some(timeout))?;
+    stream.set_write_timeout(Some(Duration::from_secs(10)))?;
+
+    let payload = serde_json::to_vec(body)
+        .map_err(|e| HostAdapterError::AntigravityProtocol(e.to_string()))?;
+    let req_head = format!(
+        "POST /exa.language_server_pb.LanguageServerService/{method} HTTP/1.1\r\n\
+         Host: 127.0.0.1:{}\r\n\
+         Content-Type: application/json\r\n\
+         x-codeium-csrf-token: {}\r\n\
+         Content-Length: {}\r\n\
+         Connection: close\r\n\r\n",
+        hub.http_port,
+        hub.csrf_token_in_memory(),
+        payload.len()
+    );
+    stream.write_all(req_head.as_bytes())?;
+    stream.write_all(&payload)?;
+    stream.flush()?;
+
+    let mut raw = Vec::new();
+    stream.read_to_end(&mut raw)?;
+    let response_str = String::from_utf8_lossy(&raw);
+    let (headers_part, body_part) = response_str.split_once("\r\n\r\n").ok_or_else(|| {
+        HostAdapterError::AntigravityProtocol(format!(
+            "malformed HTTP response from Antigravity Hub {method}"
+        ))
+    })?;
+    let status_line = headers_part.lines().next().unwrap_or_default();
+    let status_code: u16 = status_line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    let is_chunked = headers_part.lines().any(|l| {
+        l.to_ascii_lowercase().starts_with("transfer-encoding:")
+            && l.to_ascii_lowercase().contains("chunked")
+    });
+    let decoded_body = if is_chunked {
+        decode_chunked_http_body(body_part)
+    } else {
+        body_part.to_string()
+    };
+    if !(200..300).contains(&status_code) {
+        return Err(HostAdapterError::AntigravityProtocol(format!(
+            "Antigravity Hub {method} returned HTTP {status_code}: {}",
+            decoded_body.trim()
+        )));
+    }
+    if decoded_body.trim().is_empty() {
+        return Ok(json!({}));
+    }
+    serde_json::from_str(decoded_body.trim()).map_err(|e| {
+        HostAdapterError::AntigravityProtocol(format!(
+            "invalid JSON from Antigravity Hub {method}: {e}"
+        ))
+    })
+}
+
+/// Returns true when `<antigravity_root>/bin/agentapi` exists and the discovered Hub HTTP endpoint
+/// responds to `ListProjects`.
+pub(crate) fn is_desktop_hub_agentapi_available(
+    runtime: &AntigravityRuntimeConfig,
+    hub: Option<&AntigravityHubInfo>,
+) -> bool {
+    let Some(hub_info) = hub else {
+        return false;
+    };
+    if !runtime.agentapi_bin().exists() {
+        return false;
+    }
+    hub_rpc_request(hub_info, "ListProjects", &json!({}), Duration::from_secs(3)).is_ok()
+}
+
+/// Ensures `project_dir` is registered in the running Antigravity Desktop Hub (`~/.gemini/config/projects/<id>.json`)
+/// via `LanguageServerService/ListProjects` + `ReadProjects` + `CreateProject`, so the project appears live in the
+/// Antigravity Desktop sidebar.
+pub fn ensure_antigravity_desktop_project(
+    hub: &AntigravityHubInfo,
+    project_name: &str,
+    project_dir: &Path,
+) -> Result<String, HostAdapterError> {
+    let canonical = fs::canonicalize(project_dir)?;
+    let workspace_uri = format!("file://{}", canonical.display());
+    let list_resp = hub_rpc_request(hub, "ListProjects", &json!({}), Duration::from_secs(5))?;
+    let project_ids: Vec<String> = list_resp
+        .get("projectIds")
+        .and_then(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter_map(Value::as_str)
+                .filter(|id| !FORBIDDEN_PROJECT_BUCKETS.contains(&id.trim()))
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+
+    if !project_ids.is_empty() {
+        if let Ok(read_resp) = hub_rpc_request(
+            hub,
+            "ReadProjects",
+            &json!({ "ids": project_ids }),
+            Duration::from_secs(5),
+        ) {
+            if let Some(projects) = read_resp.get("projects").and_then(Value::as_array) {
+                for proj in projects {
+                    let Some(id) = proj.get("id").and_then(Value::as_str) else {
+                        continue;
+                    };
+                    if let Some(resources) = proj
+                        .pointer("/projectResources/resources")
+                        .and_then(Value::as_array)
+                    {
+                        let matches_uri = resources.iter().any(|r| {
+                            r.get("folderUri").and_then(Value::as_str) == Some(&workspace_uri)
+                                || r.pointer("/gitFolder/folderUri").and_then(Value::as_str)
+                                    == Some(&workspace_uri)
+                        });
+                        if matches_uri {
+                            return Ok(id.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let project_id = deterministic_antigravity_uuid(&format!(
+        "antigravity-desktop-project:{}",
+        canonical.display()
+    ));
+    let resource_entry = if canonical.join(".git").exists() {
+        json!({
+            "gitFolder": {
+                "folderUri": workspace_uri,
+                "defaultBranch": "main"
+            }
+        })
+    } else {
+        json!({
+            "folderUri": workspace_uri
+        })
+    };
+    let create_req = json!({
+        "project": {
+            "id": project_id,
+            "name": project_name,
+            "projectResources": {
+                "resources": [resource_entry]
+            },
+            "permissionGrants": {
+                "v2Migrated": true
+            },
+            "settings": {},
+            "isWorkspaceOnly": false
+        }
+    });
+    let _ = hub_rpc_request(hub, "CreateProject", &create_req, Duration::from_secs(10))?;
+    let verify_resp = hub_rpc_request(
+        hub,
+        "ReadProject",
+        &json!({ "id": project_id }),
+        Duration::from_secs(5),
+    )?;
+    let returned_id = verify_resp
+        .pointer("/project/id")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if returned_id != project_id {
+        return Err(HostAdapterError::AntigravityProtocol(format!(
+            "ReadProject after CreateProject returned id {returned_id:?}, expected {project_id}"
+        )));
+    }
+    Ok(project_id)
+}
+
+fn resolve_antigravity_plan_model(hub: &AntigravityHubInfo, requested: Option<&str>) -> String {
+    if let Ok(cfg) = hub_rpc_request(
+        hub,
+        "GetCascadeModelConfigData",
+        &json!({}),
+        Duration::from_secs(5),
+    ) {
+        if let Some(req) = requested.map(str::trim).filter(|s| !s.is_empty()) {
+            if req.starts_with("MODEL_") {
+                return req.to_string();
+            }
+            let needle = match req {
+                "flash" => "gemini-3.8-flash-medium",
+                "flash_lite" => "gemini-3.8-flash-low",
+                "pro" => "gemini-4-argon-medium",
+                other => other,
+            };
+            if let Some(configs) = cfg.get("clientModelConfigs").and_then(Value::as_array) {
+                for entry in configs {
+                    let mid = entry.get("modelId").and_then(Value::as_str).unwrap_or("");
+                    if mid.eq_ignore_ascii_case(needle) {
+                        if let Some(m) = entry
+                            .pointer("/modelOrAlias/model")
+                            .and_then(Value::as_str)
+                        {
+                            return m.to_string();
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(default_m) = cfg
+            .pointer("/defaultOverrideModelConfig/modelOrAlias/model")
+            .and_then(Value::as_str)
+        {
+            return default_m.to_string();
+        }
+    }
+    "MODEL_PLACEHOLDER_M418".to_string()
+}
+
+/// Creates a Desktop-native conversation via Hub RPC `StartCascade` + `SendUserCascadeMessage` +
+/// `WaitForConversationFullyIdle` + `SmartFocusConversation` so `conversation_summaries.db` records
+/// `source = ""` and `<antigravity_root>/conversations/<cid>.db` (`desktop_body = true`) + `conversations_fts` are populated.
+pub(crate) fn run_agentapi_new_conversation(
+    runtime: &AntigravityRuntimeConfig,
+    hub: &AntigravityHubInfo,
+    project_id: &str,
+    _project_dir: &Path,
+    title: &str,
+    model: Option<&str>,
+    prompt: &str,
+) -> Result<(String, String), HostAdapterError> {
+    let plan_model = resolve_antigravity_plan_model(hub, model);
+    let start_resp = hub_rpc_request(
+        hub,
+        "StartCascade",
+        &json!({
+            "source": "CORTEX_TRAJECTORY_SOURCE_CASCADE_CLIENT",
+            "trajectoryType": "CORTEX_TRAJECTORY_TYPE_INTERACTIVE_CASCADE",
+            "requestedModel": plan_model,
+            "projectEnvConfig": {
+                "projectId": project_id,
+                "defaultProjectEnvironment": {}
+            }
+        }),
+        Duration::from_secs(15),
+    )?;
+    let conversation_id = start_resp
+        .get("cascadeId")
+        .or_else(|| start_resp.get("cascade_id"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| {
+            HostAdapterError::AntigravityProtocol(
+                "Antigravity Hub StartCascade response omitted cascadeId".into(),
+            )
+        })?;
+
+    let formatted_prompt = if title.trim().is_empty() {
+        prompt.to_string()
+    } else {
+        format!("# {title}\n\n{prompt}")
+    };
+    let _ = hub_rpc_request(
+        hub,
+        "SendUserCascadeMessage",
+        &json!({
+            "cascadeId": conversation_id,
+            "items": [{ "text": formatted_prompt }],
+            "cascadeConfig": {
+                "plannerConfig": {
+                    "planModel": plan_model,
+                    "requestedModel": { "model": plan_model }
+                }
+            },
+            "blocking": false,
+        }),
+        Duration::from_secs(30),
+    )?;
+
+    let _ = hub_rpc_request(
+        hub,
+        "WaitForConversationFullyIdle",
+        &json!({
+            "conversationId": conversation_id,
+            "inactivityTimeoutSeconds": 120,
+            "returnOnExecutorError": true,
+        }),
+        Duration::from_secs(125),
+    );
+    let _ = hub_rpc_request(
+        hub,
+        "SmartFocusConversation",
+        &json!({ "cascadeId": conversation_id }),
+        Duration::from_secs(5),
+    );
+
+    wait_for_desktop_summary_and_body(runtime, &conversation_id)?;
+    Ok((conversation_id.clone(), format!("turn-{conversation_id}-1")))
+}
+
+/// Sends a follow-up message to an existing Desktop-native conversation via Hub RPC `SendUserCascadeMessage`.
+pub(crate) fn run_agentapi_send_message(
+    runtime: &AntigravityRuntimeConfig,
+    hub: &AntigravityHubInfo,
+    _project_id: &str,
+    _project_dir: &Path,
+    conversation_id: &str,
+    prompt: &str,
+) -> Result<String, HostAdapterError> {
+    let plan_model = resolve_antigravity_plan_model(hub, None);
+    let _ = hub_rpc_request(
+        hub,
+        "SendUserCascadeMessage",
+        &json!({
+            "cascadeId": conversation_id,
+            "items": [{ "text": prompt }],
+            "cascadeConfig": {
+                "plannerConfig": {
+                    "planModel": plan_model,
+                    "requestedModel": { "model": plan_model }
+                }
+            },
+            "blocking": false,
+        }),
+        Duration::from_secs(30),
+    )?;
+    let _ = hub_rpc_request(
+        hub,
+        "WaitForConversationFullyIdle",
+        &json!({
+            "conversationId": conversation_id,
+            "inactivityTimeoutSeconds": 120,
+            "returnOnExecutorError": true,
+        }),
+        Duration::from_secs(125),
+    );
+    let _ = hub_rpc_request(
+        hub,
+        "SmartFocusConversation",
+        &json!({ "cascadeId": conversation_id }),
+        Duration::from_secs(5),
+    );
+    wait_for_desktop_summary_and_body(runtime, conversation_id)?;
+    Ok(format!("turn-{conversation_id}-followup"))
+}
+
+fn wait_for_desktop_summary_and_body(
+    runtime: &AntigravityRuntimeConfig,
+    conversation_id: &str,
+) -> Result<(), HostAdapterError> {
+    for _ in 0..40 {
+        if let Ok(Some(summary)) = read_conversation_summary(
+            &runtime.sqlite3_bin,
+            &runtime.summaries_db_path(),
+            conversation_id,
+        ) {
+            if runtime.has_desktop_conversation_body(conversation_id) && summary.source.is_empty() {
+                return Ok(());
+            }
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    Ok(())
 }
 
 impl crate::AntigravityDesktopAdapter {

@@ -681,9 +681,249 @@ pub fn attach_dsh_session_to_workspace(
     let tmp_path = ws_path.with_extension("json.tmp");
     let bytes = serde_json::to_vec_pretty(&doc)
         .map_err(|e| HostAdapterError::DshProtocol(e.to_string()))?;
-    fs::write(&tmp_path, bytes)?;
+    fs::write(&tmp_path, &bytes)?;
     fs::rename(&tmp_path, &ws_path)?;
+    refresh_running_dsh_desktop_app_if_matching_home(dsh_root, &bytes, None);
     Ok(())
+}
+
+/// Synchronizes a human-readable session `title` into `<dsh_root>/storages/session_projcache/sessions/<session_id>.json`
+/// so the DeepSeek Harness Desktop sidebar displays the dispatched task title instead of an auto-generated CLI snippet.
+pub fn sync_dsh_session_title_in_projcache(
+    dsh_root: &Path,
+    session_id: &str,
+    title: &str,
+) -> Result<(), HostAdapterError> {
+    if title.trim().is_empty() {
+        return Ok(());
+    }
+    let projcache_path = dsh_root
+        .join("storages")
+        .join("session_projcache")
+        .join("sessions")
+        .join(format!("{session_id}.json"));
+    if !projcache_path.exists() {
+        return Ok(());
+    }
+    let _ = stop_running_dsh_desktop_app_if_matching_home(dsh_root);
+    let mut doc: Value = serde_json::from_slice(&fs::read(&projcache_path)?).map_err(|e| {
+        HostAdapterError::DshProtocol(format!(
+            "invalid JSON in {}: {e}",
+            projcache_path.display()
+        ))
+    })?;
+    let cwd_str = doc
+        .pointer("/record/identity/cwd")
+        .or_else(|| doc.pointer("/record/rows/workingDirectory/val"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    if !cwd_str.is_empty() {
+        let archive_path = dsh_root
+            .join("sessions")
+            .join(dsh_cwd_bucket_slug(Path::new(&cwd_str)))
+            .join(session_id)
+            .join("session.v4.jsonl.zstd");
+        sync_dsh_session_archive_title(&archive_path, title);
+    }
+    let seq = doc
+        .pointer("/record/rows/title/seq")
+        .and_then(Value::as_u64)
+        .or_else(|| {
+            doc.pointer("/record/rows/turnBoundary/seq")
+                .and_then(Value::as_u64)
+        })
+        .unwrap_or(1);
+    if let Some(rows) = doc
+        .pointer_mut("/record/rows")
+        .and_then(Value::as_object_mut)
+    {
+        rows.insert(
+            "title".into(),
+            json!({
+                "ver": 1,
+                "seq": seq,
+                "val": title,
+            }),
+        );
+    }
+    let tmp_path = projcache_path.with_extension("json.tmp");
+    let bytes = serde_json::to_vec_pretty(&doc)
+        .map_err(|e| HostAdapterError::DshProtocol(e.to_string()))?;
+    fs::write(&tmp_path, &bytes)?;
+    fs::rename(&tmp_path, &projcache_path)?;
+    let ws_path = dsh_root.join("storages").join("workspace.json");
+    if let Ok(ws_bytes) = fs::read(&ws_path) {
+        refresh_running_dsh_desktop_app_if_matching_home(
+            dsh_root,
+            &ws_bytes,
+            Some((&projcache_path, &bytes)),
+        );
+    }
+    Ok(())
+}
+
+fn sync_dsh_session_archive_title(archive_path: &Path, title: &str) {
+    let Ok(raw) = fs::read(archive_path) else {
+        return;
+    };
+    if raw.len() < 4 || raw[..4] != [0x28, 0xB5, 0x2F, 0xFD] {
+        return;
+    }
+    let zstd_bin = if Path::new("/opt/homebrew/bin/zstd").exists() {
+        "/opt/homebrew/bin/zstd"
+    } else {
+        "zstd"
+    };
+    let Ok(decomp) = Command::new(zstd_bin)
+        .arg("-d")
+        .arg("-c")
+        .arg(archive_path)
+        .output()
+    else {
+        return;
+    };
+    if !decomp.status.success() {
+        return;
+    }
+    let Ok(text) = String::from_utf8(decomp.stdout) else {
+        return;
+    };
+    let mut updated_lines = Vec::new();
+    let mut changed = false;
+    for line in text.lines() {
+        if line.contains("\"session/title\"") {
+            if let Ok(mut val) = serde_json::from_str::<Value>(line) {
+                if val.get("type").and_then(Value::as_str) == Some("session/title") {
+                    if let Some(data) = val.get_mut("data").and_then(Value::as_object_mut) {
+                        data.insert("title".into(), json!(title));
+                        if let Ok(serialized) = serde_json::to_string(&val) {
+                            updated_lines.push(serialized);
+                            changed = true;
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
+        updated_lines.push(line.to_string());
+    }
+    if !changed || updated_lines.is_empty() {
+        return;
+    }
+    let Some(frame0) = zstd_compress_bytes(zstd_bin, format!("{}\n", updated_lines[0]).as_bytes())
+    else {
+        return;
+    };
+    let mut combined = frame0;
+    if updated_lines.len() > 1 {
+        let mut tail = updated_lines[1..].join("\n");
+        tail.push('\n');
+        let Some(frame1) = zstd_compress_bytes(zstd_bin, tail.as_bytes()) else {
+            return;
+        };
+        combined.extend_from_slice(&frame1);
+    }
+    let tmp_zstd = archive_path.with_extension("zstd.tmp");
+    if fs::write(&tmp_zstd, &combined).is_ok() {
+        let _ = fs::rename(&tmp_zstd, archive_path);
+    } else {
+        let _ = fs::remove_file(&tmp_zstd);
+    }
+}
+
+fn zstd_compress_bytes(zstd_bin: &str, input: &[u8]) -> Option<Vec<u8>> {
+    use std::process::Stdio;
+    let mut child = Command::new(zstd_bin)
+        .arg("-q")
+        .arg("-c")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    if let Some(mut stdin) = child.stdin.take() {
+        if stdin.write_all(input).is_err() {
+            return None;
+        }
+    }
+    let out = child.wait_with_output().ok()?;
+    out.status.success().then_some(out.stdout)
+}
+
+/// Returns true when `dsh_root` points to the current user's live `~/.dsh` store.
+pub fn is_live_user_dsh_root(dsh_root: &Path, home_dir: Option<&Path>) -> bool {
+    let Some(home) = home_dir else {
+        return false;
+    };
+    let expected = home.join(".dsh");
+    match (fs::canonicalize(dsh_root), fs::canonicalize(&expected)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => dsh_root == expected,
+    }
+}
+
+fn stop_running_dsh_desktop_app_if_matching_home(dsh_root: &Path) -> bool {
+    if !cfg!(target_os = "macos") {
+        return false;
+    }
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    if !is_live_user_dsh_root(dsh_root, home.as_deref()) {
+        return false;
+    }
+    let app_bin = "/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness";
+    if !Path::new(app_bin).exists() {
+        return false;
+    }
+    let Ok(out) = Command::new("/usr/bin/pgrep").arg("-f").arg(app_bin).output() else {
+        return false;
+    };
+    if !out.status.success() {
+        return false;
+    }
+    let pids: Vec<String> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect();
+    if pids.is_empty() {
+        return false;
+    }
+    for pid in &pids {
+        let _ = Command::new("/bin/kill").arg("-9").arg(pid).status();
+    }
+    std::thread::sleep(Duration::from_millis(800));
+    true
+}
+
+fn refresh_running_dsh_desktop_app_if_matching_home(
+    dsh_root: &Path,
+    ws_bytes: &[u8],
+    projcache_override: Option<(&Path, &[u8])>,
+) {
+    if !cfg!(target_os = "macos") {
+        return;
+    }
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    if !is_live_user_dsh_root(dsh_root, home.as_deref()) {
+        return;
+    }
+    let app_bin = "/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness";
+    if !Path::new(app_bin).exists() {
+        return;
+    }
+    let _ = stop_running_dsh_desktop_app_if_matching_home(dsh_root);
+    let ws_path = dsh_root.join("storages").join("workspace.json");
+    let _ = fs::write(&ws_path, ws_bytes);
+    if let Some((pc_path, pc_bytes)) = projcache_override {
+        let _ = fs::write(pc_path, pc_bytes);
+    }
+    let _ = Command::new("/usr/bin/open")
+        .arg("-g")
+        .arg("-a")
+        .arg("/Applications/DeepSeek Harness.app")
+        .status();
 }
 
 /// Reads back a session snapshot from `<dsh_root>/storages/session_projcache/sessions/<session_id>.json`
@@ -796,6 +1036,9 @@ pub fn run_dsh_headless_command(
             "dsh executable path must be absolute: {}",
             dsh_bin.display()
         )));
+    }
+    if session_id.is_some() {
+        let _ = stop_running_dsh_desktop_app_if_matching_home(dsh_root);
     }
     let mut cmd = Command::new(dsh_bin);
     cmd.current_dir(cwd)
