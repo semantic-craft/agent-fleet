@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 const source = fs.readFileSync(new URL('../plugins/agent-network-cindy/main.js', import.meta.url), 'utf8');
-function host(readMessages, run = { status: 'completed', outputMessageId: 'exact' }) {
+function host(readMessages, run = { taskId: 'owned', runId: 'run', status: 'completed', outputMessageId: 'exact' }) {
   const context = vm.createContext({ cindy: { tasks: { getRun: async () => run, readMessages }, node: { request: async () => ({ ok: true }) }, onHostMessage() {} } });
   vm.runInContext(source, context);
   return vm.runInContext('statusJob', context);

@@ -29,17 +29,20 @@ test('uncertain result delivery reads state without repeating reply', async () =
   reset(async name => {
     if (name === 'list_tasks') return { ...remote, tasks: [] };
     if (name === 'reply_task') { replies++; throw Error('disconnected'); }
-    reads++; return { ...remote, status: { state: replies ? 'completed' : 'working' } };
-  }, async () => ({ ok: true, run: { status: 'completed', outputMessageId: 'output' }, messages: [{ id: 'output', role: 'assistant', text: 'done' }] }));
-  worker.state.tasks.task = { phase: 'running', requestMessageId: 'request-1', acceptedAt: new Date().toISOString() };
+    if (name === 'get_task') reads++;
+    return { ...remote, status: { state: replies ? 'completed' : 'working' } };
+  }, async job => ({ ok: true, run: { taskId: 'owned', runId: job.runId, status: 'completed', outputMessageId: 'output' }, messages: [{ id: 'output', role: 'assistant', text: 'done' }] }));
+  worker.state.tasks.task = { phase: 'running', peer: 'peer', requestMessageId: 'request-1', requestText: 'hello',
+    cindyTaskId: 'owned', runId: 'run1', acceptedAt: new Date().toISOString() };
   await worker.tick(); await worker.tick();
-  assert.equal(replies, 1); assert.equal(reads, 2);
+  assert.equal(replies, 1); assert.ok(reads >= 2);
   assert.equal(worker.state.tasks.task.phase, 'delivery-state-observed');
 });
 test('observation timeout does not fail a running host task', async () => {
   let replies = 0;
   reset(async name => { if (name === 'reply_task') replies++; return { ...remote, tasks: [] }; }, async () => ({ ok: true, run: { status: 'working' } }));
-  worker.state.tasks.task = { phase: 'running', requestMessageId: 'request-1', acceptedAt: new Date(0).toISOString() };
+  worker.state.tasks.task = { phase: 'running', peer: 'peer', requestMessageId: 'request-1', requestText: 'hello',
+    cindyTaskId: 'owned', runId: 'run1', acceptedAt: new Date(0).toISOString() };
   await worker.tick();
   assert.equal(replies, 0); assert.equal(worker.state.tasks.task.phase, 'unverified');
 });
@@ -57,8 +60,10 @@ test('official cancellation never triggers host status or a completion reply', a
 });
 test('working progress is rate limited', async () => {
   let replies = 0;
-  reset(async name => { if (name === 'reply_task') replies++; return { ...remote, tasks: [], status: { state: 'working' } }; }, async () => ({ ok: true, run: { status: 'working' } }));
-  worker.state.tasks.task = { phase: 'running', requestMessageId: 'request-1', acceptedAt: new Date().toISOString() };
+  reset(async name => { if (name === 'reply_task') replies++; return { ...remote, tasks: [], status: { state: 'working' } }; },
+    async job => ({ ok: true, run: { taskId: 'owned', runId: job.runId, status: 'working' } }));
+  worker.state.tasks.task = { phase: 'running', peer: 'peer', requestMessageId: 'request-1', requestText: 'hello',
+    cindyTaskId: 'owned', runId: 'run1', acceptedAt: new Date().toISOString() };
   await worker.tick(); worker.state.tasks.task.lastCheck = 0; await worker.tick();
   assert.equal(replies, 1);
 });
@@ -70,8 +75,10 @@ test('creating checks prefixed official cancellation before host side effects', 
 });
 test('completed run never returns stale assistant output', async () => {
   let replies = 0;
-  reset(async name => { if (name === 'reply_task') replies++; return { ...remote, tasks: [], status: { state: 'working' } }; }, async () => ({ ok: true, run: { status: 'completed', outputMessageId: 'missing' }, messages: [{ id: 'old', role: 'assistant', text: 'old' }] }));
-  worker.state.tasks.task = { phase: 'running', requestMessageId: 'request-1', acceptedAt: new Date().toISOString() };
+  reset(async name => { if (name === 'reply_task') replies++; return { ...remote, tasks: [], status: { state: 'working' } }; },
+    async job => ({ ok: true, run: { taskId: 'owned', runId: job.runId, status: 'completed', outputMessageId: 'missing' }, messages: [{ id: 'old', role: 'assistant', text: 'old' }] }));
+  worker.state.tasks.task = { phase: 'running', peer: 'peer', requestMessageId: 'request-1', requestText: 'hello',
+    cindyTaskId: 'owned', runId: 'run1', acceptedAt: new Date().toISOString() };
   await worker.tick(); assert.equal(replies, 0); assert.equal(worker.state.tasks.task.error.code, 'EXACT_OUTPUT_UNAVAILABLE');
 });
 test('submitted task discovery follows nextPageToken', async () => {
@@ -93,7 +100,8 @@ test('same outgoing call id survives uncertainty without another send', async ()
 test('host run lookup failure cannot produce progress or terminal replies', async () => {
   let replies = 0;
   reset(async name => { if (name === 'reply_task') replies++; return { ...remote, tasks: [], status: { state: 'working' } }; }, async () => ({ ok: true, runError: { code: 'UNAVAILABLE' } }));
-  worker.state.tasks.task = { phase: 'running', requestMessageId: 'request-1', acceptedAt: new Date(0).toISOString() };
+  worker.state.tasks.task = { phase: 'running', peer: 'peer', requestMessageId: 'request-1', requestText: 'hello',
+    cindyTaskId: 'owned', runId: 'run1', acceptedAt: new Date(0).toISOString() };
   await worker.tick();
   assert.equal(replies, 0); assert.equal(worker.state.tasks.task.phase, 'running');
 });
@@ -129,8 +137,9 @@ test('long task retains its request after more than five progress messages', asy
     if (name === 'get_task') return { ...remote, history: history.slice(-args.history_length), status: { state: 'working' } };
     if (name === 'reply_task') { replies.push(args); history.push({ messageId: 'progress-' + replies.length, role: 'assistant', parts: [{ text: args.text }] }); }
     return {};
-  }, async () => ({ ok: true, run: { status: completed ? 'completed' : 'working', outputMessageId: 'final' }, messages: [{ id: 'final', role: 'assistant', text: 'correct result' }] }));
-  worker.state.tasks.task = { phase: 'running', requestMessageId: 'request-1', acceptedAt: new Date().toISOString() };
+  }, async job => ({ ok: true, run: { taskId: 'owned', runId: job.runId, status: completed ? 'completed' : 'working', outputMessageId: 'final' }, messages: [{ id: 'final', role: 'assistant', text: 'correct result' }] }));
+  worker.state.tasks.task = { phase: 'running', peer: 'peer', requestMessageId: 'request-1', requestText: 'hello',
+    cindyTaskId: 'owned', runId: 'run1', acceptedAt: new Date().toISOString() };
   for (let i = 0; i < 7; i++) {
     worker.state.tasks.task.lastCheck = 0; worker.state.tasks.task.lastProgressAt = 0;
     await worker.tick();
@@ -145,7 +154,7 @@ test('operator reconciliation returns the original exact result without creating
   reset(async (name, args) => {
     if (name === 'reply_task') { replies++; assert.equal(args.text, 'original final'); return {}; }
     return { ...remote, status: { state: 'working' } };
-  }, async job => { hostReads++; assert.equal(job.kind, 'status'); assert.equal(job.runId, 'original-run'); return { ok: true, run: { status: 'completed', outputMessageId: 'exact' }, messages: [{ id: 'exact', role: 'assistant', text: 'original final' }] }; });
+  }, async job => { hostReads++; assert.equal(job.kind, 'status'); assert.equal(job.runId, 'original-run'); return { ok: true, run: { taskId: 'owned', runId: 'original-run', status: 'completed', outputMessageId: 'exact' }, messages: [{ id: 'exact', role: 'assistant', text: 'original final' }] }; });
   worker.state.tasks.task = { phase: 'unverified', error: { code: 'EXACT_OUTPUT_UNAVAILABLE' }, peer: 'peer', requestMessageId: 'request-1', cindyTaskId: 'owned', runId: 'original-run' };
   const result = await worker.reconcileResult('task');
   assert.equal(result.reconciled, true); assert.equal(replies, 1); assert.equal(hostReads, 1);

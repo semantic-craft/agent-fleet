@@ -2,13 +2,11 @@
 
 维护源为 agent-fleet；消费者引用本页，不复制 CLI、任务恢复或回流机制。操作入口为 [delegate-via-anet](../skills/delegate-via-anet/SKILL.md)。上游协议来自 [Agent Network 官方文档](https://docs.agentnetwork.org.cn/docs/zh-cn/latest/)，Fleet 不定义第二套身份或任务状态机。
 
-本页只覆盖 ANet：无头、烟雾、Cindy 和任务账本。Desktop 进窗、cwd 等于 `~/Projects` 中的项目，见 [reason.md](reason.md) 与 [dispatch-desktop-reason](../skills/dispatch-desktop-reason/SKILL.md)。同一任务不要双发。Reason 签到另线，本页不宣称已通。
-
 ## 派出
 
 使用已安装版本的官方 CLI / MCP。节点持有身份、权限与任务；插件和 agents wire 是接入替代方案，不能为同一身份装两个处理者。环境根目录按 [anet.md](anet.md) 核实；不要把机器配置或 ~/.anet 状态提交到 Git。对端必须是完整 AID，授权扩展须用户明确批准。
 
-保存目标、身份、task id、运行时和已知状态。拿不到 task id 时标记未确认，先查原生状态；断连、超时、未知结果不得自动重派。CLI --watch / MCP wait_task 是观察，不是新的委派。跟进、续问、取消均针对同一任务。取消请求不等于执行端已停止。
+保存目标、身份、task id、运行时和已知状态。拿不到 task id 时标记未确认，先查原生状态；断连、超时、未知结果不得自动重派。CLI --watch / MCP wait_task 是观察，不是新的委派。跟进、取消均针对原任务；续问先确认协议任务仍接受输入及宿主适配器支持接续。取消请求不等于执行端已停止。
 
 ## 回程
 
@@ -23,3 +21,7 @@
 ## 消费者边界
 
 outer-loop-kit 保留角色分工、业务审批和汇报格式；xw-stack 保留技能发现入口。安装清单与接线仍由 xw-tooling 维护，插件分发由 agent-plugins 维护。协议机制只在本仓迭代；上游独立源码、运行状态和历史证据不吞并到本仓。
+
+## 排障与续接
+
+按 [Agent Network 派活与续接恢复](anet-recovery.md) 区分节点交付、宿主输入、轮次输出和签名回执。追加消息已确认送达节点不代表已进入宿主；终态任务不承诺可继续。没有精确输入/轮次关联时保留未验证，不另派同一工作。

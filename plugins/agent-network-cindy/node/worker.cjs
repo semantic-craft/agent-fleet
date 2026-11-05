@@ -20,6 +20,10 @@ const MAX_RUN_MS = 30 * 60 * 1000;
 // 30-minute observation window emits at most six 5-minute progress messages.
 // Keep a bounded 100-message window so our own progress cannot hide the request.
 const TASK_HISTORY_LENGTH = 100;
+const ROUTE_PREFIX = 'ANET_CINDY_ROUTE_V1 ';
+const ROUTE_FIELDS = ['agentKind', 'providerId', 'model', 'effort', 'fastMode'];
+const AGENT_KINDS = new Set(['cc', 'codex', 'pi']);
+const EFFORTS = new Set(['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
 
 const log = (...a) => { try { process.stderr.write('[agent-network-cindy] ' + a.join(' ') + '\n'); } catch {} };
 const write = (m) => process.stdout.write(JSON.stringify(m) + '\n');
@@ -76,7 +80,7 @@ function startMcp() {
   };
   child.on('exit', (code) => down('exited ' + code));
   child.on('error', (e) => down('error ' + e.message));
-  m.ready = rpc(m, 'initialize', { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'agent-network-cindy', version: '0.3.1' } }, 30000)
+  m.ready = rpc(m, 'initialize', { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'agent-network-cindy', version: '0.3.4' } }, 30000)
     .then((r) => { if (r.error) throw new Error(r.error.message); child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n'); status.mcp = 'up'; saveStatus(); });
   m.ready.catch((e) => { log('mcp init failed', e.message); try { child.kill(); } catch {} });
 }
@@ -129,6 +133,291 @@ function latestUserMessage(task) {
 }
 const lastUserMessageId = task => latestUserMessage(task).id;
 const lastUserText = task => latestUserMessage(task).text;
+function historyFor(task) {
+  return Array.isArray(task.history) ? task.history : [];
+}
+function userText(message) {
+  const parts = Array.isArray(message.parts) ? message.parts : null;
+  if (!parts || !parts.length || parts.some(part => !part || typeof part !== 'object' || Array.isArray(part) ||
+      Object.keys(part).some(key => key !== 'text') || typeof part.text !== 'string' || !part.text.length)) return null;
+  return parts.map(part => part.text).join('\n');
+}
+function routeKeyCount(routeText, key) {
+  return (routeText.match(new RegExp('"' + key + '"\\s*:', 'g')) || []).length;
+}
+function validateRoute(route) {
+  if (!route || typeof route !== 'object' || Array.isArray(route)) return null;
+  const keys = Object.keys(route);
+  if (keys.length !== ROUTE_FIELDS.length || ROUTE_FIELDS.some(key => !keys.includes(key))) return null;
+  if (!AGENT_KINDS.has(route.agentKind) || !EFFORTS.has(route.effort) ||
+      typeof route.providerId !== 'string' || !route.providerId.trim() ||
+      typeof route.model !== 'string' || !route.model.trim() ||
+      (route.fastMode !== true && route.fastMode !== false && route.fastMode !== 'ultrafast')) return null;
+  return route;
+}
+function routeMatches(left, right) {
+  if (left == null && right == null) return true;
+  return !!left && !!right && typeof left === 'object' && !Array.isArray(left) &&
+    typeof right === 'object' && !Array.isArray(right) &&
+    ROUTE_FIELDS.every(key => left[key] === right[key]);
+}
+function routeCompatible(left, right) {
+  return left === right || routeMatches(left, right);
+}
+function parseRouteEnvelope(sourceText) {
+  if (typeof sourceText !== 'string' || !sourceText.length) return { error: 'MODEL_ROUTE_INVALID', text: sourceText, route: null };
+  const newline = sourceText.indexOf('\n');
+  const firstLine = newline < 0 ? sourceText : sourceText.slice(0, newline);
+  if (firstLine.startsWith('ANET_CINDY_ROUTE_')) {
+    if (!firstLine.startsWith(ROUTE_PREFIX) ||
+        /^\s/.test(firstLine.slice(ROUTE_PREFIX.length))) {
+      return { error: 'MODEL_ROUTE_INVALID', text: sourceText, route: null };
+    }
+  } else return { text: sourceText, route: null };
+  const routeText = firstLine.slice(ROUTE_PREFIX.length);
+  let route;
+  try { route = JSON.parse(routeText); } catch { return { error: 'MODEL_ROUTE_INVALID', text: sourceText, route: null }; }
+  if (typeof route !== 'object' || !route || Array.isArray(route) ||
+      ROUTE_FIELDS.some(key => routeKeyCount(routeText, key) !== 1) ||
+      Object.keys(route).length !== ROUTE_FIELDS.length) {
+    return { error: 'MODEL_ROUTE_INVALID', text: sourceText, route: null };
+  }
+  route = validateRoute(route);
+  if (!route) return { error: 'MODEL_ROUTE_INVALID', text: sourceText, route: null };
+  const text = newline < 0 ? '' : sourceText.slice(newline + 1);
+  if (!text.trim()) return { error: 'MODEL_ROUTE_INVALID', text: sourceText, route: null };
+  return { text, route };
+}
+function taskTextFromAnchor(rec, sourceText) {
+  const parsed = parseRouteEnvelope(sourceText);
+  if (parsed.error) return null;
+  if (parsed.route && !rec.route) return null;
+  if (parsed.route && !routeMatches(parsed.route, rec.route)) return null;
+  if (!parsed.route && rec.route && sourceText !== parsed.text) return null;
+  return parsed.text;
+}
+async function failRouteDeterministically(aid, rec, code, message) {
+  Object.assign(rec, { phase: 'delivery-unverified', error: { code }, pendingSend: null,
+    pendingReply: { task_id: aid, state: 'failed', text: 'Rejected before sending this request: ' + message } });
+  saveState();
+  try { await tool('reply_task', rec.pendingReply); rec.phase = 'failed'; }
+  catch { rec.phase = 'delivery-unverified'; }
+  saveState();
+}
+function validateHistory(task, anchorId, anchorText) {
+  const history = historyFor(task);
+  const seen = new Set();
+  let anchorIndex = -1;
+  for (let index = 0; index < history.length; index++) {
+    const message = history[index];
+    if (!message || typeof message !== 'object' || Array.isArray(message)) return { error: 'MALFORMED_HISTORY' };
+    const id = typeof message.messageId === 'string' && message.messageId ? message.messageId : null;
+    const isUser = message.role === 'ROLE_USER' || message.role === 'user';
+    if (isUser) {
+      if ('attachments' in message) return { error: 'MALFORMED_USER_MESSAGE' };
+      if (!id) return { error: 'MISSING_MESSAGE_ID' };
+      if (seen.has(id)) return { error: 'DUPLICATE_MESSAGE_ID' };
+      seen.add(id);
+      const text = userText(message);
+      if (text === null) return { error: 'MALFORMED_USER_MESSAGE' };
+      if (text.length > 32768) return { error: 'INPUT_TOO_LONG' };
+      if (id === anchorId) {
+        if (anchorIndex >= 0) return { error: 'DUPLICATE_MESSAGE_ID' };
+        anchorIndex = index;
+        if (text !== anchorText) return { error: 'ANCHOR_TEXT_CHANGED' };
+      }
+    } else if (id) {
+      if (seen.has(id)) return { error: 'DUPLICATE_MESSAGE_ID' };
+      seen.add(id);
+    }
+  }
+  if (anchorIndex < 0) return { error: 'ANCHOR_NOT_IN_BOUNDED_HISTORY' };
+  const suffix = [];
+  for (let index = anchorIndex + 1; index < history.length; index++) {
+    const message = history[index];
+    if (message.role !== 'ROLE_USER' && message.role !== 'user') continue;
+    const text = userText(message);
+    if (text === null || !text.trim()) return { error: 'MALFORMED_USER_MESSAGE' };
+    suffix.push({ messageId: message.messageId, text });
+  }
+  return { suffix };
+}
+const requestKeyFor = (taskId, messageId) =>
+  'anet-followup-' + crypto.createHash('sha256').update('agent-network-cindy\0' + taskId + '\0' + messageId, 'utf8').digest('hex');
+const outputKey = (messageId, runId) => messageId + ':' + runId;
+const CONTINUATION_REJECTIONS = new Set(['IDEMPOTENCY_CONFLICT', 'REVISION_CONFLICT', 'TASK_BINDING_INVALID',
+  'TASK_NOT_FOUND', 'TASK_BUSY', 'PERMISSION_DENIED']);
+function storeOutput(rec, messageId, runId, text) {
+  if (messageId !== rec.requestMessageId || runId !== rec.runId) throw new Error('inconsistent output binding');
+  if (!rec.runs || typeof rec.runs !== 'object' || Array.isArray(rec.runs)) rec.runs = {};
+  if (!Array.isArray(rec.completedRequests)) rec.completedRequests = [];
+  const key = outputKey(messageId, runId);
+  const prior = rec.runs[key];
+  if (prior && (!prior || prior.messageId !== messageId || prior.runId !== runId || prior.text !== text)) {
+    throw new Error('inconsistent persisted output');
+  }
+  rec.runs[key] = { messageId, runId, text, at: prior && prior.at || new Date().toISOString() };
+  if (!rec.completedRequests.includes(messageId)) rec.completedRequests.push(messageId);
+}
+function composedOutput(rec) {
+  const runs = rec.runs && typeof rec.runs === 'object' ? rec.runs : {};
+  const outputs = (Array.isArray(rec.completedRequests) ? rec.completedRequests : [])
+    .map(messageId => Object.values(runs).find(run => run.messageId === messageId))
+    .filter(Boolean);
+  if (outputs.length === 1) return outputs[0].text;
+  return outputs.map((run, index) => '[Cindy request ' + (index + 1) + ': ' + run.messageId + ']\n' + run.text).join('\n\n');
+}
+function failureReport(rec, runStatus) {
+  const outputs = composedOutput(rec);
+  if (!outputs) return 'Cindy run ended: ' + runStatus;
+  return '[Cindy: run ended as ' + runStatus + '; exact prior outputs follow]\n\n' + outputs;
+}
+async function reportRouteUncertainty(rec, aid, code) {
+  Object.assign(rec, { phase: 'unverified', error: { code },
+    uncertaintyNoticeAttempt: { at: new Date().toISOString(), outcome: 'unknown' } });
+  saveState();
+  await tool('reply_task', { task_id: aid, state: 'working',
+    text: 'Cindy route verification failed after a host call. The execution and result are not confirmed; this request will not automatically retry.' });
+  Object.assign(rec, { uncertaintyNotice: { at: rec.uncertaintyNoticeAttempt.at,
+    outcome: 'delivered', deliveredAt: new Date().toISOString() } });
+  saveState();
+}
+
+function pendingSendMatchesQueue(rec, send) {
+  const next = Array.isArray(rec.queue) && rec.queue[0];
+  const expectedText = next ? taskTextFromAnchor(rec, next.text) : null;
+  return !!send && typeof send === 'object' && !Array.isArray(send) &&
+    send.taskId === rec.cindyTaskId && !!next &&
+    send.messageId === next.messageId && send.text === expectedText &&
+    (send.sourceText === next.text || !rec.route && send.sourceText === undefined) &&
+    routeCompatible(send.route, rec.route) &&
+    typeof send.requestKey === 'string' && !!send.requestKey &&
+    Number.isSafeInteger(send.expectedRevision) &&
+    (!('runId' in send) || typeof send.runId === 'string' && !!send.runId);
+}
+function queueSuffixIsAppendOnly(previousQueue, suffix) {
+  const prior = Array.isArray(previousQueue) ? previousQueue : [];
+  return suffix.length >= prior.length && prior.every((message, index) => {
+    const next = suffix[index];
+    return message && next && message.messageId === next.messageId && message.text === next.text;
+  });
+}
+function acceptedPendingSendMatches(rec, send) {
+  const expectedText = typeof rec.requestText === 'string' ? taskTextFromAnchor(rec, rec.requestText) : null;
+  return !!send && typeof send === 'object' && !Array.isArray(send) &&
+    send.taskId === rec.cindyTaskId && send.runId === rec.runId &&
+    send.messageId === rec.requestMessageId && send.text === expectedText &&
+    (send.sourceText === rec.requestText || !rec.route && send.sourceText === undefined) &&
+    routeCompatible(send.route, rec.route) &&
+    typeof send.requestKey === 'string' && !!send.requestKey &&
+    Number.isSafeInteger(send.expectedRevision);
+}
+function commitContinuation(rec, send, response) {
+  if (!response || !response.ok || !response.run || response.run.taskId !== send.taskId ||
+      typeof response.run.runId !== 'string' || !response.run.runId) return false;
+  Object.assign(rec, { requestMessageId: send.messageId, requestText: send.sourceText || send.text, runId: response.run.runId,
+    acceptedAt: new Date().toISOString(), lastCheck: 0, lastProgressAt: null, error: null,
+    pendingSend: { ...send, runId: response.run.runId } });
+  rec.queue.shift();
+  saveState();
+  return true;
+}
+async function dispatchContinuation(rec, aid) {
+  if (!rec.queue || !rec.queue.length) return;
+  if (rec.route && !validateRoute(rec.route)) {
+    Object.assign(rec, { phase: 'unverified', error: { code: 'MODEL_ROUTE_STATE_INVALID' } }); saveState();
+    return;
+  }
+  if (!rec.route && rec.requestText && parseRouteEnvelope(rec.requestText).route) {
+    Object.assign(rec, { phase: 'unverified', error: { code: 'MODEL_ROUTE_STATE_MISSING' } }); saveState();
+    return;
+  }
+  const replay = !!rec.pendingSend;
+  let send = rec.pendingSend;
+  const nextRoute = rec.queue.length ? parseRouteEnvelope(rec.queue[0].text) : null;
+  if (nextRoute?.error) {
+    await failRouteDeterministically(rec.officialTaskId, rec, nextRoute.error,
+      'the follow-up explicit route envelope is malformed, partial, or contains unsupported values.');
+    return;
+  }
+  if (nextRoute?.route && (!rec.route || !routeMatches(nextRoute.route, rec.route))) {
+    await failRouteDeterministically(rec.officialTaskId, rec, 'MODEL_ROUTE_CHANGED',
+      'the follow-up attempted to change the saved explicit Cindy route.');
+    return;
+  }
+  if (send && (!pendingSendMatchesQueue(rec, send) || send.runId && send.runId !== rec.runId)) {
+    Object.assign(rec, { phase: 'unverified', error: { code: 'FOLLOWUP_STATE_INCONSISTENT' } }); saveState();
+    return;
+  }
+  if (!send) {
+    const next = rec.queue[0];
+    const prepared = await runJob({ kind: 'prepare-continuation', taskId: rec.cindyTaskId,
+      ...(rec.route ? { route: rec.route } : {}) }, 30000);
+    if (!prepared || !prepared.ok || prepared.taskId !== rec.cindyTaskId || prepared.status !== 'active' ||
+        !Number.isSafeInteger(prepared.revision)) {
+      const preparedCode = prepared?.error?.code;
+      if (prepared?.beforeSend && preparedCode === 'MODEL_ROUTE_MISMATCH') {
+        await failRouteDeterministically(aid || rec.officialTaskId, rec, preparedCode,
+          'saved Cindy route no longer matches the host task (MODEL_ROUTE_MISMATCH).');
+        return;
+      }
+      Object.assign(rec, { phase: 'unverified',
+        error: { code: preparedCode || 'FOLLOWUP_PREPARE_FAILED' } });
+      saveState();
+      return;
+    }
+    send = { messageId: next.messageId, text: next.text, sourceText: next.text, taskId: rec.cindyTaskId,
+      requestKey: requestKeyFor(rec.cindyTaskId, next.messageId), expectedRevision: prepared.revision };
+    const taskText = taskTextFromAnchor(rec, send.text);
+    if (!taskText) {
+      Object.assign(rec, { phase: 'unverified', error: { code: 'MODEL_ROUTE_CHANGED' } }); saveState();
+      return;
+    }
+    send.text = taskText;
+    if (rec.route) send.route = rec.route;
+    rec.pendingSend = send;
+    saveState();
+  }
+  const response = await runJob({ kind: 'send-continuation', taskId: send.taskId, requestKey: send.requestKey,
+    expectedRevision: send.expectedRevision, text: send.text,
+    replay,
+    ...(send.route ? { route: send.route } : {}) }, 45000);
+  if (!commitContinuation(rec, send, response)) {
+    const code = (response && response.error && response.error.code) || 'FOLLOWUP_SEND_OUTCOME_UNKNOWN';
+    if (response?.afterSend) {
+      Object.assign(rec, { phase: 'unverified', error: { code },
+        pendingSend: { ...send, runId: response.runId || send.runId || null } });
+      saveState();
+      await reportRouteUncertainty(rec, aid || rec.officialTaskId, code);
+      return;
+    }
+    if (response?.beforeSend && code === 'MODEL_ROUTE_MISMATCH') {
+      await failRouteDeterministically(aid || rec.officialTaskId, rec, code,
+        'saved Cindy route no longer matches the host task (MODEL_ROUTE_MISMATCH).');
+      return;
+    }
+    const knownRejection = CONTINUATION_REJECTIONS.has(code);
+    Object.assign(rec, { phase: knownRejection ? 'unverified' : 'running',
+      error: { code }, pendingSend: send });
+    saveState();
+  }
+}
+async function repairLegacyFrozen(aid, rec) {
+  if (rec.phase !== 'unverified' || rec.error?.code !== 'FOLLOWUP_REQUIRES_OPERATOR' ||
+      !rec.cindyTaskId || !rec.runId || !rec.requestMessageId || typeof rec.requestText !== 'string' ||
+      !config.allowPeers.includes(rec.peer) || rec.pendingSend) return;
+  const remote = await tool('get_task', { task_id: aid, history_length: TASK_HISTORY_LENGTH });
+  const task = remote.task || remote;
+  const peerValid = rec.peer === task.metadata?.['anet.peer_aid'] && config.allowPeers.includes(rec.peer);
+  const validated = task.id === aid && !OFFICIAL_TERMINAL.has(officialState(task)) ?
+    validateHistory(task, rec.requestMessageId, rec.requestText) : { error: 'OFFICIAL_OR_ANCHOR_UNVERIFIED' };
+  if (!peerValid || validated.error) return;
+  if (!rec.runs || typeof rec.runs !== 'object' || Array.isArray(rec.runs)) rec.runs = {};
+  if (!Array.isArray(rec.completedRequests)) rec.completedRequests = [rec.requestMessageId];
+  Object.assign(rec, { phase: 'running', queue: validated.suffix, pendingSend: null, error: null,
+    lastCheck: 0, lastProgressAt: null });
+  saveState();
+}
 function pickOutput(st) {
   const msgs = Array.isArray(st.messages) ? st.messages : [];
   const outId = st.run && st.run.outputMessageId;
@@ -136,9 +425,11 @@ function pickOutput(st) {
   const message = msgs.find(x => x.id === outId && x.role === 'assistant');
   return message && typeof message.text === 'string' ? message.text : '';
 }
-const officialState = (task) => String(task.status && task.status.state || '').replace(/^TASK_STATE_/, '').toLowerCase().replaceAll('_', '-');
+const officialState = (task) => String(task?.status?.state || '').replace(/^TASK_STATE_/, '').toLowerCase().replaceAll('_', '-');
 const OFFICIAL_TERMINAL = new Set(['completed', 'failed', 'rejected', 'canceled']);
 const TERMINAL = new Set(['completed', 'failed', 'cancelled', 'interrupted']);
+const ACTIVE_RUN_STATUSES = new Set(['running', 'working', 'queued', 'pending']);
+const KNOWN_RUN_STATUSES = new Set([...ACTIVE_RUN_STATUSES, ...TERMINAL]);
 
 let busy = false;
 async function tick() {
@@ -175,10 +466,23 @@ async function tick() {
     }
     // 2) advance known tasks
     for (const [aid, rec] of Object.entries(state.tasks)) {
+      await repairLegacyFrozen(aid, rec);
       if (rec.phase === 'delivery-unverified') {
+        let task;
+        if (rec.pendingReply && ['completed', 'failed'].includes(rec.pendingReply.state)) {
+          const official = await tool('get_task', { task_id: aid, history_length: TASK_HISTORY_LENGTH });
+          task = official.task || official;
+          const current = officialState(task);
+          if (OFFICIAL_TERMINAL.has(current)) {
+            if (current === rec.pendingReply.state) Object.assign(rec, { phase: 'delivery-state-observed', endedAt: new Date().toISOString() });
+            else Object.assign(rec, { phase: 'unverified', error: { code: 'OFFICIAL_STATE_CONFLICT' }, officialState: task.status.state });
+            saveState(); continue;
+          }
+        } else {
+          const remote = await tool('get_task', { task_id: aid, history_length: TASK_HISTORY_LENGTH });
+          task = remote.task || remote;
+        }
         // Read official state after uncertain delivery. Never repeat a terminal mutation.
-        const remote = await tool('get_task', { task_id: aid, history_length: TASK_HISTORY_LENGTH });
-        const task = remote.task || remote;
         if (officialState(task) === rec.pendingReply.state) {
           Object.assign(rec, { phase: 'delivery-state-observed', endedAt: new Date().toISOString() }); saveState();
         }
@@ -200,31 +504,85 @@ async function tick() {
           Object.assign(rec, { phase: 'unverified', error: { code: 'INPUT_TOO_LONG' } }); saveState(); continue;
         }
         // Persist uncertainty BEFORE the host side effect; restart must not duplicate it.
-        Object.assign(rec, { phase: 'unverified', requestText: text, error: { code: 'CREATE_OUTCOME_UNKNOWN' } }); saveState();
-        const r = await runJob({ kind: 'create', requestKey: 'anet-' + aid.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 100), title: ('Agent Network: ' + text.replace(/\s+/g, ' ')).slice(0, 100), text }, 90000);
+        const envelope = parseRouteEnvelope(text);
+        if (envelope.error) {
+          Object.assign(rec, { requestText: text, error: { code: envelope.error } });
+          await failRouteDeterministically(aid, rec, envelope.error,
+            'the explicit route envelope is malformed, partial, or contains unsupported values (' + envelope.error + ').');
+          continue;
+        }
+        Object.assign(rec, { phase: 'unverified', requestText: text,
+          ...(envelope.route ? { route: envelope.route } : {}), error: { code: 'CREATE_OUTCOME_UNKNOWN' } }); saveState();
+        const r = await runJob({ kind: 'create', requestKey: 'anet-' + aid.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 100), title: ('Agent Network: ' + text.replace(/\s+/g, ' ')).slice(0, 100), text: envelope.text,
+          ...(envelope.route ? { route: envelope.route } : {}) }, 90000);
         if (r && r.ok) {
-          Object.assign(rec, { phase: 'running', cindyTaskId: r.taskId, runId: r.runId, acceptedAt: new Date().toISOString() }); saveState();
-          await tool('reply_task', { task_id: aid, state: 'working', text: 'Accepted by Cindy; working on it.' }).catch((e) => log('working reply failed', e.message));
+          Object.assign(rec, { phase: 'running', officialTaskId: aid, cindyTaskId: r.taskId, runId: r.runId, acceptedAt: new Date().toISOString() }); saveState();
+          await tool('reply_task', { task_id: aid, state: 'working',
+            text: 'Accepted by \u007b\u007bPERSON_bee7cl5q\u007d\u007d; working on it.' }).catch((e) => log('working reply failed', e.message));
         } else {
           const code = (r && r.error && r.error.code) || 'UNKNOWN';
+          if (r?.beforeSend && r.error?.code?.startsWith('MODEL_ROUTE_')) {
+            Object.assign(rec, { requestText: text, cindyTaskId: r.taskId || null,
+              ...(r.runId ? { runId: r.runId } : {}) });
+            await failRouteDeterministically(aid, rec, code,
+              'the host task route does not match the requested explicit Cindy route.');
+            continue;
+          }
+          if (r?.afterSend && r.error?.code?.startsWith('MODEL_ROUTE_')) {
+            Object.assign(rec, { phase: 'unverified', error: { code },
+              cindyTaskId: r.taskId || null,
+              ...(r.runId ? { runId: r.runId } : {}) });
+            await reportRouteUncertainty(rec, aid, code);
+            continue;
+          }
           // A host error may follow a successful create or send. Do not retry blindly.
-          Object.assign(rec, { phase: 'unverified', error: { code }, cindyTaskId: r && r.taskId || null }); saveState();
+          Object.assign(rec, { phase: 'unverified', error: { code }, cindyTaskId: r && r.taskId || null,
+            ...(r && typeof r.runId === 'string' && r.runId ? { runId: r.runId } : {}) }); saveState();
         }
       } else if (rec.phase === 'running') {
         if (!status.mainConnected) continue;
         if (rec.lastCheck && Date.now() - rec.lastCheck < STATUS_EVERY_MS) continue;
         rec.lastCheck = Date.now();
+        if (rec.route && !validateRoute(rec.route)) {
+          Object.assign(rec, { phase: 'unverified', error: { code: 'MODEL_ROUTE_STATE_INVALID' } }); saveState(); continue;
+        }
+        if (!rec.route && rec.requestText && parseRouteEnvelope(rec.requestText).route) {
+          Object.assign(rec, { phase: 'unverified', error: { code: 'MODEL_ROUTE_STATE_MISSING' } }); saveState(); continue;
+        }
         const officialResult = await tool('get_task', { task_id: aid, history_length: TASK_HISTORY_LENGTH });
         const official = officialResult.task || officialResult;
         if (OFFICIAL_TERMINAL.has(officialState(official))) {
           Object.assign(rec, { phase: 'unverified', error: { code: 'OFFICIAL_TASK_ENDED_HOST_NOT_STOPPED' }, officialState: official.status.state }); saveState(); continue;
         }
-        if (!rec.requestMessageId || lastUserMessageId(official) !== rec.requestMessageId || !lastUserText(official).trim()) {
-          Object.assign(rec, { phase: 'unverified', error: { code: 'FOLLOWUP_REQUIRES_OPERATOR' } }); saveState(); continue;
+        const peerValid = official.id === aid && rec.peer === official.metadata?.['anet.peer_aid'] &&
+          config.allowPeers.includes(rec.peer);
+        const validated = rec.requestMessageId && typeof rec.requestText === 'string' ?
+          validateHistory(official, rec.requestMessageId, rec.requestText) :
+          { error: 'ANCHOR_NOT_IN_BOUNDED_HISTORY' };
+        if (!peerValid || validated.error) {
+          Object.assign(rec, { phase: 'unverified',
+            error: { code: peerValid ? validated.error : 'PEER_OR_TASK_BINDING_CHANGED' } }); saveState(); continue;
         }
-        const st = await runJob({ kind: 'status', taskId: rec.cindyTaskId, runId: rec.runId }, 30000);
-        if (!st || !st.ok || st.runError || !st.run || typeof st.run.status !== 'string') continue;
-        const runStatus = st.run && st.run.status;
+        const previousQueue = Array.isArray(rec.queue) ? rec.queue : [];
+        if (!queueSuffixIsAppendOnly(previousQueue, validated.suffix)) {
+          Object.assign(rec, { phase: 'unverified', error: { code: 'FOLLOWUP_QUEUE_HISTORY_CHANGED' } });
+          saveState(); continue;
+        }
+        if (previousQueue.length !== validated.suffix.length) rec.queue = validated.suffix;
+        saveState();
+        const st = await runJob({ kind: 'status', taskId: rec.cindyTaskId, runId: rec.runId,
+          ...(rec.route ? { route: rec.route } : {}) }, 30000);
+        if (st?.runError?.code?.startsWith('MODEL_ROUTE_')) {
+          await reportRouteUncertainty(rec, aid, st.runError.code); continue;
+        }
+        if (!st || !st.ok || st.runError || !st.run) continue;
+        if (st.run.taskId !== rec.cindyTaskId || st.run.runId !== rec.runId) {
+          Object.assign(rec, { phase: 'unverified', error: { code: 'HOST_RUN_BINDING_INVALID' } }); saveState(); continue;
+        }
+        const runStatus = st.run.status;
+        if (!KNOWN_RUN_STATUSES.has(runStatus)) {
+          Object.assign(rec, { phase: 'unverified', error: { code: 'UNKNOWN_RUN_STATUS' } }); saveState(); continue;
+        }
         rec.runStatus = runStatus || null;
         if (TERMINAL.has(runStatus)) {
           const out = pickOutput(st);
@@ -232,13 +590,57 @@ async function tick() {
             Object.assign(rec, { phase: 'unverified', error: { code: 'EXACT_OUTPUT_UNAVAILABLE' } }); saveState(); continue;
           }
           const ok = runStatus === 'completed' && out;
-          Object.assign(rec, { phase: 'delivery-unverified', pendingReply: { task_id: aid, state: ok ? 'completed' : 'failed', text: ok ? out : ('Cindy run ended: ' + runStatus) } }); saveState();
+          if (ok) {
+            storeOutput(rec, rec.requestMessageId, rec.runId, out);
+            saveState();
+          }
+          if (rec.pendingSend?.runId === rec.runId) {
+            if (!acceptedPendingSendMatches(rec, rec.pendingSend)) {
+              Object.assign(rec, { phase: 'unverified', error: { code: 'FOLLOWUP_STATE_INCONSISTENT' } }); saveState(); continue;
+            }
+            rec.pendingSend = null;
+            saveState();
+          }
+          if (runStatus === 'completed' && rec.queue && rec.queue.length) {
+        await dispatchContinuation(rec, aid);
+            continue;
+          }
+          if (runStatus === 'completed') {
+            const refreshed = await tool('get_task', { task_id: aid, history_length: TASK_HISTORY_LENGTH });
+            const latest = refreshed.task || refreshed;
+            if (OFFICIAL_TERMINAL.has(officialState(latest))) {
+              Object.assign(rec, { phase: 'unverified', error: { code: 'OFFICIAL_TASK_ENDED_HOST_NOT_STOPPED' },
+                officialState: latest.status.state }); saveState(); continue;
+            }
+            const latestValidated = validateHistory(latest, rec.requestMessageId, rec.requestText);
+            const latestPeerValid = latest.id === aid && rec.peer === latest.metadata?.['anet.peer_aid'] &&
+              config.allowPeers.includes(rec.peer);
+            if (!latestPeerValid || latestValidated.error) {
+              Object.assign(rec, { phase: 'unverified',
+                error: { code: latestPeerValid ? latestValidated.error : 'PEER_OR_TASK_BINDING_CHANGED' } }); saveState(); continue;
+            }
+            if (latestValidated.suffix.length) {
+              rec.queue = latestValidated.suffix;
+              saveState();
+              await dispatchContinuation(rec, aid);
+              continue;
+            }
+          }
+          const finalText = ok ? composedOutput(rec) : failureReport(rec, runStatus);
+          if (finalText.length > 60000) {
+            Object.assign(rec, { phase: 'unverified', error: { code: 'EXACT_OUTPUT_TOO_LARGE' } }); saveState(); continue;
+          }
+          if (rec.pendingSend) {
+            Object.assign(rec, { phase: 'unverified', error: { code: 'FOLLOWUP_SEND_UNRESOLVED' } });
+            saveState(); continue;
+          }
+          Object.assign(rec, { phase: 'delivery-unverified', pendingReply: { task_id: aid, state: ok ? 'completed' : 'failed', text: finalText } }); saveState();
           await tool('reply_task', rec.pendingReply);
           Object.assign(rec, { phase: ok ? 'replied' : 'failed', endedAt: new Date().toISOString() }); saveState();
         } else if (Date.now() - Date.parse(rec.acceptedAt) > MAX_RUN_MS) {
           // Observation deadline is not evidence that the host failed.
           Object.assign(rec, { phase: 'unverified', error: { code: 'RUN_TIMEOUT' } }); saveState();
-        } else if (['running', 'working', 'queued', 'pending'].includes(runStatus) && (!rec.lastProgressAt || Date.now() - rec.lastProgressAt > 5 * 60 * 1000)) {
+        } else if (ACTIVE_RUN_STATUSES.has(runStatus) && (!rec.lastProgressAt || Date.now() - rec.lastProgressAt > 5 * 60 * 1000)) {
           rec.lastProgressAt = Date.now(); saveState();
           await tool('reply_task', { task_id: aid, state: 'working', text: 'Cindy host run remains active; result not yet verified.' });
         }
@@ -279,7 +681,8 @@ async function reconcileResult(aid) {
   if (!config || typeof aid !== 'string') throw new Error('configured bridge and task id required');
   const rec = state.tasks[aid];
   if (!rec || rec.phase !== 'unverified' || rec.error?.code !== 'EXACT_OUTPUT_UNAVAILABLE' ||
-      !rec.cindyTaskId || !rec.runId || !rec.requestMessageId || !config.allowPeers.includes(rec.peer)) {
+      !rec.cindyTaskId || !rec.runId || !rec.requestMessageId ||
+      !config.allowPeers.includes(rec.peer) || rec.pendingSend) {
     return { reconciled: false, reason: 'not-eligible', taskId: aid };
   }
   if (busy || !status.mainConnected) return { reconciled: false, reason: 'bridge-busy-or-disconnected', taskId: aid };
@@ -287,11 +690,14 @@ async function reconcileResult(aid) {
   try {
     const remote = await tool('get_task', { task_id: aid, history_length: TASK_HISTORY_LENGTH });
     const task = remote.task || remote;
-    if (OFFICIAL_TERMINAL.has(officialState(task)) || lastUserMessageId(task) !== rec.requestMessageId || !lastUserText(task).trim()) {
+    if (OFFICIAL_TERMINAL.has(officialState(task)) || task.id !== aid ||
+        rec.peer !== task.metadata?.['anet.peer_aid'] || !config.allowPeers.includes(rec.peer) ||
+        lastUserMessageId(task) !== rec.requestMessageId || !lastUserText(task).trim()) {
       return { reconciled: false, reason: 'official-task-ended-or-request-changed', taskId: aid };
     }
     const st = await runJob({ kind: 'status', taskId: rec.cindyTaskId, runId: rec.runId }, 30000);
-    if (!st?.ok || st.runError || st.messagesError || st.run?.status !== 'completed') {
+    if (!st?.ok || st.runError || st.messagesError || st.run?.taskId !== rec.cindyTaskId ||
+        st.run?.runId !== rec.runId || st.run?.status !== 'completed') {
       return { reconciled: false, reason: 'host-output-not-ready', taskId: aid };
     }
     const text = pickOutput(st);
@@ -337,4 +743,5 @@ if (!process.env.AGENT_NETWORK_CINDY_TEST) {
   setTimeout(tick, 1500);
   log('started; config', config ? 'ok' : 'missing');
 }
-module.exports = { tick, state, status, sendToPeer, reconcileResult, setTestDependencies(deps) { tool = deps.tool; runJob = deps.runJob; startMcp = () => {}; } };
+module.exports = { tick, state, status, parseRouteEnvelope, sendToPeer, reconcileResult,
+  setTestDependencies(deps) { tool = deps.tool; runJob = deps.runJob; startMcp = () => {}; } };

@@ -52,3 +52,9 @@ Desktop 进窗、把 cwd 钉在 `~/Projects` 的项目上，不是这条传输�
 - macOS 本地控制/A2A 后端优先 Unix socket；控制 token 与 A2A token 不混用，沙箱失败不能降级 direct。服务会话与交互会话独立。
 
 依据：[MCP 结果](https://docs.agentnetwork.org.cn/docs/zh-cn/latest/howto/mcp.html#reading-a-result)、[工具](https://docs.agentnetwork.org.cn/docs/zh-cn/latest/reference/mcp-tools.html)、[限制](https://docs.agentnetwork.org.cn/docs/zh-cn/latest/reference/known-limitations.html)、[本地 A2A](https://docs.agentnetwork.org.cn/docs/zh-cn/latest/howto/local-a2a.html)。源码测试、生成包、宿主加载、真实任务回流四层分别报告；没有后两层证据就标未验证。
+
+## 派活卡住与后续消息
+
+维护流程见 [派活与续接恢复](anet-recovery.md)，Cindy 实现与各版本边界见 [插件说明](../plugins/agent-network-cindy/README.md)。节点 WORKING、消息 confirmed、宿主 active 都不能单独证明正在执行；先关联原输入和宿主轮次，再决定恢复动作。
+
+需要逐任务绑定模型时，调用方在 ANet 文本首行写入 `ANET_CINDY_ROUTE_V1` 加完整 JSON route；字段、精确示例和发送前后核对边界见插件 README。sender 使用调用方实际选择的 provider tuple，不改全局默认。缺字段、多字段、未知取值或续接换 route 都 fail-closed；宿主回执缺少 `resolvedConfig`/`acceptedConfig` 证据时不能宣称成功；该回执也不证明真实服务请求或模型实际启动。该 source contract 尚未做真实宿主验收。
