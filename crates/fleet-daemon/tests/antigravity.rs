@@ -480,3 +480,56 @@ print(json.dumps({"conversation_id": conv_id, "turn_id": "turn-bad-1"}))
         "rejected unscoped session must not be committed to adapter state"
     );
 }
+
+#[test]
+fn select_matching_antigravity_project_prefers_exact_name_or_basename_match() {
+    use fleet_daemon::select_matching_antigravity_project;
+    use serde_json::json;
+
+    let workspace_uri = "file:///workspace/Projects/agent-fleet";
+    let projects = vec![
+        json!({
+            "id": "d706d778-76e8-49fe-af53-2685e78b7a84",
+            "name": "antigravity-conversation-friction-audit",
+            "projectResources": {
+                "resources": [{ "gitFolder": { "folderUri": workspace_uri } }]
+            }
+        }),
+        json!({
+            "id": "0fce9b2d-91fc-4b89-8117-692dcb3d8749",
+            "name": "antigravity-routine-hygiene-audit",
+            "projectResources": {
+                "resources": [{ "gitFolder": { "folderUri": workspace_uri } }]
+            }
+        }),
+        json!({
+            "id": "2f9dc567-62d4-4d4e-9764-877e9d6f694c",
+            "name": "agent-fleet",
+            "projectResources": {
+                "resources": [{ "gitFolder": { "folderUri": workspace_uri } }]
+            }
+        }),
+    ];
+
+    let selected = select_matching_antigravity_project(
+        &projects,
+        workspace_uri,
+        "agent-fleet",
+        "agent-fleet",
+    );
+    assert_eq!(
+        selected.as_deref(),
+        Some("2f9dc567-62d4-4d4e-9764-877e9d6f694c")
+    );
+
+    let fallback = select_matching_antigravity_project(
+        &projects[..2],
+        workspace_uri,
+        "agent-fleet",
+        "agent-fleet",
+    );
+    assert_eq!(
+        fallback.as_deref(),
+        Some("d706d778-76e8-49fe-af53-2685e78b7a84")
+    );
+}

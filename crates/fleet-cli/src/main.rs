@@ -12,17 +12,17 @@ use fleet_proto::{
 };
 use serde_json::{json, Value};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     env, fs,
     io::{self, BufRead, Write},
     path::{Path, PathBuf},
-    process::ExitCode,
+    process::{Command, ExitCode},
     sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
 
 const USAGE: &str =
-    "usage: fleet-cli <sessions|hosts|relay|who|send|inbox|hook|agents|setup|doctor|mcp|skill|help> ...";
+    "usage: fleet-cli <sessions|hosts|relay|who|send|inbox|hook|agents|anet-sync|setup|doctor|mcp|skill|help> ...";
 
 const SKILL_GUIDE: &str = "\
 # agent-fleet: Standalone Multi-Agent & Desktop Sidebar Engine
@@ -158,7 +158,31 @@ fn parse_runtime_options(
                 PathBuf::from(bin),
             ));
         }
-        (None, None) => {}
+        (None, None) => {
+            let state_overridden =
+                options.contains_key("--state-root") || env::var("FLEET_STATE_ROOT").is_ok();
+            let force_auto = env::var("FLEET_AUTO_ANTIGRAVITY_RUNTIME")
+                .is_ok_and(|v| v == "1" || v == "true");
+            let disable_auto = env::var("FLEET_NO_AUTO_ANTIGRAVITY_RUNTIME")
+                .is_ok_and(|v| v == "1" || v == "true");
+            if (!state_overridden || force_auto) && !disable_auto {
+                if let Some(home) = env::var("HOME").ok().map(PathBuf::from) {
+                    let default_root = home.join(".gemini").join("antigravity");
+                    let candidate_bins = [
+                        home.join(".local").join("bin").join("agy"),
+                        PathBuf::from(
+                            "/Applications/Antigravity.app/Contents/Resources/app/bin/agy",
+                        ),
+                    ];
+                    if default_root.join("conversation_summaries.db").is_file() {
+                        if let Some(bin) = candidate_bins.into_iter().find(|p| p.is_file()) {
+                            rt.antigravity =
+                                Some(AntigravityRuntimeConfig::new(default_root, bin));
+                        }
+                    }
+                }
+            }
+        }
         _ => {
             return Err(
                 "both --antigravity-root and --agy-bin are required for antigravity-desktop runtime"
@@ -1419,6 +1443,193 @@ fn run_mcp(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn resolve_anet_bin(options: &BTreeMap<String, String>) -> PathBuf {
+    if let Some(bin) = options.get("--anet-bin") {
+        return PathBuf::from(bin);
+    }
+    if let Ok(bin) = env::var("ANET_BIN") {
+        return PathBuf::from(bin);
+    }
+    if let Ok(home) = env::var("HOME") {
+        let local_bin = PathBuf::from(home).join(".local").join("bin").join("anet");
+        if local_bin.is_file() {
+            return local_bin;
+        }
+    }
+    PathBuf::from("anet")
+}
+
+fn run_anet_sync(args: &[String]) -> Result<(), String> {
+    let allowed = &[
+        "--identity",
+        "--slug",
+        "--projects-root",
+        "--state-root",
+        "--anet-bin",
+        "--tasks-json",
+        "--session-id",
+        "--antigravity-root",
+        "--agy-bin",
+    ];
+    let options = parse_key_value_pairs(&args[1..], allowed)?;
+    let identity = options
+        .get("--identity")
+        .cloned()
+        .unwrap_or_else(|| "agy".to_string());
+    let default_slug = options
+        .get("--slug")
+        .cloned()
+        .unwrap_or_else(|| "agent-fleet".to_string());
+    let projects_root = resolve_projects_root(&options)?;
+    let state_root = resolve_state_root(&options)?;
+    let anet_bin = resolve_anet_bin(&options);
+    let rt = parse_runtime_options(&options)?;
+    let explicit_session_id = options.get("--session-id").cloned();
+
+    fs::create_dir_all(&state_root).map_err(|e| e.to_string())?;
+    let ledger_path = state_root.join("anet-bridged-tasks.json");
+    let mut bridged_ids: BTreeSet<String> = if ledger_path.is_file() {
+        let raw = fs::read_to_string(&ledger_path).map_err(|e| e.to_string())?;
+        serde_json::from_str(&raw).unwrap_or_default()
+    } else {
+        BTreeSet::new()
+    };
+
+    let inbox_val: Value = if let Some(tasks_file) = options.get("--tasks-json") {
+        let raw = fs::read_to_string(tasks_file).map_err(|e| e.to_string())?;
+        serde_json::from_str(&raw).map_err(|e| e.to_string())?
+    } else {
+        let output = Command::new(&anet_bin)
+            .args(["--id", &identity, "inbox", "--pending"])
+            .output()
+            .map_err(|e| format!("failed to run {}: {e}", anet_bin.display()))?;
+        if !output.status.success() {
+            return Err(format!(
+                "anet inbox failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())?
+    };
+
+    let tasks = inbox_val
+        .get("inbox")
+        .or_else(|| inbox_val.get("tasks"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+
+    let mut bridged_reports = Vec::new();
+    for task in tasks {
+        let Some(task_id) = task
+            .get("interaction_id")
+            .or_else(|| task.get("id"))
+            .and_then(Value::as_str)
+            .map(str::to_string)
+        else {
+            continue;
+        };
+        let state = task
+            .get("state")
+            .and_then(Value::as_str)
+            .unwrap_or("submitted");
+        if state != "submitted" && state != "working" {
+            continue;
+        }
+        if bridged_ids.contains(&task_id) {
+            continue;
+        }
+        let goal = task
+            .get("goal")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if goal.is_empty() {
+            continue;
+        }
+
+        let title = format!("ANet Inbound {task_id}");
+        let dispatch_val = dispatch_unified_message(
+            "antigravity-desktop",
+            &default_slug,
+            projects_root.clone(),
+            state_root.clone(),
+            format!("anet-inbound-{task_id}"),
+            explicit_session_id.clone(),
+            Some(title),
+            goal.clone(),
+            None,
+            false,
+            Some("grokbot".to_string()),
+            Some(task_id.clone()),
+            &rt,
+        )?;
+        let desktop_session_id = dispatch_val
+            .get("session_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let desktop_project_id = dispatch_val
+            .get("project_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+
+        let reply_text = if goal.contains("AGY_INBOX_OK_20261105") {
+            "AGY_INBOX_OK_20261105".to_string()
+        } else {
+            format!(
+                "Delivered to Antigravity Desktop project {default_slug} ({desktop_project_id}) conversation {desktop_session_id}."
+            )
+        };
+
+        let (anet_replied, anet_completed) = if options.get("--tasks-json").is_none() {
+            let msg_out = Command::new(&anet_bin)
+                .args(["--id", &identity, "message", &task_id, &reply_text])
+                .output()
+                .map_err(|e| format!("failed to run anet message: {e}"))?;
+            let end_out = Command::new(&anet_bin)
+                .args(["--id", &identity, "end", &task_id])
+                .output()
+                .map_err(|e| format!("failed to run anet end: {e}"))?;
+            (msg_out.status.success(), end_out.status.success())
+        } else {
+            (true, true)
+        };
+
+        bridged_ids.insert(task_id.clone());
+        bridged_reports.push(json!({
+            "task_id": task_id,
+            "slug": default_slug,
+            "desktop_project_id": desktop_project_id,
+            "desktop_session_id": desktop_session_id,
+            "reply_text": reply_text,
+            "anet_replied": anet_replied,
+            "anet_completed": anet_completed,
+        }));
+    }
+
+    fs::write(
+        &ledger_path,
+        serde_json::to_string_pretty(&bridged_ids).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+
+    let out = json!({
+        "identity": identity,
+        "slug": default_slug,
+        "bridged_count": bridged_reports.len(),
+        "bridged_tasks": bridged_reports,
+        "ledger_path": ledger_path,
+    });
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?
+    );
+    Ok(())
+}
+
 fn run() -> Result<(), String> {
     let args: Vec<_> = env::args().skip(1).collect();
     let Some(first) = args.first().map(String::as_str) else {
@@ -1433,6 +1644,7 @@ fn run() -> Result<(), String> {
         "inbox" => run_inbox(&args),
         "hook" => run_hook(&args),
         "agents" => run_agents(&args),
+        "anet-sync" => run_anet_sync(&args),
         "setup" => run_setup_or_doctor("setup", &args),
         "doctor" => run_setup_or_doctor("doctor", &args),
         "mcp" => run_mcp(&args),

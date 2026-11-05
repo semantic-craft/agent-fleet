@@ -571,6 +571,52 @@ pub(crate) fn is_desktop_hub_agentapi_available(
     hub_rpc_request(hub_info, "ListProjects", &json!({}), Duration::from_secs(3)).is_ok()
 }
 
+pub fn select_matching_antigravity_project(
+    projects: &[Value],
+    workspace_uri: &str,
+    project_name: &str,
+    dir_basename: &str,
+) -> Option<String> {
+    let matches_workspace_uri = |proj: &Value| -> bool {
+        proj.pointer("/projectResources/resources")
+            .and_then(Value::as_array)
+            .is_some_and(|resources| {
+                resources.iter().any(|r| {
+                    r.get("folderUri").and_then(Value::as_str) == Some(workspace_uri)
+                        || r.pointer("/gitFolder/folderUri").and_then(Value::as_str)
+                            == Some(workspace_uri)
+                })
+            })
+    };
+
+    for proj in projects {
+        let Some(id) = proj.get("id").and_then(Value::as_str) else {
+            continue;
+        };
+        if FORBIDDEN_PROJECT_BUCKETS.contains(&id.trim()) || !matches_workspace_uri(proj) {
+            continue;
+        }
+        let name = proj.get("name").and_then(Value::as_str).unwrap_or("");
+        if (!project_name.trim().is_empty() && name.eq_ignore_ascii_case(project_name.trim()))
+            || (!dir_basename.trim().is_empty() && name.eq_ignore_ascii_case(dir_basename.trim()))
+        {
+            return Some(id.to_string());
+        }
+    }
+
+    for proj in projects {
+        let Some(id) = proj.get("id").and_then(Value::as_str) else {
+            continue;
+        };
+        if FORBIDDEN_PROJECT_BUCKETS.contains(&id.trim()) || !matches_workspace_uri(proj) {
+            continue;
+        }
+        return Some(id.to_string());
+    }
+
+    None
+}
+
 /// Ensures `project_dir` is registered in the running Antigravity Desktop Hub (`~/.gemini/config/projects/<id>.json`)
 /// via `LanguageServerService/ListProjects` + `ReadProjects` + `CreateProject`, so the project appears live in the
 /// Antigravity Desktop sidebar.
@@ -581,6 +627,10 @@ pub fn ensure_antigravity_desktop_project(
 ) -> Result<String, HostAdapterError> {
     let canonical = fs::canonicalize(project_dir)?;
     let workspace_uri = format!("file://{}", canonical.display());
+    let dir_basename = canonical
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(project_name);
     let list_resp = hub_rpc_request(hub, "ListProjects", &json!({}), Duration::from_secs(5))?;
     let project_ids: Vec<String> = list_resp
         .get("projectIds")
@@ -602,23 +652,13 @@ pub fn ensure_antigravity_desktop_project(
             Duration::from_secs(5),
         ) {
             if let Some(projects) = read_resp.get("projects").and_then(Value::as_array) {
-                for proj in projects {
-                    let Some(id) = proj.get("id").and_then(Value::as_str) else {
-                        continue;
-                    };
-                    if let Some(resources) = proj
-                        .pointer("/projectResources/resources")
-                        .and_then(Value::as_array)
-                    {
-                        let matches_uri = resources.iter().any(|r| {
-                            r.get("folderUri").and_then(Value::as_str) == Some(&workspace_uri)
-                                || r.pointer("/gitFolder/folderUri").and_then(Value::as_str)
-                                    == Some(&workspace_uri)
-                        });
-                        if matches_uri {
-                            return Ok(id.to_string());
-                        }
-                    }
+                if let Some(matched_id) = select_matching_antigravity_project(
+                    projects,
+                    &workspace_uri,
+                    project_name,
+                    dir_basename,
+                ) {
+                    return Ok(matched_id);
                 }
             }
         }
@@ -774,6 +814,27 @@ pub(crate) fn run_agentapi_new_conversation(
         Duration::from_secs(30),
     )?;
 
+    if !title.trim().is_empty() {
+        let _ = hub_rpc_request(
+            hub,
+            "UpdateConversationAnnotations",
+            &json!({
+                "cascadeId": conversation_id,
+                "annotations": {
+                    "title": title.trim()
+                }
+            }),
+            Duration::from_secs(5),
+        );
+    }
+
+    let _ = hub_rpc_request(
+        hub,
+        "SmartFocusConversation",
+        &json!({ "cascadeId": conversation_id }),
+        Duration::from_secs(5),
+    );
+
     let _ = hub_rpc_request(
         hub,
         "WaitForConversationFullyIdle",
@@ -783,12 +844,6 @@ pub(crate) fn run_agentapi_new_conversation(
             "returnOnExecutorError": true,
         }),
         Duration::from_secs(125),
-    );
-    let _ = hub_rpc_request(
-        hub,
-        "SmartFocusConversation",
-        &json!({ "cascadeId": conversation_id }),
-        Duration::from_secs(5),
     );
 
     wait_for_desktop_summary_and_body(runtime, &conversation_id)?;
