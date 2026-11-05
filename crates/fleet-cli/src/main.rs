@@ -455,10 +455,44 @@ fn build_team_inventory(
     }))
 }
 
+fn resolve_projects_root(options: &BTreeMap<String, String>) -> Result<PathBuf, String> {
+    if let Some(p) = options.get("--projects-root") {
+        return Ok(PathBuf::from(p));
+    }
+    if let Ok(p) = env::var("FLEET_PROJECTS_ROOT") {
+        if !p.trim().is_empty() {
+            return Ok(PathBuf::from(p));
+        }
+    }
+    if let Ok(home) = env::var("HOME") {
+        if !home.trim().is_empty() {
+            return Ok(PathBuf::from(home).join("Projects"));
+        }
+    }
+    Err(USAGE.into())
+}
+
+fn resolve_state_root(options: &BTreeMap<String, String>) -> Result<PathBuf, String> {
+    if let Some(p) = options.get("--state-root") {
+        return Ok(PathBuf::from(p));
+    }
+    if let Ok(p) = env::var("FLEET_STATE_ROOT") {
+        if !p.trim().is_empty() {
+            return Ok(PathBuf::from(p));
+        }
+    }
+    if let Ok(home) = env::var("HOME") {
+        if !home.trim().is_empty() {
+            return Ok(PathBuf::from(home).join(".local/state/agent-fleet"));
+        }
+    }
+    Err(USAGE.into())
+}
+
 fn run_who(args: &[String]) -> Result<(), String> {
     let allowed = &["--state-root", "--directory"];
     let options = parse_key_value_pairs(&args[1..], allowed)?;
-    let state_root = PathBuf::from(options.get("--state-root").ok_or(USAGE)?);
+    let state_root = resolve_state_root(&options)?;
     let dir_opt = options.get("--directory").map(PathBuf::from);
     let inventory = build_team_inventory(&state_root, dir_opt.as_deref())?;
     let output = serde_json::to_string_pretty(&inventory).map_err(|e| e.to_string())?;
@@ -573,8 +607,8 @@ fn run_send(args: &[String]) -> Result<(), String> {
     let to_raw = options.get("--to").ok_or(USAGE)?;
     let (target_agent, slug) =
         parse_target_and_slug(to_raw, options.get("--slug").map(String::as_str))?;
-    let projects_root = PathBuf::from(options.get("--projects-root").ok_or(USAGE)?);
-    let state_root = PathBuf::from(options.get("--state-root").ok_or(USAGE)?);
+    let projects_root = resolve_projects_root(&options)?;
+    let state_root = resolve_state_root(&options)?;
     let prompt = options.get("--prompt").ok_or(USAGE)?.clone();
     let delivery_id = options
         .get("--delivery-id")
@@ -604,7 +638,7 @@ fn run_send(args: &[String]) -> Result<(), String> {
 }
 
 fn run_agents(args: &[String]) -> Result<(), String> {
-    if args.len() < 4 {
+    if args.len() < 2 {
         return Err(USAGE.into());
     }
     let sub = args[1].as_str();
@@ -618,7 +652,7 @@ fn run_agents(args: &[String]) -> Result<(), String> {
         "--description",
     ];
     let options = parse_key_value_pairs(&args[2..], allowed)?;
-    let state_root = PathBuf::from(options.get("--state-root").ok_or(USAGE)?);
+    let state_root = resolve_state_root(&options)?;
     let registry = ExternalAgentRegistry::new(state_root).map_err(|e| e.to_string())?;
 
     match sub {
@@ -727,8 +761,8 @@ fn build_setup_or_doctor_report(
 fn run_setup_or_doctor(mode: &str, args: &[String]) -> Result<(), String> {
     let allowed = &["--projects-root", "--state-root"];
     let options = parse_key_value_pairs(&args[1..], allowed)?;
-    let projects_root = PathBuf::from(options.get("--projects-root").ok_or(USAGE)?);
-    let state_root = PathBuf::from(options.get("--state-root").ok_or(USAGE)?);
+    let projects_root = resolve_projects_root(&options)?;
+    let state_root = resolve_state_root(&options)?;
     let report = build_setup_or_doctor_report(mode, &projects_root, &state_root)?;
     println!(
         "{}",
@@ -994,8 +1028,8 @@ fn run_mcp(args: &[String]) -> Result<(), String> {
         "--zcode-bin",
     ];
     let options = parse_key_value_pairs(&args[1..], allowed)?;
-    let projects_root = PathBuf::from(options.get("--projects-root").ok_or(USAGE)?);
-    let state_root = PathBuf::from(options.get("--state-root").ok_or(USAGE)?);
+    let projects_root = resolve_projects_root(&options)?;
+    let state_root = resolve_state_root(&options)?;
     let dir_opt = options.get("--directory").map(PathBuf::from);
     let rt = parse_runtime_options(&options)?;
 
