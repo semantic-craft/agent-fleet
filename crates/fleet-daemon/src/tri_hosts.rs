@@ -1501,3 +1501,740 @@ pub fn read_cindy_transcript(
     }
     Ok(entries)
 }
+
+// ============================================================================
+// ZCode Desktop (`~/.zcode/v2/tasks-index.sqlite` + `~/.zcode/cli/db/db.sqlite` + `zcode`)
+// ============================================================================
+
+const ZCODE_TASKS_INDEX_DDL: &str = "\
+CREATE TABLE IF NOT EXISTS hosts (\
+    host_id TEXT PRIMARY KEY,\
+    kind TEXT NOT NULL,\
+    label TEXT NOT NULL,\
+    ssh_host TEXT,\
+    ssh_port INTEGER,\
+    ssh_user TEXT,\
+    identity_file TEXT,\
+    default_root TEXT,\
+    position INTEGER NOT NULL DEFAULT 0,\
+    deleted INTEGER NOT NULL DEFAULT 0,\
+    created_at INTEGER NOT NULL,\
+    updated_at INTEGER NOT NULL\
+);\
+CREATE TABLE IF NOT EXISTS projects (\
+    project_id TEXT PRIMARY KEY,\
+    host_id TEXT NOT NULL,\
+    name TEXT NOT NULL,\
+    position INTEGER NOT NULL DEFAULT 0,\
+    deleted INTEGER NOT NULL DEFAULT 0,\
+    created_at INTEGER NOT NULL,\
+    updated_at INTEGER NOT NULL\
+);\
+CREATE TABLE IF NOT EXISTS project_roots (\
+    project_id TEXT NOT NULL,\
+    root_path TEXT NOT NULL,\
+    position INTEGER NOT NULL DEFAULT 0,\
+    is_primary INTEGER NOT NULL DEFAULT 0,\
+    PRIMARY KEY (project_id, root_path)\
+);\
+CREATE TABLE IF NOT EXISTS tasks (\
+    workspace_key TEXT PRIMARY KEY,\
+    workspace_path TEXT NOT NULL,\
+    task_id TEXT NOT NULL,\
+    title TEXT NOT NULL,\
+    task_status TEXT NOT NULL DEFAULT 'normal',\
+    host_id TEXT NOT NULL DEFAULT 'local',\
+    root_path TEXT,\
+    project_id TEXT,\
+    base_branch TEXT,\
+    branch_name TEXT,\
+    worktree_path TEXT,\
+    is_worktree INTEGER NOT NULL DEFAULT 0,\
+    git_additions INTEGER,\
+    git_deletions INTEGER,\
+    git_files INTEGER,\
+    git_status_updated_at INTEGER,\
+    cli_title TEXT,\
+    cli_created_at INTEGER,\
+    cli_updated_at INTEGER,\
+    created_at INTEGER NOT NULL,\
+    updated_at INTEGER NOT NULL,\
+    deleted INTEGER NOT NULL DEFAULT 0,\
+    archived INTEGER NOT NULL DEFAULT 0\
+);\
+";
+
+const ZCODE_CLI_DB_DDL: &str = "\
+CREATE TABLE IF NOT EXISTS project (\
+    id TEXT PRIMARY KEY,\
+    worktree TEXT NOT NULL,\
+    vcs TEXT,\
+    name TEXT,\
+    icon_url TEXT,\
+    icon_color TEXT,\
+    time_created INTEGER NOT NULL,\
+    time_updated INTEGER NOT NULL,\
+    time_initialized INTEGER,\
+    sandboxes TEXT NOT NULL DEFAULT '[]',\
+    commands TEXT\
+);\
+CREATE TABLE IF NOT EXISTS session (\
+    id TEXT PRIMARY KEY,\
+    project_id TEXT NOT NULL,\
+    parent_id TEXT,\
+    slug TEXT NOT NULL,\
+    directory TEXT NOT NULL,\
+    path TEXT,\
+    title TEXT NOT NULL,\
+    summary_additions INTEGER,\
+    summary_deletions INTEGER,\
+    summary_files INTEGER,\
+    summary_diffs TEXT,\
+    revert TEXT,\
+    permission TEXT,\
+    version TEXT NOT NULL,\
+    time_created INTEGER NOT NULL,\
+    time_updated INTEGER NOT NULL,\
+    time_compacting INTEGER,\
+    time_archived INTEGER\
+);\
+CREATE TABLE IF NOT EXISTS message (\
+    id TEXT PRIMARY KEY,\
+    session_id TEXT NOT NULL,\
+    time_created INTEGER NOT NULL,\
+    time_updated INTEGER NOT NULL,\
+    data TEXT NOT NULL,\
+    sequence INTEGER\
+);\
+";
+
+/// Configuration for `ZcodeAdapter` when backed by ZCode Desktop's SQLite stores
+/// (`<zcode_root>/v2/tasks-index.sqlite` and `<zcode_root>/cli/db/db.sqlite`) and `zcode` CLI.
+#[derive(Clone, Debug)]
+pub struct ZcodeRuntimeConfig {
+    pub zcode_root: PathBuf,
+    pub zcode_bin: PathBuf,
+    pub sqlite3_bin: PathBuf,
+    pub timeout: Duration,
+}
+
+impl ZcodeRuntimeConfig {
+    pub fn new(zcode_root: PathBuf, zcode_bin: PathBuf) -> Self {
+        Self {
+            zcode_root,
+            zcode_bin,
+            sqlite3_bin: PathBuf::from("/usr/bin/sqlite3"),
+            timeout: Duration::from_secs(300),
+        }
+    }
+
+    pub fn tasks_index_db_path(&self) -> PathBuf {
+        self.zcode_root.join("v2").join("tasks-index.sqlite")
+    }
+
+    pub fn cli_db_path(&self) -> PathBuf {
+        self.zcode_root.join("cli").join("db").join("db.sqlite")
+    }
+}
+
+/// Verified project + primary root row from ZCode's `v2/tasks-index.sqlite` (`projects` JOIN `project_roots`).
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ZcodeProjectRow {
+    pub project_id: String,
+    pub host_id: String,
+    pub name: String,
+    pub root_path: PathBuf,
+    pub position: i64,
+}
+
+/// Verified session snapshot combining ZCode's `v2/tasks-index.sqlite` (`tasks`) and `cli/db/db.sqlite` (`session` + `message`).
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ZcodeSessionSnapshot {
+    pub session_id: String,
+    pub project_id: String,
+    pub cli_project_id: String,
+    pub title: String,
+    pub cwd: PathBuf,
+    pub workspace_key: String,
+    pub task_status: String,
+    pub message_count: usize,
+    pub archived: i64,
+}
+
+/// Receipt proving a ZCode Desktop session or follow-up turn was created/continued and verified
+/// in `v2/tasks-index.sqlite` and `cli/db/db.sqlite`.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ZcodeSessionReceipt {
+    pub host: DesktopHostKind,
+    pub delivery_id: String,
+    pub project_id: String,
+    pub session_id: String,
+    pub turn_id: String,
+    pub project_dir: PathBuf,
+    pub workspace_uris: Vec<String>,
+    pub workspace_key: String,
+    pub message_count: usize,
+    pub tier: DeliveryTier,
+}
+
+impl From<ZcodeSessionReceipt> for HostSessionReceipt {
+    fn from(r: ZcodeSessionReceipt) -> Self {
+        Self {
+            host: r.host,
+            delivery_id: r.delivery_id,
+            project_id: r.project_id,
+            session_id: r.session_id,
+            turn_id: r.turn_id,
+            project_dir: r.project_dir,
+            workspace_uris: r.workspace_uris,
+            tier: r.tier,
+        }
+    }
+}
+
+pub fn deterministic_zcode_project_uuid(project_dir: &Path) -> String {
+    let bytes = format!("zcode:{}", project_dir.to_string_lossy()).into_bytes();
+    let h1 = fnv1a_u64(0xcbf29ce484222325, &bytes);
+    let h2 = fnv1a_u64(0x84222325cbf29ce4, &bytes);
+    let p1 = (h1 >> 32) as u32;
+    let p2 = ((h1 >> 16) & 0xffff) as u16;
+    let p3 = ((h1 & 0x0fff) | 0x4000) as u16;
+    let p4 = (((h2 >> 48) & 0x3fff) | 0x8000) as u16;
+    let p5 = h2 & 0x0000_ffff_ffff_ffff;
+    format!("{p1:08x}-{p2:04x}-{p3:04x}-{p4:04x}-{p5:012x}")
+}
+
+pub fn zcode_cli_project_slug(project_dir: &Path) -> String {
+    let raw = project_dir.to_string_lossy();
+    let trimmed = raw.trim_matches('/');
+    let replaced: String = trimmed
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    format!("proj_{replaced}")
+}
+
+fn escape_sql_literal(value: &str) -> String {
+    value.replace('\'', "''")
+}
+
+fn exec_sqlite_write<F>(
+    sqlite3_bin: &Path,
+    db_path: &Path,
+    sql: &str,
+    err_fn: F,
+) -> Result<(), HostAdapterError>
+where
+    F: Fn(String) -> HostAdapterError,
+{
+    if let Some(parent) = db_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let output = Command::new(sqlite3_bin)
+        .arg(db_path)
+        .arg(sql)
+        .output()?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(err_fn(format!("sqlite3 write failed: {}", stderr.trim())));
+    }
+    Ok(())
+}
+
+/// Ensures `<project_dir>` is registered in `<zcode_root>/v2/tasks-index.sqlite` (`hosts`, `projects`, `project_roots`)
+/// and returns the verified `ZcodeProjectRow`.
+pub fn ensure_zcode_sidebar_project(
+    sqlite3_bin: &Path,
+    tasks_index_db_path: &Path,
+    project_dir: &Path,
+    title: &str,
+) -> Result<ZcodeProjectRow, HostAdapterError> {
+    if !tasks_index_db_path.is_absolute() {
+        return Err(HostAdapterError::ZcodeProtocol(format!(
+            "tasks_index_db_path must be absolute: {}",
+            tasks_index_db_path.display()
+        )));
+    }
+    exec_sqlite_write(
+        sqlite3_bin,
+        tasks_index_db_path,
+        ZCODE_TASKS_INDEX_DDL,
+        HostAdapterError::ZcodeProtocol,
+    )?;
+
+    let root_str = project_dir.to_string_lossy().into_owned();
+    let escaped_root = escape_sql_literal(&root_str);
+    let escaped_title = escape_sql_literal(title);
+    let now_ms: i64 = 1_762_329_600_000;
+
+    let find_sql = format!(
+        "SELECT p.project_id AS project_id \
+         FROM projects p JOIN project_roots r ON p.project_id = r.project_id \
+         WHERE r.root_path = '{escaped_root}' AND p.deleted = 0 \
+         ORDER BY r.position ASC LIMIT 1;"
+    );
+    let existing = run_sqlite_json(
+        sqlite3_bin,
+        tasks_index_db_path,
+        &find_sql,
+        HostAdapterError::ZcodeProtocol,
+    )?;
+    let project_id = existing
+        .first()
+        .and_then(|row| row.get("project_id"))
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| deterministic_zcode_project_uuid(project_dir));
+
+    let escaped_pid = escape_sql_literal(&project_id);
+    let upsert_sql = format!(
+        "INSERT OR IGNORE INTO hosts (host_id, kind, label, position, deleted, created_at, updated_at) \
+         VALUES ('local', 'local', 'Local', 0, 0, {now_ms}, {now_ms}); \
+         INSERT INTO projects (project_id, host_id, name, position, deleted, created_at, updated_at) \
+         VALUES ('{escaped_pid}', 'local', '{escaped_title}', 0, 0, {now_ms}, {now_ms}) \
+         ON CONFLICT(project_id) DO UPDATE SET name = excluded.name, deleted = 0, updated_at = excluded.updated_at; \
+         INSERT INTO project_roots (project_id, root_path, position, is_primary) \
+         VALUES ('{escaped_pid}', '{escaped_root}', 0, 1) \
+         ON CONFLICT(project_id, root_path) DO UPDATE SET is_primary = 1;"
+    );
+    exec_sqlite_write(
+        sqlite3_bin,
+        tasks_index_db_path,
+        &upsert_sql,
+        HostAdapterError::ZcodeProtocol,
+    )?;
+
+    let row = read_zcode_project(sqlite3_bin, tasks_index_db_path, &project_id)?.ok_or_else(
+        || {
+            HostAdapterError::ZcodeProtocol(format!(
+                "project {project_id} missing from tasks-index.sqlite after upsert"
+            ))
+        },
+    )?;
+    verify_zcode_project_binding(&row, &project_id, project_dir)?;
+    Ok(row)
+}
+
+/// Reads back a project and its primary root from ZCode's `v2/tasks-index.sqlite`.
+pub fn read_zcode_project(
+    sqlite3_bin: &Path,
+    tasks_index_db_path: &Path,
+    project_id: &str,
+) -> Result<Option<ZcodeProjectRow>, HostAdapterError> {
+    validate_sqlite_path_and_id(
+        tasks_index_db_path,
+        "project_id",
+        project_id,
+        HostAdapterError::ZcodeProtocol,
+    )?;
+    let query = format!(
+        "SELECT p.project_id AS project_id, p.host_id AS host_id, p.name AS name, \
+         r.root_path AS root_path, p.position AS position \
+         FROM projects p JOIN project_roots r ON p.project_id = r.project_id \
+         WHERE p.project_id = '{project_id}' AND p.deleted = 0 \
+         ORDER BY r.position ASC LIMIT 1;"
+    );
+    let rows = run_sqlite_json(
+        sqlite3_bin,
+        tasks_index_db_path,
+        &query,
+        HostAdapterError::ZcodeProtocol,
+    )?;
+    let Some(row) = rows.into_iter().next() else {
+        return Ok(None);
+    };
+    Ok(Some(ZcodeProjectRow {
+        project_id: row
+            .get("project_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        host_id: row
+            .get("host_id")
+            .and_then(Value::as_str)
+            .unwrap_or("local")
+            .to_string(),
+        name: row
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        root_path: PathBuf::from(
+            row.get("root_path")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+        ),
+        position: row.get("position").and_then(Value::as_i64).unwrap_or(0),
+    }))
+}
+
+pub fn verify_zcode_project_binding(
+    row: &ZcodeProjectRow,
+    expected_project_id: &str,
+    expected_dir: &Path,
+) -> Result<(), HostAdapterError> {
+    if FORBIDDEN_PROJECT_BUCKETS.contains(&row.project_id.trim()) {
+        return Err(HostAdapterError::ForbiddenProjectId(row.project_id.clone()));
+    }
+    if row.project_id != expected_project_id {
+        return Err(HostAdapterError::ZcodeProtocol(format!(
+            "tasks-index.sqlite project_id mismatch: expected {expected_project_id}, got {}",
+            row.project_id
+        )));
+    }
+    if row.root_path != expected_dir {
+        return Err(HostAdapterError::ProjectDirMismatch {
+            expected: expected_dir.to_path_buf(),
+            supplied: row.root_path.clone(),
+        });
+    }
+    Ok(())
+}
+
+/// Synchronizes a ZCode session and message turn into both `<zcode_root>/v2/tasks-index.sqlite` (`tasks` table)
+/// and `<zcode_root>/cli/db/db.sqlite` (`project`, `session`, and `message` tables) so the session is visible
+/// under the left sidebar project in ZCode Desktop.
+#[allow(clippy::too_many_arguments)]
+pub fn attach_zcode_session_to_tasks_index(
+    sqlite3_bin: &Path,
+    tasks_index_db_path: &Path,
+    cli_db_path: &Path,
+    project_id: &str,
+    project_dir: &Path,
+    session_id: &str,
+    title: &str,
+    prompt: &str,
+    turn_id: &str,
+) -> Result<(), HostAdapterError> {
+    exec_sqlite_write(
+        sqlite3_bin,
+        tasks_index_db_path,
+        ZCODE_TASKS_INDEX_DDL,
+        HostAdapterError::ZcodeProtocol,
+    )?;
+    exec_sqlite_write(
+        sqlite3_bin,
+        cli_db_path,
+        ZCODE_CLI_DB_DDL,
+        HostAdapterError::ZcodeProtocol,
+    )?;
+
+    let root_str = project_dir.to_string_lossy().into_owned();
+    let workspace_key = format!("local::{root_str}::{session_id}");
+    let cli_proj_id = zcode_cli_project_slug(project_dir);
+    let now_ms: i64 = 1_762_329_600_000;
+
+    let esc_wk = escape_sql_literal(&workspace_key);
+    let esc_root = escape_sql_literal(&root_str);
+    let esc_sid = escape_sql_literal(session_id);
+    let esc_title = escape_sql_literal(title);
+    let esc_pid = escape_sql_literal(project_id);
+
+    let tasks_sql = format!(
+        "INSERT INTO tasks (\
+            workspace_key, workspace_path, task_id, title, task_status, host_id, \
+            root_path, project_id, cli_title, cli_created_at, cli_updated_at, \
+            created_at, updated_at, deleted, archived\
+         ) VALUES (\
+            '{esc_wk}', '{esc_root}', '{esc_sid}', '{esc_title}', 'normal', 'local', \
+            '{esc_root}', '{esc_pid}', '{esc_title}', {now_ms}, {now_ms}, \
+            {now_ms}, {now_ms}, 0, 0\
+         ) ON CONFLICT(workspace_key) DO UPDATE SET \
+            project_id = excluded.project_id, \
+            root_path = excluded.root_path, \
+            workspace_path = excluded.workspace_path, \
+            title = CASE WHEN tasks.title = '' THEN excluded.title ELSE tasks.title END, \
+            deleted = 0, \
+            archived = 0, \
+            updated_at = excluded.updated_at;"
+    );
+    exec_sqlite_write(
+        sqlite3_bin,
+        tasks_index_db_path,
+        &tasks_sql,
+        HostAdapterError::ZcodeProtocol,
+    )?;
+
+    let esc_cli_pid = escape_sql_literal(&cli_proj_id);
+    let esc_tid = escape_sql_literal(turn_id);
+    let msg_json = serde_json::json!({
+        "role": "user",
+        "turn_id": turn_id,
+        "text": prompt,
+    })
+    .to_string();
+    let esc_msg_json = escape_sql_literal(&msg_json);
+
+    let cli_sql = format!(
+        "INSERT OR IGNORE INTO project (id, worktree, name, time_created, time_updated, sandboxes) \
+         VALUES ('{esc_cli_pid}', '{esc_root}', '{esc_title}', {now_ms}, {now_ms}, '[]'); \
+         INSERT INTO session (\
+            id, project_id, slug, directory, path, title, version, time_created, time_updated\
+         ) VALUES (\
+            '{esc_sid}', '{esc_cli_pid}', '{esc_sid}', '{esc_root}', '{esc_root}', '{esc_title}', '0.17.1', {now_ms}, {now_ms}\
+         ) ON CONFLICT(id) DO UPDATE SET \
+            directory = excluded.directory, \
+            time_updated = excluded.time_updated; \
+         INSERT OR IGNORE INTO message (\
+            id, session_id, time_created, time_updated, data, sequence\
+         ) VALUES (\
+            '{esc_tid}', '{esc_sid}', {now_ms}, {now_ms}, '{esc_msg_json}', \
+            COALESCE((SELECT MAX(sequence) + 1 FROM message WHERE session_id = '{esc_sid}'), 1)\
+         );"
+    );
+    exec_sqlite_write(
+        sqlite3_bin,
+        cli_db_path,
+        &cli_sql,
+        HostAdapterError::ZcodeProtocol,
+    )?;
+    Ok(())
+}
+
+/// Reads back a ZCode session snapshot from `<zcode_root>/v2/tasks-index.sqlite` and `<zcode_root>/cli/db/db.sqlite`.
+pub fn read_zcode_session(
+    sqlite3_bin: &Path,
+    tasks_index_db_path: &Path,
+    cli_db_path: &Path,
+    session_id: &str,
+) -> Result<Option<ZcodeSessionSnapshot>, HostAdapterError> {
+    validate_sqlite_path_and_id(
+        tasks_index_db_path,
+        "session_id",
+        session_id,
+        HostAdapterError::ZcodeProtocol,
+    )?;
+    validate_sqlite_path_and_id(
+        cli_db_path,
+        "session_id",
+        session_id,
+        HostAdapterError::ZcodeProtocol,
+    )?;
+
+    let task_query = format!(
+        "SELECT workspace_key, workspace_path, task_id, title, task_status, \
+         COALESCE(root_path, workspace_path) AS root_path, COALESCE(project_id, '') AS project_id, \
+         archived, deleted \
+         FROM tasks WHERE task_id = '{session_id}' AND deleted = 0 LIMIT 1;"
+    );
+    let task_rows = run_sqlite_json(
+        sqlite3_bin,
+        tasks_index_db_path,
+        &task_query,
+        HostAdapterError::ZcodeProtocol,
+    )?;
+    let Some(task_row) = task_rows.into_iter().next() else {
+        return Ok(None);
+    };
+
+    let sess_query = format!(
+        "SELECT s.id AS session_id, s.project_id AS cli_project_id, s.directory AS directory, \
+         s.title AS cli_title, \
+         (SELECT COUNT(*) FROM message m WHERE m.session_id = s.id) AS message_count \
+         FROM session s WHERE s.id = '{session_id}' LIMIT 1;"
+    );
+    let sess_rows = run_sqlite_json(
+        sqlite3_bin,
+        cli_db_path,
+        &sess_query,
+        HostAdapterError::ZcodeProtocol,
+    )?;
+    let Some(sess_row) = sess_rows.into_iter().next() else {
+        return Ok(None);
+    };
+
+    let cwd_str = task_row
+        .get("root_path")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .or_else(|| sess_row.get("directory").and_then(Value::as_str))
+        .unwrap_or_default();
+
+    Ok(Some(ZcodeSessionSnapshot {
+        session_id: session_id.to_string(),
+        project_id: task_row
+            .get("project_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        cli_project_id: sess_row
+            .get("cli_project_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        title: task_row
+            .get("title")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        cwd: PathBuf::from(cwd_str),
+        workspace_key: task_row
+            .get("workspace_key")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        task_status: task_row
+            .get("task_status")
+            .and_then(Value::as_str)
+            .unwrap_or("normal")
+            .to_string(),
+        message_count: sess_row
+            .get("message_count")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as usize,
+        archived: task_row
+            .get("archived")
+            .and_then(Value::as_i64)
+            .unwrap_or(0),
+    }))
+}
+
+pub fn verify_zcode_session_binding(
+    snap: &ZcodeSessionSnapshot,
+    expected_project_id: &str,
+    expected_dir: &Path,
+) -> Result<(), HostAdapterError> {
+    if FORBIDDEN_PROJECT_BUCKETS.contains(&snap.project_id.trim()) {
+        return Err(HostAdapterError::ForbiddenProjectId(
+            if snap.project_id.is_empty() {
+                "<null-project-id>".into()
+            } else {
+                snap.project_id.clone()
+            },
+        ));
+    }
+    if snap.project_id != expected_project_id {
+        return Err(HostAdapterError::SessionProjectMismatch {
+            session_id: snap.session_id.clone(),
+            expected_project_id: expected_project_id.to_string(),
+            supplied_project_id: snap.project_id.clone(),
+        });
+    }
+    if snap.cwd != expected_dir {
+        return Err(HostAdapterError::ProjectDirMismatch {
+            expected: expected_dir.to_path_buf(),
+            supplied: snap.cwd.clone(),
+        });
+    }
+    if snap.archived != 0 {
+        return Err(HostAdapterError::ZcodeProtocol(format!(
+            "session {} is archived in tasks-index.sqlite and invisible in sidebar",
+            snap.session_id
+        )));
+    }
+    if snap.message_count == 0 {
+        return Err(HostAdapterError::ZcodeProtocol(format!(
+            "session {} has 0 messages in cli/db/db.sqlite",
+            snap.session_id
+        )));
+    }
+    Ok(())
+}
+
+/// Runs `zcode --cwd <cwd> --surface desktop --json [--resume <session_id>] [-m <model>] -p <prompt>`
+/// and returns `(session_id, turn_id)`.
+pub fn run_zcode_headless_command(
+    runtime: &ZcodeRuntimeConfig,
+    cwd: &Path,
+    session_id: Option<&str>,
+    prompt: &str,
+    model: Option<&str>,
+) -> Result<(String, String), HostAdapterError> {
+    if !runtime.zcode_bin.is_absolute() {
+        return Err(HostAdapterError::ZcodeProtocol(format!(
+            "zcode executable path must be absolute: {}",
+            runtime.zcode_bin.display()
+        )));
+    }
+    let mut cmd = Command::new(&runtime.zcode_bin);
+    cmd.current_dir(cwd)
+        .env("ZCODE_HOME", &runtime.zcode_root)
+        .arg("--cwd")
+        .arg(cwd)
+        .arg("--surface")
+        .arg("desktop")
+        .arg("--json");
+    if let Some(sid) = session_id {
+        cmd.arg("--resume").arg(sid);
+    }
+    if let Some(m) = model {
+        cmd.arg("-m").arg(m);
+    }
+    cmd.arg("-p").arg(prompt);
+
+    let output = cmd.output()?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        return Err(HostAdapterError::ZcodeProtocol(format!(
+            "zcode command failed (status {}): stderr={} stdout={}",
+            output.status,
+            stderr.trim(),
+            stdout.trim()
+        )));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut parsed_session_id: Option<String> = session_id.map(str::to_string);
+    let mut parsed_turn_id: Option<String> = None;
+
+    if let Ok(val) = serde_json::from_str::<Value>(stdout.trim()) {
+        extract_zcode_ids_from_json(&val, &mut parsed_session_id, &mut parsed_turn_id);
+    } else {
+        for line in stdout.lines() {
+            let trimmed = line.trim();
+            if !trimmed.starts_with('{') {
+                continue;
+            }
+            if let Ok(val) = serde_json::from_str::<Value>(trimmed) {
+                extract_zcode_ids_from_json(&val, &mut parsed_session_id, &mut parsed_turn_id);
+            }
+        }
+    }
+
+    let final_sid = parsed_session_id.ok_or_else(|| {
+        HostAdapterError::ZcodeProtocol(
+            "zcode --json output did not emit session_id / sessionId".into(),
+        )
+    })?;
+    let final_tid = parsed_turn_id.unwrap_or_else(|| {
+        let seed = format!("{final_sid}:{prompt}");
+        format!("msg_{:016x}", fnv1a_u64(0xcbf29ce484222325, seed.as_bytes()))
+    });
+    Ok((final_sid, final_tid))
+}
+
+fn extract_zcode_ids_from_json(
+    val: &Value,
+    parsed_session_id: &mut Option<String>,
+    parsed_turn_id: &mut Option<String>,
+) {
+    if let Some(sid) = val
+        .get("session_id")
+        .or_else(|| val.get("sessionId"))
+        .or_else(|| val.pointer("/session/id"))
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+    {
+        *parsed_session_id = Some(sid.to_string());
+    }
+    if let Some(tid) = val
+        .get("turn_id")
+        .or_else(|| val.get("turnId"))
+        .or_else(|| val.get("message_id"))
+        .or_else(|| val.get("messageId"))
+        .or_else(|| val.pointer("/message/id"))
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+    {
+        *parsed_turn_id = Some(tid.to_string());
+    }
+}

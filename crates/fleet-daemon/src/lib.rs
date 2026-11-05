@@ -10,19 +10,24 @@ pub use antigravity::{
 };
 mod tri_hosts;
 pub use tri_hosts::{
-    attach_dsh_session_to_workspace, deterministic_dsh_workspace_uuid, dsh_cwd_bucket_slug,
-    ensure_dsh_native_workspace, read_cindy_transcript, read_codex_magpie_config,
-    read_codex_project, read_codex_thread, read_dsh_native_session, run_dsh_headless_command,
-    verify_codex_project_binding, verify_codex_thread_binding, CindyRuntimeConfig,
-    CindySessionReceipt, CindySessionSnapshot, CodexMagpieModelConfig, CodexProjectRow,
-    CodexThreadRow, DshRuntimeConfig, DshSessionReceipt, DshSessionSnapshot, OpenAiDotsReceipt,
-    OpenAiDotsRuntimeConfig,
+    attach_dsh_session_to_workspace, attach_zcode_session_to_tasks_index,
+    deterministic_dsh_workspace_uuid, deterministic_zcode_project_uuid, dsh_cwd_bucket_slug,
+    ensure_dsh_native_workspace, ensure_zcode_sidebar_project, read_cindy_transcript,
+    read_codex_magpie_config, read_codex_project, read_codex_thread, read_dsh_native_session,
+    read_zcode_project, read_zcode_session, run_dsh_headless_command, run_zcode_headless_command,
+    verify_codex_project_binding, verify_codex_thread_binding, verify_zcode_project_binding,
+    verify_zcode_session_binding, zcode_cli_project_slug, CindyRuntimeConfig, CindySessionReceipt,
+    CindySessionSnapshot, CodexMagpieModelConfig, CodexProjectRow, CodexThreadRow,
+    DshRuntimeConfig, DshSessionReceipt, DshSessionSnapshot, OpenAiDotsReceipt,
+    OpenAiDotsRuntimeConfig, ZcodeProjectRow, ZcodeRuntimeConfig, ZcodeSessionReceipt,
+    ZcodeSessionSnapshot,
 };
 mod host_adapter;
 pub use host_adapter::{
-    build_host_adapter, AntigravityDesktopAdapter, CindyAdapter, DeepSeekHarnessAdapter,
-    DesktopHostAdapter, HostAdapterError, OpenAiDotsAdapter, PersistedSessionRecord,
-    PersistedTurnRecord,
+    build_host_adapter, inspect_host_state, AntigravityDesktopAdapter, CindyAdapter,
+    DeepSeekHarnessAdapter, DesktopHostAdapter, ExternalAgentReceipt, ExternalAgentRegistry,
+    HostAdapterError, OpenAiDotsAdapter, PersistedSessionRecord, PersistedTurnRecord,
+    ZcodeAdapter,
 };
 mod relay_self_dev;
 pub use relay_self_dev::{

@@ -2,7 +2,8 @@ use crate::{
     read_cindy_transcript, AntigravityConversationSummary, AntigravityDesktopAdapter,
     AntigravityRuntimeConfig, CindyAdapter, CindyRuntimeConfig, CindySessionSnapshot,
     CodexProjectRow, CodexThreadRow, DeepSeekHarnessAdapter, DesktopHostAdapter, DshRuntimeConfig,
-    DshSessionSnapshot, HostAdapterError, OpenAiDotsAdapter, OpenAiDotsRuntimeConfig,
+    DshSessionSnapshot, HostAdapterError, OpenAiDotsAdapter, OpenAiDotsRuntimeConfig, ZcodeAdapter,
+    ZcodeProjectRow, ZcodeRuntimeConfig, ZcodeSessionSnapshot,
 };
 use fleet_proto::{
     validate_brief, validate_nonempty_id, CreateSessionRequest, DeliverTurnRequest,
@@ -116,6 +117,11 @@ pub enum HostStoreVerificationEvidence {
         hub_http_port: Option<u16>,
         turn_ids: Vec<String>,
     },
+    Zcode {
+        project_row: ZcodeProjectRow,
+        session_snapshot: ZcodeSessionSnapshot,
+        turn_ids: Vec<String>,
+    },
     LocalState {
         persisted_turn_count: usize,
         turn_ids: Vec<String>,
@@ -139,18 +145,19 @@ pub struct HostRelayClosureReceipt {
     pub store_evidence: HostStoreVerificationEvidence,
 }
 
-/// Optional runtime configuration for any of the four canonical desktop hosts.
+/// Optional runtime configuration for any of the five canonical desktop hosts.
 #[derive(Clone, Debug, Default)]
 pub struct HostRuntimeOptions {
     pub openai_dots: Option<OpenAiDotsRuntimeConfig>,
     pub cindy: Option<CindyRuntimeConfig>,
     pub dsh: Option<DshRuntimeConfig>,
     pub antigravity: Option<AntigravityRuntimeConfig>,
+    pub zcode: Option<ZcodeRuntimeConfig>,
 }
 
 /// Executes the `/poteto-mode` (`pstack-relay`) self-development lifecycle on the requested
-/// desktop host (`openai-dots`, `cindy`, `deepseek-harness`, or `antigravity-desktop`), returning
-/// a verified `HostRelayClosureReceipt`.
+/// desktop host (`openai-dots`, `cindy`, `deepseek-harness`, `antigravity-desktop`, or `zcode`),
+/// returning a verified `HostRelayClosureReceipt`.
 pub fn run_host_poteto_relay(
     host: DesktopHostKind,
     projects_root: PathBuf,
@@ -399,6 +406,77 @@ pub fn run_host_poteto_relay(
                 HostStoreVerificationEvidence::AntigravityDesktop {
                     summary,
                     hub_http_port: followup.hub_http_port,
+                    turn_ids,
+                }
+            } else {
+                let persisted = adapter
+                    .session(&followup.session_id)
+                    .map(|s| s.turns.len())
+                    .unwrap_or(0);
+                HostStoreVerificationEvidence::LocalState {
+                    persisted_turn_count: persisted,
+                    turn_ids,
+                }
+            };
+            Ok(HostRelayClosureReceipt {
+                host,
+                slice_id: task.slice_id.clone(),
+                rendered_initial_prompt: initial_prompt,
+                followup_prompt,
+                project_dir,
+                sidebar_project,
+                initial_session: created.into(),
+                followup_turn: followup.into(),
+                store_evidence,
+            })
+        }
+        DesktopHostKind::Zcode => {
+            let mut adapter = match runtimes.zcode.clone() {
+                Some(rt) => ZcodeAdapter::with_runtime(projects_root, state_root, rt)?,
+                None => ZcodeAdapter::new(projects_root, state_root)?,
+            };
+            let project_dir = adapter.ensure_project_dir(&task.slug)?;
+            let sidebar_project =
+                adapter.ensure_sidebar_project(&task.slug, Some(&task.title))?;
+            let create_req = CreateSessionRequest {
+                delivery_id: create_delivery_id,
+                project_id: sidebar_project.project_id.clone(),
+                project_dir: sidebar_project.project_dir.clone(),
+                title: task.title.clone(),
+                prompt: initial_prompt.clone(),
+                model: task.model.clone(),
+            };
+            let created = adapter.create_zcode_session(&create_req)?;
+            let followup_req = DeliverTurnRequest {
+                delivery_id: followup_delivery_id,
+                project_id: sidebar_project.project_id.clone(),
+                session_id: created.session_id.clone(),
+                project_dir: sidebar_project.project_dir.clone(),
+                prompt: followup_prompt.clone(),
+                model: task.model.clone(),
+            };
+            let followup = adapter.deliver_zcode_turn(&followup_req)?;
+            let turn_ids = vec![created.turn_id.clone(), followup.turn_id.clone()];
+            let store_evidence = if runtimes.zcode.is_some() {
+                let project_row = adapter
+                    .read_project_row(&sidebar_project.project_id)?
+                    .ok_or_else(|| {
+                        HostAdapterError::ZcodeProtocol(format!(
+                            "missing project {} in tasks-index.sqlite during relay verification",
+                            sidebar_project.project_id
+                        ))
+                    })?;
+                let session_snapshot = adapter
+                    .read_zcode_session(&followup.session_id)?
+                    .ok_or_else(|| {
+                        HostAdapterError::ZcodeProtocol(format!(
+                            "missing session {} in ZCode SQLite stores during relay verification",
+                            followup.session_id
+                        ))
+                    })?;
+                HostStoreVerificationEvidence::Zcode {
+                    project_row,
+                    session_snapshot,
                     turn_ids,
                 }
             } else {

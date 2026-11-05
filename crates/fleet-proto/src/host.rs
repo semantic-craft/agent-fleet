@@ -5,7 +5,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-/// Canonical four desktop hosts supported by the fleet engine.
+/// Canonical five desktop hosts supported by the fleet engine.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum DesktopHostKind {
@@ -13,14 +13,16 @@ pub enum DesktopHostKind {
     Cindy,
     DeepseekHarness,
     AntigravityDesktop,
+    Zcode,
 }
 
 impl DesktopHostKind {
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 5] = [
         Self::OpenaiDots,
         Self::Cindy,
         Self::DeepseekHarness,
         Self::AntigravityDesktop,
+        Self::Zcode,
     ];
 
     pub fn as_str(&self) -> &'static str {
@@ -29,17 +31,19 @@ impl DesktopHostKind {
             Self::Cindy => "cindy",
             Self::DeepseekHarness => "deepseek-harness",
             Self::AntigravityDesktop => "antigravity-desktop",
+            Self::Zcode => "zcode",
         }
     }
 
     pub fn parse(value: &str) -> Result<Self, ProjectPathError> {
         match value.trim() {
             "openai-dots" | "openai dots" | "codex" | "codex-desktop" => Ok(Self::OpenaiDots),
-            "cindy" => Ok(Self::Cindy),
+            "cindy" | "cindy-desktop" => Ok(Self::Cindy),
             "deepseek-harness" | "deepseek harness" | "dsh" => Ok(Self::DeepseekHarness),
             "antigravity-desktop" | "antigravity desktop" | "agy" | "antigravity" => {
                 Ok(Self::AntigravityDesktop)
             }
+            "zcode" | "zcode-desktop" => Ok(Self::Zcode),
             _ => Err(ProjectPathError::InvalidHost(value.to_string())),
         }
     }
@@ -242,26 +246,105 @@ impl HostSessionReceipt {
     }
 }
 
+/// Manifest describing a pluggable third-party or open-source agent registered in `agents.d/<id>.json`.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExternalAgentManifest {
+    pub id: String,
+    pub display_name: String,
+    pub command: PathBuf,
+    #[serde(default)]
+    pub args_template: Vec<String>,
+    #[serde(default)]
+    pub resume_args_template: Vec<String>,
+    #[serde(default)]
+    pub description: String,
+}
+
+impl ExternalAgentManifest {
+    pub fn validate(&self) -> Result<(), ProjectPathError> {
+        validate_project_slug(&self.id)?;
+        if DesktopHostKind::parse(&self.id).is_ok() {
+            return Err(ProjectPathError::InvalidIdentifier(format!(
+                "external agent id '{}' collides with a canonical desktop host",
+                self.id
+            )));
+        }
+        validate_nonempty_id("display_name", &self.display_name)?;
+        if !self.command.is_absolute() {
+            return Err(ProjectPathError::InvalidRoot(self.command.clone()));
+        }
+        for arg in self
+            .args_template
+            .iter()
+            .chain(self.resume_args_template.iter())
+        {
+            if arg.chars().any(char::is_control) {
+                return Err(ProjectPathError::InvalidIdentifier(
+                    "external agent args_template must not contain control characters".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn desktop_host_kind_parses_all_four_canonical_hosts() {
+    fn desktop_host_kind_parses_all_five_canonical_hosts() {
         for (input, expected) in [
             ("openai-dots", DesktopHostKind::OpenaiDots),
             ("openai dots", DesktopHostKind::OpenaiDots),
             ("codex", DesktopHostKind::OpenaiDots),
             ("cindy", DesktopHostKind::Cindy),
+            ("cindy-desktop", DesktopHostKind::Cindy),
             ("deepseek-harness", DesktopHostKind::DeepseekHarness),
             ("dsh", DesktopHostKind::DeepseekHarness),
             ("antigravity-desktop", DesktopHostKind::AntigravityDesktop),
             ("antigravity desktop", DesktopHostKind::AntigravityDesktop),
             ("agy", DesktopHostKind::AntigravityDesktop),
+            ("zcode", DesktopHostKind::Zcode),
+            ("zcode-desktop", DesktopHostKind::Zcode),
         ] {
             assert_eq!(DesktopHostKind::parse(input).unwrap(), expected);
         }
+        assert_eq!(DesktopHostKind::ALL.len(), 5);
         assert!(DesktopHostKind::parse("unknown-host").is_err());
+    }
+
+    #[test]
+    fn external_agent_manifest_validates_id_and_rejects_canonical_collisions() {
+        let valid = ExternalAgentManifest {
+            id: "opencode-agent".into(),
+            display_name: "OpenCode Agent".into(),
+            command: PathBuf::from("/usr/local/bin/opencode"),
+            args_template: vec!["--cwd".into(), "{cwd}".into(), "-p".into(), "{prompt}".into()],
+            resume_args_template: vec![
+                "--cwd".into(),
+                "{cwd}".into(),
+                "--session".into(),
+                "{session_id}".into(),
+                "-p".into(),
+                "{prompt}".into(),
+            ],
+            description: "Open-source terminal coding agent".into(),
+        };
+        assert!(valid.validate().is_ok());
+
+        let collision = ExternalAgentManifest {
+            id: "zcode".into(),
+            ..valid.clone()
+        };
+        assert!(collision.validate().is_err());
+
+        let relative_cmd = ExternalAgentManifest {
+            command: PathBuf::from("opencode"),
+            ..valid
+        };
+        assert!(relative_cmd.validate().is_err());
     }
 
     #[test]

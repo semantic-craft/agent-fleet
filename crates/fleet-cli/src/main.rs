@@ -1,21 +1,28 @@
 use fleet_daemon::{
-    run_host_poteto_relay, AntigravityDesktopAdapter, AntigravityRuntimeConfig, CindyAdapter,
-    CindyRuntimeConfig, DeepSeekHarnessAdapter, DesktopHostAdapter, DshRuntimeConfig,
-    HostRuntimeOptions, OpenAiDotsAdapter, OpenAiDotsRuntimeConfig, PotetoRelayTask,
-    SessionDirectory,
+    inspect_host_state, run_host_poteto_relay, AntigravityDesktopAdapter, AntigravityRuntimeConfig,
+    CindyAdapter, CindyRuntimeConfig, DeepSeekHarnessAdapter, DesktopHostAdapter, DshRuntimeConfig,
+    ExternalAgentRegistry, HostRuntimeOptions, OpenAiDotsAdapter, OpenAiDotsRuntimeConfig,
+    PotetoRelayTask, SessionDirectory, ZcodeAdapter, ZcodeRuntimeConfig,
 };
 use fleet_proto::{
-    CreateSessionRequest, DeliverTurnRequest, DesktopHostKind, SessionSelector,
+    CreateSessionRequest, DeliverTurnRequest, DesktopHostKind, ExternalAgentManifest,
+    SessionSelector,
 };
+use serde_json::{json, Value};
 use std::{
     collections::BTreeMap,
     env, fs,
+    io::{self, BufRead, Write},
     path::{Path, PathBuf},
     process::ExitCode,
+    sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
 
-const USAGE: &str = "usage: fleet-cli <sessions|hosts|relay> ...";
+const USAGE: &str =
+    "usage: fleet-cli <sessions|hosts|relay|who|send|agents|setup|doctor|mcp> ...";
+
+static NEXT_DELIVERY_SEQ: AtomicU64 = AtomicU64::new(1);
 
 fn now() -> Result<u64, String> {
     SystemTime::now()
@@ -24,7 +31,19 @@ fn now() -> Result<u64, String> {
         .map_err(|error| error.to_string())
 }
 
-fn parse_key_value_pairs(args: &[String], allowed_keys: &[&str]) -> Result<BTreeMap<String, String>, String> {
+fn unique_delivery_id(prefix: &str, target_agent: &str) -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|t| t.as_nanos())
+        .unwrap_or(0);
+    let seq = NEXT_DELIVERY_SEQ.fetch_add(1, Ordering::Relaxed);
+    format!("{prefix}-{target_agent}-{nanos}-{}-{seq}", std::process::id())
+}
+
+fn parse_key_value_pairs(
+    args: &[String],
+    allowed_keys: &[&str],
+) -> Result<BTreeMap<String, String>, String> {
     if !args.len().is_multiple_of(2) {
         return Err(USAGE.into());
     }
@@ -43,7 +62,9 @@ fn parse_key_value_pairs(args: &[String], allowed_keys: &[&str]) -> Result<BTree
     Ok(options)
 }
 
-fn parse_runtime_options(options: &BTreeMap<String, String>) -> Result<HostRuntimeOptions, String> {
+fn parse_runtime_options(
+    options: &BTreeMap<String, String>,
+) -> Result<HostRuntimeOptions, String> {
     let mut rt = HostRuntimeOptions::default();
     match (
         options.get("--codex-root"),
@@ -116,6 +137,21 @@ fn parse_runtime_options(options: &BTreeMap<String, String>) -> Result<HostRunti
             return Err(
                 "both --antigravity-root and --agy-bin are required for antigravity-desktop runtime"
                     .into(),
+            )
+        }
+    }
+
+    match (options.get("--zcode-root"), options.get("--zcode-bin")) {
+        (Some(root), Some(bin)) => {
+            rt.zcode = Some(ZcodeRuntimeConfig::new(
+                PathBuf::from(root),
+                PathBuf::from(bin),
+            ));
+        }
+        (None, None) => {}
+        _ => {
+            return Err(
+                "both --zcode-root and --zcode-bin are required for zcode runtime".into(),
             )
         }
     }
@@ -200,6 +236,14 @@ fn build_configured_adapter(
             .map_err(|e| e.to_string())?;
             Ok(Box::new(adapter))
         }
+        DesktopHostKind::Zcode => {
+            let adapter = match rt.zcode.clone() {
+                Some(cfg) => ZcodeAdapter::with_runtime(projects_root, state_root, cfg),
+                None => ZcodeAdapter::new(projects_root, state_root),
+            }
+            .map_err(|e| e.to_string())?;
+            Ok(Box::new(adapter))
+        }
     }
 }
 
@@ -229,6 +273,8 @@ fn run_hosts(args: &[String]) -> Result<(), String> {
         "--dsh-bin",
         "--antigravity-root",
         "--agy-bin",
+        "--zcode-root",
+        "--zcode-bin",
     ];
     let options = parse_key_value_pairs(&args[2..], allowed)?;
     let host_raw = options.get("--host").ok_or(USAGE)?;
@@ -305,6 +351,8 @@ fn run_relay(args: &[String]) -> Result<(), String> {
         "--dsh-bin",
         "--antigravity-root",
         "--agy-bin",
+        "--zcode-root",
+        "--zcode-bin",
     ];
     let options = parse_key_value_pairs(&args[2..], allowed)?;
     let host_raw = options.get("--host").ok_or(USAGE)?;
@@ -367,6 +415,684 @@ fn run_relay(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn build_team_inventory(
+    state_root: &Path,
+    directory_opt: Option<&Path>,
+) -> Result<Value, String> {
+    let mut desktop_hosts = Vec::new();
+    for kind in DesktopHostKind::ALL {
+        let (projects, sessions) =
+            inspect_host_state(kind, state_root).map_err(|e| e.to_string())?;
+        desktop_hosts.push(json!({
+            "host": kind.as_str(),
+            "project_count": projects.len(),
+            "session_count": sessions.len(),
+            "projects": projects,
+            "sessions": sessions,
+        }));
+    }
+    let ext_registry = ExternalAgentRegistry::new(state_root.to_path_buf())
+        .map_err(|e| e.to_string())?;
+    let external_agents = ext_registry.list().map_err(|e| e.to_string())?;
+
+    let live_sessions = if let Some(dir) = directory_opt {
+        if dir.exists() {
+            let sd = SessionDirectory::discover(dir, now()?).map_err(|e| e.to_string())?;
+            sd.list().cloned().collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
+    Ok(json!({
+        "engine": "agent-fleet",
+        "canonical_desktop_hosts": DesktopHostKind::ALL.iter().map(|h| h.as_str()).collect::<Vec<_>>(),
+        "desktop_hosts": desktop_hosts,
+        "external_agents": external_agents,
+        "session_directory": live_sessions,
+    }))
+}
+
+fn run_who(args: &[String]) -> Result<(), String> {
+    let allowed = &["--state-root", "--directory"];
+    let options = parse_key_value_pairs(&args[1..], allowed)?;
+    let state_root = PathBuf::from(options.get("--state-root").ok_or(USAGE)?);
+    let dir_opt = options.get("--directory").map(PathBuf::from);
+    let inventory = build_team_inventory(&state_root, dir_opt.as_deref())?;
+    let output = serde_json::to_string_pretty(&inventory).map_err(|e| e.to_string())?;
+    println!("{output}");
+    Ok(())
+}
+
+fn parse_target_and_slug(
+    to_raw: &str,
+    slug_opt: Option<&str>,
+) -> Result<(String, String), String> {
+    if let Some((host_part, slug_part)) = to_raw.split_once('/') {
+        if host_part.trim().is_empty() || slug_part.trim().is_empty() {
+            return Err("invalid --to target; expected <agent>/<project-slug>".into());
+        }
+        Ok((host_part.trim().to_string(), slug_part.trim().to_string()))
+    } else {
+        let slug = slug_opt.ok_or(
+            "--slug is required when --to does not specify <agent>/<project-slug>",
+        )?;
+        Ok((to_raw.trim().to_string(), slug.trim().to_string()))
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn dispatch_unified_message(
+    target_agent: &str,
+    slug: &str,
+    projects_root: PathBuf,
+    state_root: PathBuf,
+    delivery_id: String,
+    session_id_opt: Option<String>,
+    title_opt: Option<String>,
+    prompt: String,
+    model_opt: Option<String>,
+    execute_external: bool,
+    rt: &HostRuntimeOptions,
+) -> Result<Value, String> {
+    let resolved_title = title_opt.unwrap_or_else(|| slug.to_string());
+    if let Ok(host_kind) = DesktopHostKind::parse(target_agent) {
+        let mut adapter =
+            build_configured_adapter(host_kind, projects_root, state_root, rt)?;
+        let binding = adapter
+            .ensure_sidebar_project(slug, Some(&resolved_title))
+            .map_err(|e| e.to_string())?;
+        let receipt = if let Some(session_id) = session_id_opt {
+            let req = DeliverTurnRequest {
+                delivery_id,
+                project_id: binding.project_id,
+                session_id,
+                project_dir: binding.project_dir,
+                prompt,
+                model: model_opt,
+            };
+            adapter.deliver_turn(&req).map_err(|e| e.to_string())?
+        } else {
+            let req = CreateSessionRequest {
+                delivery_id,
+                project_id: binding.project_id,
+                project_dir: binding.project_dir,
+                title: resolved_title,
+                prompt,
+                model: model_opt,
+            };
+            adapter.create_session(&req).map_err(|e| e.to_string())?
+        };
+        serde_json::to_value(receipt).map_err(|e| e.to_string())
+    } else {
+        let registry =
+            ExternalAgentRegistry::new(state_root).map_err(|e| e.to_string())?;
+        let receipt = registry
+            .dispatch(
+                target_agent,
+                &projects_root,
+                slug,
+                &delivery_id,
+                session_id_opt.as_deref(),
+                &resolved_title,
+                &prompt,
+                execute_external,
+            )
+            .map_err(|e| e.to_string())?;
+        serde_json::to_value(receipt).map_err(|e| e.to_string())
+    }
+}
+
+fn run_send(args: &[String]) -> Result<(), String> {
+    let allowed = &[
+        "--to",
+        "--slug",
+        "--projects-root",
+        "--state-root",
+        "--delivery-id",
+        "--session-id",
+        "--title",
+        "--prompt",
+        "--model",
+        "--execute-external",
+        "--codex-root",
+        "--app-server-socket",
+        "--cindy-root",
+        "--gateway-socket",
+        "--dsh-base-url",
+        "--dsh-root",
+        "--dsh-bin",
+        "--antigravity-root",
+        "--agy-bin",
+        "--zcode-root",
+        "--zcode-bin",
+    ];
+    let options = parse_key_value_pairs(&args[1..], allowed)?;
+    let to_raw = options.get("--to").ok_or(USAGE)?;
+    let (target_agent, slug) =
+        parse_target_and_slug(to_raw, options.get("--slug").map(String::as_str))?;
+    let projects_root = PathBuf::from(options.get("--projects-root").ok_or(USAGE)?);
+    let state_root = PathBuf::from(options.get("--state-root").ok_or(USAGE)?);
+    let prompt = options.get("--prompt").ok_or(USAGE)?.clone();
+    let delivery_id = options
+        .get("--delivery-id")
+        .cloned()
+        .unwrap_or_else(|| unique_delivery_id("send", &target_agent));
+    let execute_external = options
+        .get("--execute-external")
+        .is_some_and(|v| v == "true" || v == "1");
+    let rt = parse_runtime_options(&options)?;
+
+    let val = dispatch_unified_message(
+        &target_agent,
+        &slug,
+        projects_root,
+        state_root,
+        delivery_id,
+        options.get("--session-id").cloned(),
+        options.get("--title").cloned(),
+        prompt,
+        options.get("--model").cloned(),
+        execute_external,
+        &rt,
+    )?;
+    let output = serde_json::to_string_pretty(&val).map_err(|e| e.to_string())?;
+    println!("{output}");
+    Ok(())
+}
+
+fn run_agents(args: &[String]) -> Result<(), String> {
+    if args.len() < 4 {
+        return Err(USAGE.into());
+    }
+    let sub = args[1].as_str();
+    let allowed = &[
+        "--state-root",
+        "--id",
+        "--name",
+        "--command",
+        "--args",
+        "--resume-args",
+        "--description",
+    ];
+    let options = parse_key_value_pairs(&args[2..], allowed)?;
+    let state_root = PathBuf::from(options.get("--state-root").ok_or(USAGE)?);
+    let registry = ExternalAgentRegistry::new(state_root).map_err(|e| e.to_string())?;
+
+    match sub {
+        "list" => {
+            let manifests = registry.list().map_err(|e| e.to_string())?;
+            let output = serde_json::to_string_pretty(&manifests).map_err(|e| e.to_string())?;
+            println!("{output}");
+            Ok(())
+        }
+        "register" => {
+            let id = options.get("--id").ok_or(USAGE)?.clone();
+            let display_name = options.get("--name").ok_or(USAGE)?.clone();
+            let command = PathBuf::from(options.get("--command").ok_or(USAGE)?);
+            let args_template = options
+                .get("--args")
+                .map(|s| s.split(',').map(|p| p.trim().to_string()).collect())
+                .unwrap_or_else(|| {
+                    vec!["--cwd".into(), "{cwd}".into(), "-p".into(), "{prompt}".into()]
+                });
+            let resume_args_template = options
+                .get("--resume-args")
+                .map(|s| s.split(',').map(|p| p.trim().to_string()).collect())
+                .unwrap_or_default();
+            let description = options.get("--description").cloned().unwrap_or_default();
+            let manifest = ExternalAgentManifest {
+                id,
+                display_name,
+                command,
+                args_template,
+                resume_args_template,
+                description,
+            };
+            let manifest_path = registry.register(&manifest).map_err(|e| e.to_string())?;
+            let out = json!({
+                "registered": true,
+                "manifest_path": manifest_path,
+                "agent": manifest,
+            });
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?
+            );
+            Ok(())
+        }
+        _ => Err(USAGE.into()),
+    }
+}
+
+fn build_setup_or_doctor_report(
+    mode: &str,
+    projects_root: &Path,
+    state_root: &Path,
+) -> Result<Value, String> {
+    if !projects_root.is_absolute() || !state_root.is_absolute() {
+        return Err("projects-root and state-root must be absolute paths".into());
+    }
+    if mode == "setup" {
+        fs::create_dir_all(projects_root).map_err(|e| e.to_string())?;
+        fs::create_dir_all(state_root.join("agents.d")).map_err(|e| e.to_string())?;
+    }
+    let registry =
+        ExternalAgentRegistry::new(state_root.to_path_buf()).map_err(|e| e.to_string())?;
+    let external_agents = registry.list().map_err(|e| e.to_string())?;
+
+    let sqlite_ready = Path::new("/usr/bin/sqlite3").exists();
+    let exe_path = env::current_exe().unwrap_or_else(|_| PathBuf::from("fleet-cli"));
+
+    let mut host_checks = Vec::new();
+    for kind in DesktopHostKind::ALL {
+        let (projects, sessions) =
+            inspect_host_state(kind, state_root).map_err(|e| e.to_string())?;
+        host_checks.push(json!({
+            "host": kind.as_str(),
+            "state_file": state_root.join(format!("{}-state.json", kind.as_str())),
+            "registered_projects": projects.len(),
+            "active_sessions": sessions.len(),
+            "ready": true,
+        }));
+    }
+
+    Ok(json!({
+        "mode": mode,
+        "status": "ok",
+        "projects_root": projects_root,
+        "state_root": state_root,
+        "sqlite3_available": sqlite_ready,
+        "canonical_hosts": host_checks,
+        "external_agents_count": external_agents.len(),
+        "mcp_server_config": {
+            "mcpServers": {
+                "agent-fleet": {
+                    "command": exe_path,
+                    "args": [
+                        "mcp",
+                        "--projects-root",
+                        projects_root,
+                        "--state-root",
+                        state_root
+                    ]
+                }
+            }
+        }
+    }))
+}
+
+fn run_setup_or_doctor(mode: &str, args: &[String]) -> Result<(), String> {
+    let allowed = &["--projects-root", "--state-root"];
+    let options = parse_key_value_pairs(&args[1..], allowed)?;
+    let projects_root = PathBuf::from(options.get("--projects-root").ok_or(USAGE)?);
+    let state_root = PathBuf::from(options.get("--state-root").ok_or(USAGE)?);
+    let report = build_setup_or_doctor_report(mode, &projects_root, &state_root)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?
+    );
+    Ok(())
+}
+
+fn mcp_tools_schema() -> Value {
+    json!({
+        "tools": [
+            {
+                "name": "list_team",
+                "description": "List all five canonical desktop agents (antigravity-desktop, openai-dots, deepseek-harness, cindy, zcode), their sidebar projects and sessions, plus any registered external open-source agents.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": false
+                }
+            },
+            {
+                "name": "send_message",
+                "description": "Dispatch a task or follow-up message to any of the five desktop agents or a registered external agent. Automatically creates <projects_root>/<slug> and mounts the project in the target desktop sidebar.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "to": {
+                            "type": "string",
+                            "description": "Target agent or <agent>/<project-slug> (e.g. 'zcode/my-app', 'antigravity-desktop/my-app', 'openai-dots/my-app', 'deepseek-harness/my-app', 'cindy/my-app')."
+                        },
+                        "slug": {
+                            "type": "string",
+                            "description": "Project slug under projects_root when 'to' specifies only the agent name."
+                        },
+                        "title": {
+                            "type": "string",
+                            "description": "Human-readable project and session title for the desktop sidebar."
+                        },
+                        "prompt": {
+                            "type": "string",
+                            "description": "Task brief or follow-up turn text."
+                        },
+                        "session_id": {
+                            "type": "string",
+                            "description": "Optional existing session_id / conversation_id to continue in the same sidebar thread."
+                        },
+                        "delivery_id": {
+                            "type": "string",
+                            "description": "Optional idempotency key for single-channel correlation."
+                        },
+                        "model": {
+                            "type": "string",
+                            "description": "Optional dispatcher model override."
+                        },
+                        "execute_external": {
+                            "type": "boolean",
+                            "description": "Whether to execute the external agent binary immediately when target is an external agent."
+                        }
+                    },
+                    "required": ["to", "prompt"]
+                }
+            },
+            {
+                "name": "message_status",
+                "description": "Read back the correlated project and session state for a desktop host and session_id.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "host": {
+                            "type": "string",
+                            "description": "Canonical desktop host (openai-dots, cindy, deepseek-harness, antigravity-desktop, zcode)."
+                        },
+                        "session_id": {
+                            "type": "string",
+                            "description": "Session or conversation ID to inspect."
+                        }
+                    },
+                    "required": ["host", "session_id"]
+                }
+            },
+            {
+                "name": "register_agent",
+                "description": "Register an external open-source agent manifest in agents.d/<id>.json so it can participate in fleet dispatch.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "id": { "type": "string" },
+                        "display_name": { "type": "string" },
+                        "command": { "type": "string" },
+                        "args_template": {
+                            "type": "array",
+                            "items": { "type": "string" }
+                        },
+                        "description": { "type": "string" }
+                    },
+                    "required": ["id", "display_name", "command"]
+                }
+            }
+        ]
+    })
+}
+
+fn handle_mcp_tool_call(
+    params: &Value,
+    projects_root: &Path,
+    state_root: &Path,
+    directory_opt: Option<&Path>,
+    rt: &HostRuntimeOptions,
+) -> Result<Value, String> {
+    let tool_name = params
+        .get("name")
+        .and_then(Value::as_str)
+        .ok_or("missing tool name")?;
+    let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
+
+    let payload = match tool_name {
+        "list_team" => build_team_inventory(state_root, directory_opt)?,
+        "send_message" => {
+            let to_raw = args
+                .get("to")
+                .and_then(Value::as_str)
+                .ok_or("send_message requires 'to'")?;
+            let slug_opt = args.get("slug").and_then(Value::as_str);
+            let (target_agent, slug) = parse_target_and_slug(to_raw, slug_opt)?;
+            let prompt = args
+                .get("prompt")
+                .and_then(Value::as_str)
+                .ok_or("send_message requires 'prompt'")?
+                .to_string();
+            let delivery_id = args
+                .get("delivery_id")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .unwrap_or_else(|| unique_delivery_id("mcp", &target_agent));
+            let session_id_opt = args
+                .get("session_id")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let title_opt = args
+                .get("title")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let model_opt = args
+                .get("model")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let execute_external = args
+                .get("execute_external")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            dispatch_unified_message(
+                &target_agent,
+                &slug,
+                projects_root.to_path_buf(),
+                state_root.to_path_buf(),
+                delivery_id,
+                session_id_opt,
+                title_opt,
+                prompt,
+                model_opt,
+                execute_external,
+                rt,
+            )?
+        }
+        "message_status" => {
+            let host_str = args
+                .get("host")
+                .and_then(Value::as_str)
+                .ok_or("message_status requires 'host'")?;
+            let session_id = args
+                .get("session_id")
+                .and_then(Value::as_str)
+                .ok_or("message_status requires 'session_id'")?;
+            let kind = DesktopHostKind::parse(host_str).map_err(|e| e.to_string())?;
+            let (_projects, sessions) =
+                inspect_host_state(kind, state_root).map_err(|e| e.to_string())?;
+            let session = sessions
+                .into_iter()
+                .find(|s| s.session_id == session_id)
+                .ok_or_else(|| format!("session {session_id} not found on {kind}"))?;
+            serde_json::to_value(session).map_err(|e| e.to_string())?
+        }
+        "register_agent" => {
+            let id = args
+                .get("id")
+                .and_then(Value::as_str)
+                .ok_or("register_agent requires 'id'")?
+                .to_string();
+            let display_name = args
+                .get("display_name")
+                .and_then(Value::as_str)
+                .ok_or("register_agent requires 'display_name'")?
+                .to_string();
+            let command = PathBuf::from(
+                args.get("command")
+                    .and_then(Value::as_str)
+                    .ok_or("register_agent requires 'command'")?,
+            );
+            let args_template = args
+                .get("args_template")
+                .and_then(Value::as_array)
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_else(|| {
+                    vec!["--cwd".into(), "{cwd}".into(), "-p".into(), "{prompt}".into()]
+                });
+            let description = args
+                .get("description")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let manifest = ExternalAgentManifest {
+                id,
+                display_name,
+                command,
+                args_template,
+                resume_args_template: Vec::new(),
+                description,
+            };
+            let registry = ExternalAgentRegistry::new(state_root.to_path_buf())
+                .map_err(|e| e.to_string())?;
+            let path = registry.register(&manifest).map_err(|e| e.to_string())?;
+            json!({
+                "registered": true,
+                "manifest_path": path,
+                "agent": manifest,
+            })
+        }
+        other => return Err(format!("unknown MCP tool: {other}")),
+    };
+
+    let text = serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?;
+    Ok(json!({
+        "content": [
+            {
+                "type": "text",
+                "text": text
+            }
+        ],
+        "structuredContent": payload,
+        "isError": false
+    }))
+}
+
+fn run_mcp(args: &[String]) -> Result<(), String> {
+    let allowed = &[
+        "--projects-root",
+        "--state-root",
+        "--directory",
+        "--codex-root",
+        "--app-server-socket",
+        "--cindy-root",
+        "--gateway-socket",
+        "--dsh-base-url",
+        "--dsh-root",
+        "--dsh-bin",
+        "--antigravity-root",
+        "--agy-bin",
+        "--zcode-root",
+        "--zcode-bin",
+    ];
+    let options = parse_key_value_pairs(&args[1..], allowed)?;
+    let projects_root = PathBuf::from(options.get("--projects-root").ok_or(USAGE)?);
+    let state_root = PathBuf::from(options.get("--state-root").ok_or(USAGE)?);
+    let dir_opt = options.get("--directory").map(PathBuf::from);
+    let rt = parse_runtime_options(&options)?;
+
+    let stdin = io::stdin();
+    let mut stdout = io::stdout();
+
+    for line_res in stdin.lock().lines() {
+        let line = line_res.map_err(|e| e.to_string())?;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let req: Value = match serde_json::from_str(trimmed) {
+            Ok(v) => v,
+            Err(e) => {
+                let err_resp = json!({
+                    "jsonrpc": "2.0",
+                    "id": Value::Null,
+                    "error": { "code": -32700, "message": format!("parse error: {e}") }
+                });
+                writeln!(stdout, "{err_resp}").map_err(|e| e.to_string())?;
+                stdout.flush().map_err(|e| e.to_string())?;
+                continue;
+            }
+        };
+        let Some(id) = req.get("id").cloned() else {
+            // JSON-RPC notification (e.g. notifications/initialized)
+            continue;
+        };
+        let method = req
+            .get("method")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let params = req.get("params").cloned().unwrap_or_else(|| json!({}));
+
+        let resp = match method {
+            "initialize" => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {
+                        "tools": { "listChanged": false }
+                    },
+                    "serverInfo": {
+                        "name": "agent-fleet-mcp",
+                        "version": env!("CARGO_PKG_VERSION")
+                    }
+                }
+            }),
+            "ping" => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {}
+            }),
+            "tools/list" => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": mcp_tools_schema()
+            }),
+            "tools/call" => match handle_mcp_tool_call(
+                &params,
+                &projects_root,
+                &state_root,
+                dir_opt.as_deref(),
+                &rt,
+            ) {
+                Ok(result) => json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": result
+                }),
+                Err(err_msg) => json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": {
+                        "content": [{ "type": "text", "text": err_msg }],
+                        "isError": true
+                    }
+                }),
+            },
+            other => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": {
+                    "code": -32601,
+                    "message": format!("method not found: {other}")
+                }
+            }),
+        };
+
+        writeln!(stdout, "{resp}").map_err(|e| e.to_string())?;
+        stdout.flush().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 fn run() -> Result<(), String> {
     let args: Vec<_> = env::args().skip(1).collect();
     let Some(first) = args.first().map(String::as_str) else {
@@ -376,6 +1102,12 @@ fn run() -> Result<(), String> {
         "sessions" => run_sessions(&args),
         "hosts" => run_hosts(&args),
         "relay" => run_relay(&args),
+        "who" => run_who(&args),
+        "send" => run_send(&args),
+        "agents" => run_agents(&args),
+        "setup" => run_setup_or_doctor("setup", &args),
+        "doctor" => run_setup_or_doctor("doctor", &args),
+        "mcp" => run_mcp(&args),
         _ => Err(USAGE.into()),
     }
 }

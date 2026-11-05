@@ -1,11 +1,14 @@
 #![cfg(unix)]
 
 use fleet_daemon::{
-    read_cindy_transcript, read_codex_project, read_codex_thread, CindyAdapter, CindyRuntimeConfig,
-    DeepSeekHarnessAdapter, DesktopHostAdapter, DshRuntimeConfig, HostAdapterError,
-    OpenAiDotsAdapter, OpenAiDotsRuntimeConfig,
+    read_cindy_transcript, read_codex_project, read_codex_thread, read_zcode_project,
+    read_zcode_session, CindyAdapter, CindyRuntimeConfig, DeepSeekHarnessAdapter,
+    DesktopHostAdapter, DshRuntimeConfig, ExternalAgentRegistry, HostAdapterError,
+    OpenAiDotsAdapter, OpenAiDotsRuntimeConfig, ZcodeAdapter, ZcodeRuntimeConfig,
 };
-use fleet_proto::{CreateSessionRequest, DeliverTurnRequest, DeliveryTier, DesktopHostKind};
+use fleet_proto::{
+    CreateSessionRequest, DeliverTurnRequest, DeliveryTier, DesktopHostKind, ExternalAgentManifest,
+};
 use serde_json::{json, Value};
 use std::{
     collections::BTreeMap,
@@ -1229,4 +1232,174 @@ fn cindy_rejects_mismatched_cwd_on_gateway_sessions_get() {
         })
         .unwrap_err();
     assert!(matches!(err, HostAdapterError::ProjectDirMismatch { .. }));
+}
+
+#[test]
+fn zcode_creates_project_registers_tasks_index_and_cli_db_and_delivers_followup_turn() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = std::env::temp_dir().join(format!(
+        "fleet-zcode-native-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let projects_root = root.join("Projects");
+    let state_root = root.join("state");
+    let zcode_root = root.join(".zcode");
+    fs::create_dir_all(&projects_root).unwrap();
+    fs::create_dir_all(&state_root).unwrap();
+    fs::create_dir_all(&zcode_root).unwrap();
+
+    let mock_zcode = root.join("mock_zcode.py");
+    let script = r#"#!/usr/bin/env python3
+import json, sys
+
+args = sys.argv[1:]
+resume_id = None
+for i, a in enumerate(args):
+    if a == "--resume" and i + 1 < len(args):
+        resume_id = args[i + 1]
+
+if resume_id:
+    print(json.dumps({"session_id": resume_id, "turn_id": "msg_zcode_turn_0002", "status": "completed"}))
+else:
+    print(json.dumps({"session_id": "sess_zcode_0001", "turn_id": "msg_zcode_turn_0001", "status": "completed"}))
+"#;
+    fs::write(&mock_zcode, script).unwrap();
+    let mut perms = fs::metadata(&mock_zcode).unwrap().permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&mock_zcode, perms).unwrap();
+
+    let rt = ZcodeRuntimeConfig::new(zcode_root.clone(), mock_zcode);
+    let mut adapter =
+        ZcodeAdapter::with_runtime(projects_root.clone(), state_root, rt.clone()).unwrap();
+
+    let binding = adapter
+        .ensure_sidebar_project("zcode-open-engine", Some("ZCode Open Engine"))
+        .unwrap();
+    assert_eq!(binding.host, DesktopHostKind::Zcode);
+    assert_eq!(binding.project_dir, projects_root.join("zcode-open-engine"));
+
+    let proj_row = read_zcode_project(
+        &rt.sqlite3_bin,
+        &rt.tasks_index_db_path(),
+        &binding.project_id,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(proj_row.project_id, binding.project_id);
+    assert_eq!(proj_row.root_path, binding.project_dir);
+    assert_eq!(proj_row.name, "ZCode Open Engine");
+
+    let created = adapter
+        .create_zcode_session(&CreateSessionRequest {
+            delivery_id: "zcode-deliv-1".into(),
+            project_id: binding.project_id.clone(),
+            project_dir: binding.project_dir.clone(),
+            title: "ZCode Slice Q Session".into(),
+            prompt: "Initialize ZCode sidebar session and verify SQLite stores.".into(),
+            model: Some("zcode/GLM-5.3-Flash".into()),
+        })
+        .unwrap();
+    assert_eq!(created.host, DesktopHostKind::Zcode);
+    assert_eq!(created.session_id, "sess_zcode_0001");
+    assert_eq!(created.turn_id, "msg_zcode_turn_0001");
+    assert_eq!(created.message_count, 1);
+    assert_eq!(created.tier, DeliveryTier::ThreadVisible);
+
+    let followup = adapter
+        .deliver_zcode_turn(&DeliverTurnRequest {
+            delivery_id: "zcode-deliv-2".into(),
+            project_id: binding.project_id.clone(),
+            session_id: created.session_id.clone(),
+            project_dir: binding.project_dir.clone(),
+            prompt: "Follow up on the same ZCode sidebar session.".into(),
+            model: Some("zcode/GLM-5.3-Flash".into()),
+        })
+        .unwrap();
+    assert_eq!(followup.session_id, created.session_id);
+    assert_eq!(followup.turn_id, "msg_zcode_turn_0002");
+    assert_eq!(followup.message_count, 2);
+
+    let snap = read_zcode_session(
+        &rt.sqlite3_bin,
+        &rt.tasks_index_db_path(),
+        &rt.cli_db_path(),
+        &created.session_id,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(snap.project_id, binding.project_id);
+    assert_eq!(snap.cwd, binding.project_dir);
+    assert_eq!(snap.message_count, 2);
+    assert_eq!(snap.archived, 0);
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn external_agent_registry_registers_manifest_and_executes_project_scoped_dispatch() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = std::env::temp_dir().join(format!(
+        "fleet-ext-agent-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let projects_root = root.join("Projects");
+    let state_root = root.join("state");
+    fs::create_dir_all(&projects_root).unwrap();
+    fs::create_dir_all(&state_root).unwrap();
+
+    let mock_ext = root.join("mock_opencode.py");
+    let script = r#"#!/usr/bin/env python3
+import json, os, sys
+print(json.dumps({"cwd": os.getcwd(), "argv": sys.argv[1:]}))
+"#;
+    fs::write(&mock_ext, script).unwrap();
+    let mut perms = fs::metadata(&mock_ext).unwrap().permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&mock_ext, perms).unwrap();
+
+    let registry = ExternalAgentRegistry::new(state_root).unwrap();
+    let manifest = ExternalAgentManifest {
+        id: "opencode-oss".into(),
+        display_name: "OpenCode OSS Agent".into(),
+        command: mock_ext,
+        args_template: vec![
+            "--cwd".into(),
+            "{cwd}".into(),
+            "--session".into(),
+            "{session_id}".into(),
+            "-p".into(),
+            "{prompt}".into(),
+        ],
+        resume_args_template: Vec::new(),
+        description: "Pluggable open-source coding agent".into(),
+    };
+    registry.register(&manifest).unwrap();
+    assert_eq!(registry.list().unwrap().len(), 1);
+
+    let receipt = registry
+        .dispatch(
+            "opencode-oss",
+            &projects_root,
+            "oss-demo",
+            "ext-deliv-1",
+            None,
+            "OSS Demo Task",
+            "Run open-source agent check.",
+            true,
+        )
+        .unwrap();
+    assert_eq!(receipt.agent_id, "opencode-oss");
+    assert_eq!(receipt.project_dir, projects_root.join("oss-demo"));
+    assert_eq!(receipt.tier, DeliveryTier::Completed);
+    assert!(receipt.stdout_preview.contains("oss-demo"));
+
+    let _ = fs::remove_dir_all(&root);
 }

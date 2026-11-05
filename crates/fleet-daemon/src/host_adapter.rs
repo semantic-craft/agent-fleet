@@ -1,13 +1,14 @@
 use fleet_proto::{
     resolve_project_dir_in_root, validate_brief, validate_nonempty_id, BriefPolicyError,
-    CreateSessionRequest, DeliverTurnRequest, DeliveryTier, DesktopHostKind, HostSessionReceipt,
-    ProjectDirRecord, ProjectPathError, SidebarProjectBinding,
+    CreateSessionRequest, DeliverTurnRequest, DeliveryTier, DesktopHostKind, ExternalAgentManifest,
+    HostSessionReceipt, ProjectDirRecord, ProjectPathError, SidebarProjectBinding,
 };
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt, fs,
     path::{Path, PathBuf},
+    process::Command,
 };
 
 #[derive(Debug)]
@@ -40,6 +41,8 @@ pub enum HostAdapterError {
     OpenAiDotsProtocol(String),
     DshProtocol(String),
     CindyProtocol(String),
+    ZcodeProtocol(String),
+    ExternalAgentProtocol(String),
 }
 
 impl fmt::Display for HostAdapterError {
@@ -90,6 +93,12 @@ impl fmt::Display for HostAdapterError {
             }
             Self::CindyProtocol(reason) => {
                 write!(f, "cindy desktop adapter error: {reason}")
+            }
+            Self::ZcodeProtocol(reason) => {
+                write!(f, "zcode desktop adapter error: {reason}")
+            }
+            Self::ExternalAgentProtocol(reason) => {
+                write!(f, "external agent adapter error: {reason}")
             }
         }
     }
@@ -2214,7 +2223,7 @@ impl DesktopHostAdapter for AntigravityDesktopAdapter {
     }
 }
 
-/// Factory constructing a boxed `DesktopHostAdapter` for any of the four canonical hosts.
+/// Factory constructing a boxed `DesktopHostAdapter` for any of the five canonical hosts.
 pub fn build_host_adapter(
     host: DesktopHostKind,
     projects_root: PathBuf,
@@ -2234,5 +2243,559 @@ pub fn build_host_adapter(
             projects_root,
             state_root,
         )?)),
+        DesktopHostKind::Zcode => Ok(Box::new(ZcodeAdapter::new(projects_root, state_root)?)),
+    }
+}
+
+/// Reads persisted projects and sessions for a canonical desktop host from `<state_root>/<host>-state.json`.
+pub fn inspect_host_state(
+    host: DesktopHostKind,
+    state_root: &Path,
+) -> Result<(Vec<SidebarProjectBinding>, Vec<PersistedSessionRecord>), HostAdapterError> {
+    if !state_root.is_absolute() {
+        return Err(ProjectPathError::InvalidRoot(state_root.to_path_buf()).into());
+    }
+    let state_file = state_root.join(format!("{}-state.json", host.as_str()));
+    if !state_file.exists() {
+        return Ok((Vec::new(), Vec::new()));
+    }
+    let state: PersistedHostState = serde_json::from_slice(&fs::read(&state_file)?).map_err(|e| {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
+    })?;
+    let projects = state.projects.into_values().collect();
+    let sessions = state.sessions.into_values().collect();
+    Ok((projects, sessions))
+}
+
+#[derive(Debug)]
+pub struct ZcodeAdapter {
+    core: HostLifecycleCore,
+    pub(crate) runtime: Option<crate::tri_hosts::ZcodeRuntimeConfig>,
+}
+
+impl ZcodeAdapter {
+    pub fn new(
+        projects_root: PathBuf,
+        state_root: PathBuf,
+    ) -> Result<Self, HostAdapterError> {
+        Ok(Self {
+            core: HostLifecycleCore::new(DesktopHostKind::Zcode, projects_root, state_root)?,
+            runtime: None,
+        })
+    }
+
+    pub fn with_runtime(
+        projects_root: PathBuf,
+        state_root: PathBuf,
+        runtime: crate::tri_hosts::ZcodeRuntimeConfig,
+    ) -> Result<Self, HostAdapterError> {
+        if !runtime.zcode_root.is_absolute() {
+            return Err(HostAdapterError::ZcodeProtocol(format!(
+                "zcode_root must be absolute: {}",
+                runtime.zcode_root.display()
+            )));
+        }
+        if !runtime.zcode_bin.is_absolute() {
+            return Err(HostAdapterError::ZcodeProtocol(format!(
+                "zcode_bin must be absolute: {}",
+                runtime.zcode_bin.display()
+            )));
+        }
+        let mut adapter = Self::new(projects_root, state_root)?;
+        adapter.runtime = Some(runtime);
+        Ok(adapter)
+    }
+
+    pub fn session(&self, session_id: &str) -> Option<&PersistedSessionRecord> {
+        self.core.session(session_id)
+    }
+
+    pub fn project(&self, project_id: &str) -> Option<&SidebarProjectBinding> {
+        self.core.project(project_id)
+    }
+
+    pub fn read_project_row(
+        &self,
+        project_id: &str,
+    ) -> Result<Option<crate::tri_hosts::ZcodeProjectRow>, HostAdapterError> {
+        let Some(runtime) = &self.runtime else {
+            return Err(HostAdapterError::ZcodeProtocol(
+                "ZcodeRuntimeConfig is not configured on this adapter".into(),
+            ));
+        };
+        crate::tri_hosts::read_zcode_project(
+            &runtime.sqlite3_bin,
+            &runtime.tasks_index_db_path(),
+            project_id,
+        )
+    }
+
+    pub fn read_zcode_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<crate::tri_hosts::ZcodeSessionSnapshot>, HostAdapterError> {
+        let Some(runtime) = &self.runtime else {
+            return Err(HostAdapterError::ZcodeProtocol(
+                "ZcodeRuntimeConfig is not configured on this adapter".into(),
+            ));
+        };
+        crate::tri_hosts::read_zcode_session(
+            &runtime.sqlite3_bin,
+            &runtime.tasks_index_db_path(),
+            &runtime.cli_db_path(),
+            session_id,
+        )
+    }
+
+    pub fn create_zcode_session(
+        &mut self,
+        request: &CreateSessionRequest,
+    ) -> Result<crate::tri_hosts::ZcodeSessionReceipt, HostAdapterError> {
+        let receipt = self.create_session(request)?;
+        let Some(_runtime) = &self.runtime else {
+            return Ok(crate::tri_hosts::ZcodeSessionReceipt {
+                host: receipt.host,
+                delivery_id: receipt.delivery_id,
+                project_id: receipt.project_id,
+                session_id: receipt.session_id.clone(),
+                turn_id: receipt.turn_id,
+                project_dir: receipt.project_dir.clone(),
+                workspace_uris: receipt.workspace_uris,
+                workspace_key: format!(
+                    "local::{}::{}",
+                    receipt.project_dir.display(),
+                    receipt.session_id
+                ),
+                message_count: 1,
+                tier: receipt.tier,
+            });
+        };
+        let snap = self
+            .read_zcode_session(&receipt.session_id)?
+            .ok_or_else(|| {
+                HostAdapterError::ZcodeProtocol(format!(
+                    "session {} missing from ZCode SQLite stores after create_session",
+                    receipt.session_id
+                ))
+            })?;
+        crate::tri_hosts::verify_zcode_session_binding(
+            &snap,
+            &receipt.project_id,
+            &receipt.project_dir,
+        )?;
+        Ok(crate::tri_hosts::ZcodeSessionReceipt {
+            host: receipt.host,
+            delivery_id: receipt.delivery_id,
+            project_id: receipt.project_id,
+            session_id: snap.session_id,
+            turn_id: receipt.turn_id,
+            project_dir: receipt.project_dir,
+            workspace_uris: receipt.workspace_uris,
+            workspace_key: snap.workspace_key,
+            message_count: snap.message_count,
+            tier: receipt.tier,
+        })
+    }
+
+    pub fn deliver_zcode_turn(
+        &mut self,
+        request: &DeliverTurnRequest,
+    ) -> Result<crate::tri_hosts::ZcodeSessionReceipt, HostAdapterError> {
+        let receipt = self.deliver_turn(request)?;
+        let Some(_runtime) = &self.runtime else {
+            return Ok(crate::tri_hosts::ZcodeSessionReceipt {
+                host: receipt.host,
+                delivery_id: receipt.delivery_id,
+                project_id: receipt.project_id,
+                session_id: receipt.session_id.clone(),
+                turn_id: receipt.turn_id,
+                project_dir: receipt.project_dir.clone(),
+                workspace_uris: receipt.workspace_uris,
+                workspace_key: format!(
+                    "local::{}::{}",
+                    receipt.project_dir.display(),
+                    receipt.session_id
+                ),
+                message_count: 2,
+                tier: receipt.tier,
+            });
+        };
+        let snap = self
+            .read_zcode_session(&receipt.session_id)?
+            .ok_or_else(|| {
+                HostAdapterError::ZcodeProtocol(format!(
+                    "session {} missing from ZCode SQLite stores after deliver_turn",
+                    receipt.session_id
+                ))
+            })?;
+        crate::tri_hosts::verify_zcode_session_binding(
+            &snap,
+            &receipt.project_id,
+            &receipt.project_dir,
+        )?;
+        Ok(crate::tri_hosts::ZcodeSessionReceipt {
+            host: receipt.host,
+            delivery_id: receipt.delivery_id,
+            project_id: receipt.project_id,
+            session_id: snap.session_id,
+            turn_id: receipt.turn_id,
+            project_dir: receipt.project_dir,
+            workspace_uris: receipt.workspace_uris,
+            workspace_key: snap.workspace_key,
+            message_count: snap.message_count,
+            tier: receipt.tier,
+        })
+    }
+}
+
+impl DesktopHostAdapter for ZcodeAdapter {
+    fn host_kind(&self) -> DesktopHostKind {
+        self.core.host
+    }
+
+    fn projects_root(&self) -> &Path {
+        &self.core.projects_root
+    }
+
+    fn ensure_project_dir(&mut self, slug: &str) -> Result<ProjectDirRecord, HostAdapterError> {
+        self.core.ensure_project_dir(slug)
+    }
+
+    fn ensure_sidebar_project(
+        &mut self,
+        slug: &str,
+        title: Option<&str>,
+    ) -> Result<SidebarProjectBinding, HostAdapterError> {
+        let dir = self.core.ensure_project_dir(slug)?;
+        let Some(runtime) = self.runtime.clone() else {
+            return self.core.ensure_sidebar_project(slug, title);
+        };
+        let resolved_title = match title {
+            Some(t) => {
+                validate_nonempty_id("project title", t)?;
+                t.to_string()
+            }
+            None => slug.to_string(),
+        };
+        let row = crate::tri_hosts::ensure_zcode_sidebar_project(
+            &runtime.sqlite3_bin,
+            &runtime.tasks_index_db_path(),
+            &dir.path,
+            &resolved_title,
+        )?;
+        self.core
+            .ensure_sidebar_project_with_override(slug, title, Some(row.project_id))
+    }
+
+    fn create_session(
+        &mut self,
+        request: &CreateSessionRequest,
+    ) -> Result<HostSessionReceipt, HostAdapterError> {
+        let project = self.core.validate_create_session(request)?;
+        let Some(runtime) = self.runtime.clone() else {
+            return self.core.commit_created_session(
+                request,
+                project,
+                None,
+                None,
+                None,
+                DeliveryTier::Accepted,
+            );
+        };
+        let (session_id, turn_id) = crate::tri_hosts::run_zcode_headless_command(
+            &runtime,
+            &project.project_dir,
+            None,
+            &request.prompt,
+            request.model.as_deref(),
+        )?;
+        crate::tri_hosts::attach_zcode_session_to_tasks_index(
+            &runtime.sqlite3_bin,
+            &runtime.tasks_index_db_path(),
+            &runtime.cli_db_path(),
+            &project.project_id,
+            &project.project_dir,
+            &session_id,
+            &request.title,
+            &request.prompt,
+            &turn_id,
+        )?;
+        let snap = crate::tri_hosts::read_zcode_session(
+            &runtime.sqlite3_bin,
+            &runtime.tasks_index_db_path(),
+            &runtime.cli_db_path(),
+            &session_id,
+        )?
+        .ok_or_else(|| {
+            HostAdapterError::ZcodeProtocol(format!(
+                "session {session_id} missing from ZCode SQLite stores after create_session"
+            ))
+        })?;
+        crate::tri_hosts::verify_zcode_session_binding(
+            &snap,
+            &project.project_id,
+            &project.project_dir,
+        )?;
+        self.core.commit_created_session(
+            request,
+            project,
+            Some(session_id),
+            Some(turn_id),
+            None,
+            DeliveryTier::ThreadVisible,
+        )
+    }
+
+    fn deliver_turn(
+        &mut self,
+        request: &DeliverTurnRequest,
+    ) -> Result<HostSessionReceipt, HostAdapterError> {
+        let project = self.core.validate_deliver_turn(request)?;
+        let Some(runtime) = self.runtime.clone() else {
+            return self.core.commit_delivered_turn(
+                request,
+                project,
+                None,
+                None,
+                DeliveryTier::Accepted,
+            );
+        };
+        let existing_title = self
+            .core
+            .session(&request.session_id)
+            .map(|s| s.title.clone())
+            .unwrap_or_else(|| project.title.clone());
+        let (returned_sid, turn_id) = crate::tri_hosts::run_zcode_headless_command(
+            &runtime,
+            &project.project_dir,
+            Some(&request.session_id),
+            &request.prompt,
+            request.model.as_deref(),
+        )?;
+        if returned_sid != request.session_id {
+            return Err(HostAdapterError::ZcodeProtocol(format!(
+                "zcode --resume {} returned mismatched session_id {returned_sid}",
+                request.session_id
+            )));
+        }
+        crate::tri_hosts::attach_zcode_session_to_tasks_index(
+            &runtime.sqlite3_bin,
+            &runtime.tasks_index_db_path(),
+            &runtime.cli_db_path(),
+            &project.project_id,
+            &project.project_dir,
+            &request.session_id,
+            &existing_title,
+            &request.prompt,
+            &turn_id,
+        )?;
+        let snap = crate::tri_hosts::read_zcode_session(
+            &runtime.sqlite3_bin,
+            &runtime.tasks_index_db_path(),
+            &runtime.cli_db_path(),
+            &request.session_id,
+        )?
+        .ok_or_else(|| {
+            HostAdapterError::ZcodeProtocol(format!(
+                "session {} missing from ZCode SQLite stores after deliver_turn",
+                request.session_id
+            ))
+        })?;
+        crate::tri_hosts::verify_zcode_session_binding(
+            &snap,
+            &project.project_id,
+            &project.project_dir,
+        )?;
+        self.core.commit_delivered_turn(
+            request,
+            project,
+            Some(turn_id),
+            None,
+            DeliveryTier::ThreadVisible,
+        )
+    }
+}
+
+/// Receipt proving task dispatch to an external open-source agent registered in `agents.d/<id>.json`.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExternalAgentReceipt {
+    pub agent_id: String,
+    pub display_name: String,
+    pub delivery_id: String,
+    pub slug: String,
+    pub project_dir: PathBuf,
+    pub session_id: String,
+    pub turn_id: String,
+    pub tier: DeliveryTier,
+    pub stdout_preview: String,
+}
+
+/// Registry managing pluggable third-party/open-source agent manifests in `<state_root>/agents.d/*.json`.
+#[derive(Debug)]
+pub struct ExternalAgentRegistry {
+    state_root: PathBuf,
+}
+
+impl ExternalAgentRegistry {
+    pub fn new(state_root: PathBuf) -> Result<Self, HostAdapterError> {
+        if !state_root.is_absolute() {
+            return Err(ProjectPathError::InvalidRoot(state_root).into());
+        }
+        fs::create_dir_all(state_root.join("agents.d"))?;
+        Ok(Self { state_root })
+    }
+
+    pub fn agents_dir(&self) -> PathBuf {
+        self.state_root.join("agents.d")
+    }
+
+    pub fn register(
+        &self,
+        manifest: &ExternalAgentManifest,
+    ) -> Result<PathBuf, HostAdapterError> {
+        manifest.validate()?;
+        let path = self.agents_dir().join(format!("{}.json", manifest.id));
+        let tmp = path.with_extension("json.tmp");
+        let bytes = serde_json::to_vec_pretty(manifest)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
+        fs::write(&tmp, bytes)?;
+        fs::rename(&tmp, &path)?;
+        Ok(path)
+    }
+
+    pub fn get(&self, id: &str) -> Result<Option<ExternalAgentManifest>, HostAdapterError> {
+        fleet_proto::validate_project_slug(id)?;
+        let path = self.agents_dir().join(format!("{id}.json"));
+        if !path.exists() {
+            return Ok(None);
+        }
+        let manifest: ExternalAgentManifest =
+            serde_json::from_slice(&fs::read(&path)?).map_err(|e| {
+                HostAdapterError::ExternalAgentProtocol(format!(
+                    "invalid manifest {}: {e}",
+                    path.display()
+                ))
+            })?;
+        manifest.validate()?;
+        Ok(Some(manifest))
+    }
+
+    pub fn list(&self) -> Result<Vec<ExternalAgentManifest>, HostAdapterError> {
+        let dir = self.agents_dir();
+        if !dir.exists() {
+            return Ok(Vec::new());
+        }
+        let mut files: Vec<PathBuf> = fs::read_dir(&dir)?
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|ext| ext == "json"))
+            .collect();
+        files.sort();
+        let mut manifests = Vec::new();
+        for file in files {
+            let manifest: ExternalAgentManifest = serde_json::from_slice(&fs::read(&file)?)
+                .map_err(|e| {
+                    HostAdapterError::ExternalAgentProtocol(format!(
+                        "invalid manifest {}: {e}",
+                        file.display()
+                    ))
+                })?;
+            manifest.validate()?;
+            manifests.push(manifest);
+        }
+        Ok(manifests)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn dispatch(
+        &self,
+        agent_id: &str,
+        projects_root: &Path,
+        slug: &str,
+        delivery_id: &str,
+        session_id: Option<&str>,
+        title: &str,
+        prompt: &str,
+        execute_command: bool,
+    ) -> Result<ExternalAgentReceipt, HostAdapterError> {
+        validate_nonempty_id("delivery_id", delivery_id)?;
+        validate_nonempty_id("title", title)?;
+        validate_brief(prompt)?;
+        let manifest = self.get(agent_id)?.ok_or_else(|| {
+            HostAdapterError::ExternalAgentProtocol(format!(
+                "external agent '{agent_id}' is not registered in {}",
+                self.agents_dir().display()
+            ))
+        })?;
+        let candidate = resolve_project_dir_in_root(projects_root, slug)?;
+        if !candidate.exists() {
+            fs::create_dir_all(&candidate)?;
+        }
+        let meta = fs::symlink_metadata(&candidate)?;
+        if meta.file_type().is_symlink() {
+            return Err(HostAdapterError::SymlinkRejected(candidate));
+        }
+        let canonical_dir = fs::canonicalize(&candidate)?;
+
+        let resolved_sid = session_id
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("{agent_id}-{slug}-session-1"));
+        let turn_id = format!("{agent_id}-{delivery_id}-turn");
+
+        let mut stdout_preview = String::new();
+        let tier = if execute_command {
+            let template = if session_id.is_some() && !manifest.resume_args_template.is_empty() {
+                &manifest.resume_args_template
+            } else {
+                &manifest.args_template
+            };
+            let rendered_args: Vec<String> = template
+                .iter()
+                .map(|arg| {
+                    arg.replace("{cwd}", &canonical_dir.display().to_string())
+                        .replace("{slug}", slug)
+                        .replace("{session_id}", &resolved_sid)
+                        .replace("{delivery_id}", delivery_id)
+                        .replace("{title}", title)
+                        .replace("{prompt}", prompt)
+                })
+                .collect();
+            let output = Command::new(&manifest.command)
+                .current_dir(&canonical_dir)
+                .args(&rendered_args)
+                .output()
+                .map_err(|e| {
+                    HostAdapterError::ExternalAgentProtocol(format!(
+                        "failed to execute external agent '{}' ({}): {e}",
+                        manifest.id,
+                        manifest.command.display()
+                    ))
+                })?;
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return Err(HostAdapterError::ExternalAgentProtocol(format!(
+                    "external agent '{}' exited with {}: {}",
+                    manifest.id,
+                    output.status,
+                    stderr.trim()
+                )));
+            }
+            stdout_preview = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            DeliveryTier::Completed
+        } else {
+            DeliveryTier::Accepted
+        };
+
+        Ok(ExternalAgentReceipt {
+            agent_id: manifest.id,
+            display_name: manifest.display_name,
+            delivery_id: delivery_id.to_string(),
+            slug: slug.to_string(),
+            project_dir: canonical_dir,
+            session_id: resolved_sid,
+            turn_id,
+            tier,
+            stdout_preview,
+        })
     }
 }

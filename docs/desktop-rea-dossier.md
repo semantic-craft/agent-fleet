@@ -105,14 +105,36 @@ Antigravity 提供两条互补的原生通道：
 - **Deep Link 与窗口激活**:
   - `codex://threads/<thread_id>` 可直接聚焦已存在线程。
 
-### 3. 四端统一适配器映射 (`DesktopHostAdapter`)
+### 3. ZCode Desktop (`ZCode.app` + `~/.zcode` + `zcode` CLI)
+
+#### 3.1 本地存储与项目/会话模型
+
+- **`~/.zcode/v2/tasks-index.sqlite`（Electron 桌面侧栏项目与任务索引库）**:
+  - `hosts` 表：`host_id` (`"local"` PK)、`kind` (`"local"`)、`label`、`position`、`deleted`、`created_at`、`updated_at`。
+  - `projects` 表：`project_id` (UUID TEXT PK)、`host_id` (`"local"`)、`name`、`position`、`deleted`、`created_at`、`updated_at`。
+  - `project_roots` 表：`project_id` (FK -> `projects.project_id`)、`root_path` (`~/Projects/<slug>`)、`position`、`is_primary` (`1`)。
+  - `tasks` 表：`workspace_key` (`local::<root_path>::<task_id>` PK)、`workspace_path`、`task_id` (`sess_<uuid>`)、`title`、`task_status` (`"normal"`)、`host_id` (`"local"`)、`root_path`、`project_id`、`cli_title`、`deleted` (`0`)、`archived` (`0`)。
+- **`~/.zcode/cli/db/db.sqlite`（ZCode CLI 会话与消息正文库）**:
+  - `project` 表：`id` (`proj_<slugified-path>` PK)、`worktree`、`name`、`time_created`、`time_updated`。
+  - `session` 表：`id` (`sess_<uuid>` PK)、`project_id`、`slug`、`directory` (`~/Projects/<slug>`)、`path`、`title`、`version`、`time_created`、`time_updated`。
+  - `message` 表：`id` (`msg_<id>` PK)、`session_id` (FK -> `session.id`)、`time_created`、`time_updated`、`data` (JSON TEXT)、`sequence`。
+
+#### 3.2 创建项目与侧栏会话投递通道
+
+- **`zcode` CLI (`0.17.1`, `/Applications/ZCode.app/Contents/Resources/cli/zcode`)**:
+  - 新建会话：`zcode --cwd <project_dir> --surface desktop --json -p <prompt>`。
+  - 续接会话：`zcode --cwd <project_dir> --surface desktop --json --resume <session_id> -p <prompt>`。
+  - 同步桥接：`ZcodeAdapter` 在调用 CLI 后同步核验 `v2/tasks-index.sqlite` (`projects`、`project_roots`、`tasks`) 与 `cli/db/db.sqlite` (`session`、`message`)，确保任务挂载在左侧栏对应项目下。
+
+### 4. 五端统一适配器映射 (`DesktopHostAdapter`)
 
 | 桌面宿主 | 项目目录创建与侧栏挂载 | 新建侧栏会话 (`create_session`) | 续接/追问已开会话 (`deliver_turn`) | 状态回读与收据证据 |
 | --- | --- | --- | --- | --- |
 | **OpenAI Dots** (`Codex Desktop`) | `fs::create_dir_all` + `codex app-server` `project/create`（写 `state_5.sqlite` 的 `projects`/`project_roots` 并同步 `.codex-global-state.json`） | `thread/start` (绑定 `cwd` 与 `project_id`) + `turn/start` | 已加载线程走原生 `thread/resume` + `turn/start` (`docs/native-thread-selection.md`)；离线恢复走 `codex exec resume <thread_id>` | `state_5.sqlite` (`threads.project_id`, `rollout_path`) + `codex://threads/<id>` |
 | **Antigravity Desktop** (`agy`) | `fs::create_dir_all` + Hub RPC `CreateProject` / `AddTrackedWorkspace` 或 `agy --new-project --project <name> --add-dir <dir>` | Hub RPC `StartCascade` + `SendUserCascadeMessage` (或 `agy --project <id> -p`) | Hub RPC `SendUserCascadeMessage` + `SmartFocusConversation` (或 `agy --conversation <id> --project <id> -p`) | `conversation_summaries.db` (`project_id`, `workspace_uris`, `status`) + `presence/<id>.lock` |
-| **DeepSeek Harness** (`DSH`) | `fs::create_dir_all` + DSH Gateway 会话 `cwd` 绑定 (`http://127.0.0.1:41937/v1`) | `POST /v1/sessions` (传入 `cwd: ~/Projects/<slug>`) | `POST /v1/sessions/<id>/turns` (SSE 实时流式推送至桌面侧栏，见 `docs/dsh-session-only.md`) | `GET /v1/sessions/<id>` / `GET /v1/sessions/<id>/events` |
+| **DeepSeek Harness** (`DSH`) | `fs::create_dir_all` + `~/.dsh/storages/workspace.json` 工作区 UUID 绑定或 DSH Gateway | `dsh --profile headless --json` + 双帧 `session.v4.jsonl.zstd`（或 `POST /v1/sessions`） | `dsh --profile headless --session-id <id> --json`（或 `POST /v1/sessions/<id>/turns`） | `workspace.json` + `session_projcache/sessions/<id>.json` + `session.v4.jsonl.zstd` |
 | **Cindy** (`cindy`) | `fs::create_dir_all` + Gateway `sessions.patch` / 工作区目录绑定 | Gateway `sessions.create` / `chat.send` (`sessionKey`) | `plugins/agent-network-cindy` (`cindy_session_send` / `sessions.send`) | Gateway `sessions.get` / transcript JSONL |
+| **ZCode Desktop** (`zcode`) | `fs::create_dir_all` + `~/.zcode/v2/tasks-index.sqlite` (`projects` + `project_roots`) | `zcode --cwd <dir> --surface desktop --json -p` + `tasks-index.sqlite` (`tasks`) | `zcode --cwd <dir> --surface desktop --json --resume <id> -p` | `v2/tasks-index.sqlite` (`projects`, `tasks`) + `cli/db/db.sqlite` (`session`, `message`) |
 
 ## Where Things Live
 
@@ -123,8 +145,11 @@ Antigravity 提供两条互补的原生通道：
 - **Codex Desktop 状态 SQLite**: `~/.codex/state_5.sqlite` 与 `~/.codex/queue_1.sqlite`
 - **Codex Desktop 侧栏全局状态**: `~/.codex/.codex-global-state.json`
 - **Codex 会话 Rollout 日志**: `~/.codex/sessions/YYYY/MM/DD/rollout-<timestamp>-<thread_id>.jsonl`
+- **DSH 原生工作区与会话缓存**: `~/.dsh/storages/workspace.json` 与 `~/.dsh/storages/session_projcache/sessions/<id>.json`
 - **DSH 本地会话网关**: `http://127.0.0.1:41937/v1/sessions` (`docs/dsh-session-only.md`)
 - **Cindy 插件桥接实现**: `plugins/agent-network-cindy/`
+- **ZCode 桌面侧栏项目与任务 SQLite**: `~/.zcode/v2/tasks-index.sqlite`
+- **ZCode CLI 会话与消息 SQLite**: `~/.zcode/cli/db/db.sqlite`
 
 ## Gotchas
 

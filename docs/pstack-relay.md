@@ -1,6 +1,15 @@
 # Rust fleet engine 接力队列
 
-总目标：ANet-based Rust fleet engine absorbing agenvo + Reason delivery；兼容 `https://anet.sonori.dev`。Slice A–L 已按各自验收边界完成：A–G 完成引擎骨架、会话目录、Hub 客户端与收据层级（已合入 `main` PR #115）；H–L 完成 REA 桌面档案与四桌面宿主（OpenAI Dots、Cindy、DeepSeek Harness、Antigravity Desktop）受控建目录、侧栏挂载及 `/poteto-mode` 跨 Agent 投递适配器（经隔离夹具与本机只读状态库对勘验证，无 runtime 时仅返回 `accepted` 层级）。Codex (`openai-dots`) 通过 Magpie 本地网关默认使用 `zcode/GLM-5.3-Flash`（`model_reasoning_effort = "max"`）。原生 Codex Desktop 内嵌 stdio 通道直连、自动回复成功及 Rust Hub client 线上发送仍待实机放行。
+## 用户愿景复述与引擎总目标（2026-11-05 记录）
+
+1. **双源合一的架构定位**：本引擎是 [sleep2agi/agent-network](https://github.com/sleep2agi/agent-network)（及官方 ANet Hub 的身份发现、任务账本、单通道收据关联与跨节点路由）与 [reason-machines/reason-network](https://github.com/reason-machines/reason-network)（会话目录发现、项目级 `cwd` 跟随会话、消息直达已打开的桌面项目线程）两个项目融合而成的开源 Rust 引擎。
+2. **五大桌面 Agent 互相派活与左侧项目会话可见**：`antigravity-desktop`（Antigravity Desktop）、`openai-dots`（Codex Desktop）、`deepseek-harness`（DeepSeek Harness Desktop）、`cindy`（Cindy Desktop）与 `zcode`（ZCode Desktop）五个桌面 Agent 之间支持双向互相派活。任何一端派出的任务都在目标桌面客户端左侧栏对应的项目（`~/Projects/<slug>`）下挂载并显示真实会话线程，后续追问留在同一会话内。
+3. **Reason Network 级别的对外开放开源引擎**：
+   - 外部开源或第三方 Agent 可通过标准 JSON-RPC 2.0 stdio MCP 服务（`fleet-cli mcp`）直接接入，查询在线团队与项目会话（`list_team`）、向任一宿主派活或续问（`send_message`）并回读关联收据（`message_status`）。
+   - 外部开发者可通过插件清单（`<state_root>/agents.d/<id>.json` 与 `fleet-cli agents register`）零改 Rust 核心接入新 Agent。
+   - 任何一台电脑安装本引擎后，均可通过 `fleet-cli setup`、`fleet-cli doctor`、`fleet-cli who`、`fleet-cli send` 与 `fleet-cli mcp` 搭建起五大桌面 Agent 及外部开源 Agent 之间的派活互通服务。
+
+总目标：ANet-based Rust fleet engine absorbing agenvo + Reason delivery；兼容 `https://anet.sonori.dev`。Slice A–P 已按各自验收边界完成：A–G 完成引擎骨架、会话目录、Hub 客户端与收据层级（已合入 `main` PR #115）；H–L 完成 REA 桌面档案与四桌面宿主受控建目录、侧栏挂载及 `/poteto-mode` 跨 Agent 投递适配器；M–P 完成真实桌面侧栏可见性验证（Antigravity Desktop Hub 直连与 DSH 双帧压缩头同步）；Q–T 补齐第 5 桌面宿主 `zcode`、开放外部 Agent 注册清单、`fleet-cli who/send/mcp/setup/doctor` 及 Reason Network 级开源文档与闭环验收。Codex (`openai-dots`) 通过 Magpie 本地网关默认使用 `zcode/GLM-5.3-Flash`（`model_reasoning_effort = "max"`）。
 
 ## 工作源与约束
 
@@ -50,6 +59,10 @@ Slice B 已将 Cargo 编译与 session directory 隔离行为测试接入同一�
 | N | 经 fleet-cli 向 DeepSeek Harness (DSH) 分派 glaux-book 会话并完成 Maitra 全文翻译 | 下方 Slice N 的 Done Predicate |
 | O | 在 DSH 会话下完成 Maitra 译文导入、源文对照审校、中文 EPUB 构建与 Agent Acceptance | 下方 Slice O 的 Done Predicate |
 | P | 经 DSH 完成 Maitra 中文 EPUB 挂回 Zotero PQ9G5JUI、字节回读核验与全链路收口 | 下方 Slice P 的 Done Predicate |
+| Q | 补齐第 5 桌面宿主 ZCode (`zcode`) 侧栏适配器与开放外部 Agent 注册清单 (`agents.d`) | 下方 Slice Q 的 Done Predicate |
+| R | 落地 Reason Network 级 CLI 与 MCP 开放入口 (`fleet-cli who/send/mcp/setup/doctor/agents`) | 下方 Slice R 的 Done Predicate |
+| S | 升级仓库对外开源文档与架构设计 (`README.md`、`DESIGN.md`、`docs/desktop-rea-dossier.md`) | 下方 Slice S 的 Done Predicate |
+| T | 五大桌面 Agent + 外部开源 Agent 互通闭环验证、合入 `main` 与零遗留收口 | 下方 Slice T 的 Done Predicate |
 
 ### [x] Slice A: 盘点与接力入口
 - **Playbook**: `Investigation`
@@ -146,6 +159,31 @@ Slice B 已将 Cargo 编译与 session directory 隔离行为测试接入同一�
 - **Outcome**: 在 DSH 会话中将验收通过的中文 EPUB 作为 imported attachment 挂回 Zotero 父条目 `PQ9G5JUI`（严禁使用废条 `XW32DCWX`，严禁推送 Kobo/Boox），回读新附件 key 并比对落盘文件与产出 EPUB 的 SHA-256 字节一致，更新 `~/Projects/_status/maitra-zh-epub-20261104/receipt.md` 为 `DONE`。
 - **Done Predicate**: `zotero-cli` 回读 `PQ9G5JUI` 下新增中文 EPUB 附件 key 且 SHA-256 与构建产物一致；`~/Projects/_status/maitra-zh-epub-20261104/receipt.md` 与 `scripts/check` 全部通过。
 - **Evidence**: ~/Projects/_status/maitra-zh-epub-20261104/receipt.md;~/Projects/_status/maitra-zh-epub-20261104/evidence/agy-desktop-sidebar-glaux-book.png;~/Projects/_status/maitra-zh-epub-20261104/evidence/dsh-desktop-sidebar-glaux-book.png;.scratch/pstack-relay/checks/20261105T063504.739850Z/receipt.json
+
+### [x] Slice Q: 补齐第 5 桌面宿主 ZCode (`zcode`) 侧栏适配器与开放外部 Agent 注册清单 (`agents.d`)
+- **Playbook**: `Feature`
+- **Outcome**: 在 `fleet-proto` 将 `DesktopHostKind` 扩充为五大桌面宿主（`openai-dots`、`cindy`、`deepseek-harness`、`antigravity-desktop`、`zcode`），并新增 `ExternalAgentManifest` 开放插件契约；在 `fleet-daemon` 实现 `ZcodeAdapter`（对接 `~/.zcode/v2/tasks-index.sqlite` 的 `projects`/`project_roots`/`tasks` 表、`~/.zcode/cli/db/db.sqlite` 的 `session`/`message` 表及 `zcode --cwd <dir> --surface desktop --json`）与 `ExternalAgentRegistry`（支持 `<state_root>/agents.d/<id>.json` 注册与自定义命令派活）。
+- **Done Predicate**: `cargo test -p fleet-proto` 与 `cargo test -p fleet-daemon` 通过；测试覆盖五大桌面宿主的项目建目录、侧栏挂载、会话新建与同线程续问，以及外部开源 Agent 清单注册与派活。
+- **Evidence**: crates/fleet-proto/src/host.rs;crates/fleet-daemon/src/tri_hosts.rs;crates/fleet-daemon/src/host_adapter.rs;crates/fleet-daemon/tests/tri_hosts.rs;.scratch/pstack-relay/checks/20261105T075237.391994Z/receipt.json
+
+### [x] Slice R: 落地 Reason Network 级 CLI 与 MCP 开放入口 (`fleet-cli who/send/mcp/setup/doctor/agents`)
+- **Playbook**: `Feature`
+- **Outcome**: 在 `fleet-cli` 保持 `sessions`、`hosts`、`relay` 完全向后兼容的前提下，新增 `who`（枚举五大桌面宿主、会话目录与外部 Agent 状态）、`send`（支持 `--to <host>[/<slug>]` 一键建目录、挂载左侧栏项目并创建或续接会话）、`mcp`（标准 JSON-RPC 2.0 stdio MCP 服务，暴露 `list_team`、`send_message`、`message_status`、`register_agent`）、`setup`、`doctor` 与 `agents` 子命令。
+- **Done Predicate**: `cargo test -p fleet-cli` 通过；集成测试验证五大桌面宿主的 `/poteto-mode` 接力、`fleet-cli who/send/setup/doctor/agents` 及 `fleet-cli mcp` JSON-RPC 2.0 协议交互。
+- **Evidence**: crates/fleet-cli/src/main.rs;crates/fleet-cli/tests/poteto_relay_four_hosts.rs;.scratch/pstack-relay/checks/20261105T075237.391994Z/receipt.json
+
+### [x] Slice S: 升级仓库对外开源文档与架构设计 (`README.md`、`DESIGN.md`、`docs/desktop-rea-dossier.md`)
+- **Playbook**: `Feature`
+- **Outcome**: 编写对外开放的 `README.md` 与 `DESIGN.md`，阐明 `sleep2agi/agent-network` 与 `reason-machines/reason-network` 双源合一架构、五大桌面宿主侧栏会话挂载契约、标准 MCP 接入与第三方开源 Agent 插件规范，同时保留 `caller-routing.md` 与历史兼容段落以通过全部 Node 路由与文档契约测试。
+- **Done Predicate**: `npm test`、`node scripts/lint-routes.mjs`、`node scripts/guard.mjs private` 与 `node scripts/guard.mjs landscape` 全部通过。
+- **Evidence**: README.md;DESIGN.md;docs/rust-engine.md;docs/desktop-rea-dossier.md;.scratch/pstack-relay/checks/20261105T075237.391994Z/receipt.json
+
+### [x] Slice T: 五大桌面 Agent + 外部开源 Agent 互通闭环验证、合入 `main` 与零遗留收口
+- **Playbook**: `Shipping`
+- **Outcome**: 运行完整 `scripts/check` 与 `python3 scripts/pstack-relay selftest` 验证五大桌面宿主与外部 Agent 派活闭环，将验证通过的提交合入 `main`，清理临时 worktree 与分支，确保零 worktree 遗留。
+- **Done Predicate**: `scripts/check` 退出 0，`git worktree list` 无遗留临时 worktree，`.scratch/pstack-relay/decisions.tsv` 与 `docs/pstack-relay.md` 证据闭环。
+- **Evidence**: docs/pstack-relay.md;.scratch/pstack-relay/checks/20261105T075237.391994Z/receipt.json
+
 
 
 

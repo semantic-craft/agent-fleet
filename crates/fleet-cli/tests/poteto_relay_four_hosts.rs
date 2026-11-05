@@ -1209,3 +1209,275 @@ fn poteto_relay_four_hosts_rejects_model_wrong_self_attestation_and_path_travers
     assert!(bad_slug.stdout.is_empty());
     assert!(String::from_utf8_lossy(&bad_slug.stderr).contains("traversal"));
 }
+
+#[test]
+fn five_hosts_and_open_engine_cli_mcp_interoperability() {
+    use std::process::Stdio;
+
+    let f = FourHostClusterFixture::new();
+    let zcode_root = f.root.join(".zcode");
+    fs::create_dir_all(&zcode_root).unwrap();
+    let zcode_bin = f.root.join("mock_zcode_cli.py");
+    let zcode_script = r#"#!/usr/bin/env python3
+import json, sys
+
+args = sys.argv[1:]
+resume_id = None
+for i, a in enumerate(args):
+    if a == "--resume" and i + 1 < len(args):
+        resume_id = args[i + 1]
+
+if resume_id:
+    print(json.dumps({"session_id": resume_id, "turn_id": "msg_zcode_followup_2", "status": "completed"}))
+else:
+    print(json.dumps({"session_id": "sess_zcode_relay_1", "turn_id": "msg_zcode_initial_1", "status": "completed"}))
+"#;
+    fs::write(&zcode_bin, zcode_script).unwrap();
+    let mut perms = fs::metadata(&zcode_bin).unwrap().permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&zcode_bin, perms).unwrap();
+
+    // 1. Verify 5th host (`zcode`) full /poteto-mode self-dev relay with SQLite verification
+    let zcode_receipt_file = f.receipts_dir.join("zcode-receipt.json");
+    let relay_out = f.run_cli(&[
+        "relay",
+        "self-dev",
+        "--host",
+        "zcode",
+        "--projects-root",
+        &f.projects_root.display().to_string(),
+        "--state-root",
+        &f.state_root.display().to_string(),
+        "--slug",
+        "self-dev-zcode",
+        "--title",
+        "ZCode Self Dev Workspace",
+        "--slice",
+        "Q",
+        "--goal",
+        "Verify ZCode sidebar project and session creation via fleet-cli relay self-dev.",
+        "--done-means",
+        "ZCode tasks-index.sqlite and cli/db/db.sqlite both contain the bound project and session.",
+        "--receipt-out",
+        &zcode_receipt_file.display().to_string(),
+        "--zcode-root",
+        &zcode_root.display().to_string(),
+        "--zcode-bin",
+        &zcode_bin.display().to_string(),
+    ]);
+    assert!(
+        relay_out.status.success(),
+        "zcode relay failed: {}",
+        String::from_utf8_lossy(&relay_out.stderr)
+    );
+    let zcode_receipt: HostRelayClosureReceipt =
+        serde_json::from_slice(&relay_out.stdout).unwrap();
+    assert_eq!(zcode_receipt.host, DesktopHostKind::Zcode);
+    assert_eq!(
+        zcode_receipt.initial_session.tier,
+        DeliveryTier::ThreadVisible
+    );
+    assert_eq!(
+        zcode_receipt.initial_session.session_id,
+        zcode_receipt.followup_turn.session_id
+    );
+    match &zcode_receipt.store_evidence {
+        HostStoreVerificationEvidence::Zcode {
+            project_row,
+            session_snapshot,
+            turn_ids,
+        } => {
+            assert_eq!(
+                project_row.project_id,
+                zcode_receipt.sidebar_project.project_id
+            );
+            assert_eq!(
+                project_row.root_path,
+                f.projects_root.join("self-dev-zcode")
+            );
+            assert_eq!(session_snapshot.session_id, "sess_zcode_relay_1");
+            assert_eq!(session_snapshot.message_count, 2);
+            assert_eq!(turn_ids.len(), 2);
+        }
+        other => panic!("expected Zcode store evidence, got {other:?}"),
+    }
+
+    // 2. Verify `fleet-cli send` across all 5 canonical desktop hosts
+    for host in DesktopHostKind::ALL {
+        let target = format!("{}/mutual-mesh", host.as_str());
+        let send_out = f.run_cli(&[
+            "send",
+            "--to",
+            &target,
+            "--projects-root",
+            &f.projects_root.display().to_string(),
+            "--state-root",
+            &f.state_root.display().to_string(),
+            "--title",
+            "Five-Host Mutual Mesh",
+            "--prompt",
+            "Dispatch task across five desktop hosts and verify sidebar session.",
+        ]);
+        assert!(
+            send_out.status.success(),
+            "send failed for {}: {}",
+            host,
+            String::from_utf8_lossy(&send_out.stderr)
+        );
+        let receipt: HostSessionReceipt = serde_json::from_slice(&send_out.stdout).unwrap();
+        assert_eq!(receipt.host, host);
+        assert_eq!(receipt.project_dir, f.projects_root.join("mutual-mesh"));
+
+        // Follow up on the same session
+        let followup_out = f.run_cli(&[
+            "send",
+            "--to",
+            &target,
+            "--projects-root",
+            &f.projects_root.display().to_string(),
+            "--state-root",
+            &f.state_root.display().to_string(),
+            "--session-id",
+            &receipt.session_id,
+            "--prompt",
+            "Continue the same sidebar session on this host.",
+        ]);
+        assert!(followup_out.status.success());
+        let cont: HostSessionReceipt = serde_json::from_slice(&followup_out.stdout).unwrap();
+        assert_eq!(cont.session_id, receipt.session_id);
+        assert_ne!(cont.turn_id, receipt.turn_id);
+    }
+
+    // 3. Register an external open-source agent via `fleet-cli agents register` and dispatch via `fleet-cli send`
+    let reg_out = f.run_cli(&[
+        "agents",
+        "register",
+        "--state-root",
+        &f.state_root.display().to_string(),
+        "--id",
+        "open-coder",
+        "--name",
+        "OpenCoder CLI",
+        "--command",
+        "/bin/echo",
+        "--args",
+        "dispatched-to,{cwd},{prompt}",
+        "--description",
+        "Community open-source agent plugin",
+    ]);
+    assert!(reg_out.status.success());
+
+    let ext_send = f.run_cli(&[
+        "send",
+        "--to",
+        "open-coder/oss-plugin-proj",
+        "--projects-root",
+        &f.projects_root.display().to_string(),
+        "--state-root",
+        &f.state_root.display().to_string(),
+        "--prompt",
+        "Hello external open-source agent.",
+        "--execute-external",
+        "true",
+    ]);
+    assert!(ext_send.status.success());
+    let ext_val: Value = serde_json::from_slice(&ext_send.stdout).unwrap();
+    assert_eq!(ext_val["agent_id"], "open-coder");
+    assert_eq!(ext_val["tier"], "completed");
+
+    // 4. Verify `fleet-cli who`, `fleet-cli setup`, and `fleet-cli doctor`
+    let who_out = f.run_cli(&[
+        "who",
+        "--state-root",
+        &f.state_root.display().to_string(),
+    ]);
+    assert!(who_out.status.success());
+    let who_val: Value = serde_json::from_slice(&who_out.stdout).unwrap();
+    assert_eq!(
+        who_val["canonical_desktop_hosts"].as_array().unwrap().len(),
+        5
+    );
+    assert_eq!(who_val["external_agents"].as_array().unwrap().len(), 1);
+
+    let doctor_out = f.run_cli(&[
+        "doctor",
+        "--projects-root",
+        &f.projects_root.display().to_string(),
+        "--state-root",
+        &f.state_root.display().to_string(),
+    ]);
+    assert!(doctor_out.status.success());
+    let doctor_val: Value = serde_json::from_slice(&doctor_out.stdout).unwrap();
+    assert_eq!(doctor_val["status"], "ok");
+    assert_eq!(doctor_val["canonical_hosts"].as_array().unwrap().len(), 5);
+
+    // 5. Verify `fleet-cli mcp` JSON-RPC 2.0 stdio server (`initialize`, `tools/list`, `tools/call`)
+    let mut mcp_child = Command::new(env!("CARGO_BIN_EXE_fleet-cli"))
+        .args([
+            "mcp",
+            "--projects-root",
+            &f.projects_root.display().to_string(),
+            "--state-root",
+            &f.state_root.display().to_string(),
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .env_clear()
+        .spawn()
+        .unwrap();
+
+    let requests = [
+        json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}),
+        json!({"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}}),
+        json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {
+                "name": "send_message",
+                "arguments": {
+                    "to": "zcode/mcp-dispatched-proj",
+                    "title": "MCP Dispatched ZCode Project",
+                    "prompt": "Created via MCP send_message tool."
+                }
+            }
+        }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "tools/call",
+            "params": {
+                "name": "list_team",
+                "arguments": {}
+            }
+        }),
+    ];
+    {
+        let stdin = mcp_child.stdin.as_mut().unwrap();
+        for req in &requests {
+            writeln!(stdin, "{req}").unwrap();
+        }
+    }
+    let mcp_output = mcp_child.wait_with_output().unwrap();
+    assert!(mcp_output.status.success());
+    let lines: Vec<Value> = String::from_utf8_lossy(&mcp_output.stdout)
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(lines.len(), 4);
+    assert_eq!(lines[0]["id"], 1);
+    assert_eq!(lines[0]["result"]["serverInfo"]["name"], "agent-fleet-mcp");
+    assert_eq!(lines[1]["id"], 2);
+    assert_eq!(lines[1]["result"]["tools"].as_array().unwrap().len(), 4);
+    assert_eq!(lines[2]["id"], 3);
+    assert_eq!(lines[2]["result"]["isError"], false);
+    assert_eq!(
+        lines[2]["result"]["structuredContent"]["host"],
+        "zcode"
+    );
+    assert_eq!(lines[3]["id"], 4);
+    assert_eq!(lines[3]["result"]["isError"], false);
+}

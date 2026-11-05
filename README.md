@@ -1,8 +1,75 @@
 # agent-fleet
 
-**agent-fleet 是多 agent 协作的接线正本**：协议说明、派活契约、薄技能、教训和自制插件（[plugins/](plugins/README.md)）在这里。本仓库不实现 Agent Network，也不实现 Reason 或 codex-host。上游源码留在上游；这里只接线、插件和契约。
+**agent-fleet 是融合 [sleep2agi/agent-network](https://github.com/sleep2agi/agent-network) 与 [reason-machines/reason-network](https://github.com/reason-machines/reason-network) 优势的开源多 Agent 协同与桌面侧栏派活引擎**。
+
+它同时提供两层核心能力：
+1. **五大桌面 Agent 左侧栏项目会话互派**：支持 **Antigravity Desktop** (`antigravity-desktop`)、**Codex Desktop** (`openai-dots` / `codex`)、**DeepSeek Harness Desktop** (`deepseek-harness` / `dsh`)、**Cindy Desktop** (`cindy`) 与 **ZCode Desktop** (`zcode`) 五个桌面端之间互相派活。任何一端发出的任务都会在目标桌面端左侧栏对应的项目（`~/Projects/<slug>`）下自动挂载并显示真实会话线程，后续追问留在同一会话内。
+2. **Reason Network 级开放接入与第三方开源 Agent 扩展**：任何电脑运行本引擎后，外部开源 Agent 均可通过标准 JSON-RPC 2.0 stdio MCP 服务（`fleet-cli mcp`）访问团队目录与互相派活，或通过 `<state_root>/agents.d/<id>.json` 插件清单（`fleet-cli agents register`）零改 Rust 核心接入新 Agent。架构与存储契约详见 [DESIGN.md](DESIGN.md) 与 [docs/rust-engine.md](docs/rust-engine.md)。
 
 体系落在专属的 `~/Projects`（少仓；主 A 可换 Grok、Dots 或 Cindy）。四层、外循环 orchestrator、内循环编排和 worker 互派见 [docs/architecture.md](docs/architecture.md)。PODAS 只是伞名，没有目录。
+
+## 五大桌面 Agent 互通矩阵
+
+| 桌面宿主 (`DesktopHostKind`) | 简写别名 | 左侧栏项目与会话落盘契约 | CLI / MCP 目标示例 |
+| --- | --- | --- | --- |
+| `antigravity-desktop` | `agy`, `antigravity` | `hub_<port>.json` (`CreateProject` + `StartCascade`) + `conversation_summaries.db` | `antigravity-desktop/my-project` |
+| `openai-dots` | `codex`, `codex-desktop` | `state_5.sqlite` (`projects` + `project_roots` + `threads`) + `.codex-global-state.json` | `openai-dots/my-project` |
+| `deepseek-harness` | `dsh` | `~/.dsh/storages/workspace.json` + `session_projcache` + 双帧 `session.v4.jsonl.zstd` | `deepseek-harness/my-project` |
+| `cindy` | `cindy-desktop` | Cindy Gateway (`sessions.patch` + `sessions.create` + `cindy_session_send`) + JSONL | `cindy/my-project` |
+| `zcode` | `zcode-desktop` | `~/.zcode/v2/tasks-index.sqlite` (`projects` + `project_roots` + `tasks`) + `cli/db/db.sqlite` | `zcode/my-project` |
+
+## 快速上手（任何电脑一键搭建互通服务）
+
+```sh
+# 1. 编译开源 Rust 引擎（包含 fleet-proto、fleet-hub、fleet-daemon、fleet-cli）
+cargo build --workspace
+
+# 2. 初始化工作区并生成标准 MCP 配置与健康检查报告
+cargo run -p fleet-cli -- setup --projects-root "$HOME/Projects" --state-root "$HOME/.local/state/agent-fleet"
+cargo run -p fleet-cli -- doctor --projects-root "$HOME/Projects" --state-root "$HOME/.local/state/agent-fleet"
+
+# 3. 查看当前五大桌面宿主、左侧栏项目会话与已注册外部开源 Agent
+cargo run -p fleet-cli -- who --state-root "$HOME/.local/state/agent-fleet"
+
+# 4. 向任意桌面 Agent 派活（自动创建 ~/Projects/<slug> 并挂载到目标桌面左侧栏项目下）
+cargo run -p fleet-cli -- send \
+  --to zcode/demo-service \
+  --projects-root "$HOME/Projects" \
+  --state-root "$HOME/.local/state/agent-fleet" \
+  --title "Demo Service Architecture" \
+  --prompt "Inspect the repository and run ./scripts/check."
+
+# 5. 注册第三方开源 Agent（零改 Rust 核心即可加入派活网络）
+cargo run -p fleet-cli -- agents register \
+  --state-root "$HOME/.local/state/agent-fleet" \
+  --id open-coder \
+  --name "OpenCoder CLI" \
+  --command /usr/local/bin/open-coder \
+  --args "--cwd,{cwd},-p,{prompt}"
+```
+
+### 将任意开源 Agent 接入 MCP (`fleet-cli mcp`)
+
+在 Claude Code、Cursor、OpenCode、ZCode、Codex 或 Antigravity 的 MCP 配置中加入：
+
+```json
+{
+  "mcpServers": {
+    "agent-fleet": {
+      "command": "fleet-cli",
+      "args": [
+        "mcp",
+        "--projects-root",
+        "/path/to/Projects",
+        "--state-root",
+        "/path/to/state"
+      ]
+    }
+  }
+}
+```
+
+接入后即可直接调用 `list_team`、`send_message`、`message_status` 与 `register_agent` 四个标准 MCP 工具，实现跨桌面 Agent 的双向派活与同线程追问。
 
 ## 当前派活（本机）
 
@@ -29,8 +96,8 @@ Desktop 进窗（窗口里看得见、结果回得来、cwd 等于 `~/Projects` 
 | 层 | 来源 | 本仓库做什么 |
 | --- | --- | --- |
 | A 规矩 | outer-loop-kit | 不复制分流长文和版本钉。体验与四层见 [docs/architecture.md](docs/architecture.md) |
-| B 舰队 | 官方 anet 0.3.9（上游） | 不实现协议。[docs/anet.md](docs/anet.md)：身份、inbound、delegate、env 教训 |
-| C 投递 | Reason（上游；签到另线） | 不实现、不宣称已通。边界 [docs/reason.md](docs/reason.md) |
+| B 舰队 | 官方 anet 0.3.9（上游）+ `crates/fleet-hub` | [docs/anet.md](docs/anet.md) 与 [docs/rust-engine.md](docs/rust-engine.md)：身份、单通道收据与 Wire v3 关联 |
+| C 投递 | Reason（上游）+ `crates/fleet-daemon` | 五大桌面宿主侧栏挂载与会话投递适配器。设计见 [DESIGN.md](DESIGN.md) 与 [docs/reason.md](docs/reason.md) |
 | D 壳 | codex-host（上游） | 不实现、不 fork、不抢壳 |
 | 自制派活插件 | 本仓库 [plugins/](plugins/README.md) | 一宿主一目录；Cindy 见 [agent-network-cindy](plugins/agent-network-cindy/README.md) |
 | 跨仓库约定与教训 | 本仓库 | 根 [AGENTS.md](AGENTS.md)（其他仓库的同步源）、[lessons.md](lessons.md) |
@@ -40,6 +107,7 @@ Desktop 进窗（窗口里看得见、结果回得来、cwd 等于 `~/Projects` 
 
 ## 从哪里开始
 
+- 引擎架构设计与五大桌面宿主存储契约：[DESIGN.md](DESIGN.md)、[docs/rust-engine.md](docs/rust-engine.md)、[docs/desktop-rea-dossier.md](docs/desktop-rea-dossier.md)。
 - 本机舰队与协议：[docs/anet.md](docs/anet.md)、官方 <https://docs.agentnetwork.org.cn>。
 - Desktop 进窗边界（未签到，不宣称已通）：[docs/reason.md](docs/reason.md)。
 - 判断 `~/Projects` 目录能不能动：[docs/landscape.md](docs/landscape.md)。
@@ -48,11 +116,13 @@ Desktop 进窗（窗口里看得见、结果回得来、cwd 等于 `~/Projects` 
 
 ## 检查
 
+- [scripts/check](scripts/check)：统一运行 Cargo 全量编译测试、五大桌面宿主与 MCP 集成测试、pstack-relay 自检、Node 契约测试与隐私/路由门禁。
 - [scripts/gate.sh](scripts/gate.sh)：只读 PR 合并门禁，`gate.sh <owner/repo> <pr> <sha>`；离线正文检查用 `gate.sh --check-body <文件>`。
 
 ```sh
 npm install
 git config core.hooksPath .githooks       # 一次性：提交前自动跑 guard
+./scripts/check                           # Rust 引擎 + Node 契约 + 隐私与路由全量门禁
 npm test                                  # 配置解析、context 渲染与私有值检查
 node scripts/fleet.mjs doctor             # 本机 overlay 里列出的 launchd 服务是否已加载
 ```
