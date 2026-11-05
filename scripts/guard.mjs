@@ -7,8 +7,10 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { configPath } from "./lib.mjs";
 import { overlayContains } from "./public-identifiers.mjs";
+
+const configPath = (env = process.env, home = homedir()) =>
+  env.AGENT_FLEET_CONFIG || join(home, ".config/agent-fleet/fleet.json");
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 let failed = 0;

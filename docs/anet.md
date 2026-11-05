@@ -31,7 +31,7 @@ Desktop 进窗、把 cwd 钉在 `~/Projects` 的项目上，不是这条传输�
 | agent-fleet | 可复用宿主适配、派发契约、诊断、测试与运维说明 | 私钥、token、任务数据库和恢复资料不进 Git |
 | 消费者 | 业务分工、宿主安装入口 | 引用本仓正本，业务逻辑留在业务库 |
 
-依据：[官方概览](https://docs.agentnetwork.org.cn/docs/zh-cn/latest/intro/overview.html)、[协议](https://docs.agentnetwork.org.cn/docs/zh-cn/latest/reference/protocol.html)。跨仓契约见 [dispatch-contract.md](dispatch-contract.md)，技能正本见 [delegate-via-anet](../skills/delegate-via-anet/SKILL.md)，盘点与迁移证据见 [anet-alignment.md](anet-alignment.md)。
+依据：[官方概览](https://docs.agentnetwork.org.cn/docs/zh-cn/latest/intro/overview.html)、[协议](https://docs.agentnetwork.org.cn/docs/zh-cn/latest/reference/protocol.html)。跨仓契约见 [dispatch-contract.md](dispatch-contract.md)，技能正本见 [delegate-via-anet](../skills/delegate-via-anet/SKILL.md)。
 
 ## 版本、身份与宿主接入
 

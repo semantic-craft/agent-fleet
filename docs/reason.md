@@ -31,5 +31,5 @@ codex-host 是壳。Reason 只负责把活送进窗口。本仓两边都不实�
 ## 不做
 
 - 不新建仓，不用 PODAS 当第三 Git 正本（PODAS 只是伞名，`~/Projects` 里没有这个目录）。
-- 不把 agenvo、CommHub、门铃桥教回现行步骤。档案在 [legacy/](legacy/README.md)。
+- 不把 agenvo、CommHub、门铃桥教回现行步骤。
 - 不代签、不代跑 setup、不改本机 Reason 配置。

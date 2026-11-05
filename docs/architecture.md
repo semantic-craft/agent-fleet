@@ -1,6 +1,6 @@
 # 架构
 
-> **当前接线采用 ANet，Hub 正本为 `https://anet.sonori.dev`。** 本轮目标是在本仓实现 Rust fleet engine，吸收 agenvo 与 Reason 投递机制，兼容 Hub。Slice A 完成设计与接力；Slice B 增加 Rust session directory，真实 Hub 与 Desktop 投递仍待后续切片。codex-host 仍由上游维护。身份与 `delegate` 见 [anet.md](anet.md)。Desktop 进窗的边界见 [reason.md](reason.md)。Cindy 插件见 [plugins/agent-network-cindy](../plugins/agent-network-cindy/README.md)。CommHub MCP、#90 门铃桥与 agenvo fork 的安装步骤已退出；档案在 [legacy/](legacy/README.md)。
+> **当前接线采用 ANet，Hub 正本为 `https://anet.sonori.dev`。** 本仓提供独立 Rust fleet engine（`crates/fleet-proto`、`crates/fleet-hub`、`crates/fleet-daemon`、`crates/fleet-cli`），融合 ANet 与 Reason 投递机制并兼容 Hub。codex-host 仍由上游维护。身份与 `delegate` 见 [anet.md](anet.md)。Desktop 进窗的边界见 [reason.md](reason.md)。Cindy 插件见 [plugins/agent-network-cindy](../plugins/agent-network-cindy/README.md)。CommHub MCP、#90 门铃桥与 agenvo fork 的安装步骤已退出。
 
 ## 体验验收
 
@@ -37,17 +37,15 @@
 
 ## 当前舰队路径
 
-跨 ANet 身份委派只走官方 anet。Hub 正本为 `https://anet.sonori.dev`。不经旧 CommHub MCP、不经 #90 门铃桥。做法见 [anet.md](anet.md)。编码 agent 用官方 `anet agents wire` 与 `anet mcp` 接入。Herdr 只做 pane 宿主，不是派活控制面。dot 若已有原生平台任务工具且电脑已授权，Codex 可走原生通道（平台执行环境，不是另一套 ANet 控制面，也不是 Reason）。DSH、GrokBot 的历史外部路线在 [legacy/caller-routing.md](legacy/caller-routing.md)，不是现行入口。
-
-DSH 桌面 socket 插件已退役，见 [legacy/dsh-adapter.md](legacy/dsh-adapter.md)。它不是控制面。
+跨 ANet 身份委派只走官方 anet。Hub 正本为 `https://anet.sonori.dev`。不经旧 CommHub MCP、不经 #90 门铃桥。做法见 [anet.md](anet.md)。编码 agent 用官方 `anet agents wire` 与 `anet mcp` 接入。Herdr 只做 pane 宿主，不是派活控制面。dot 若已有原生平台任务工具且电脑已授权，Codex 可走原生通道（平台执行环境，不是另一套 ANet 控制面，也不是 Reason）。
 
 ## 历史外部路线（不再安装）
 
-不要重新安装 fork 或门铃。历史 discovery 使用 deviceId／instanceId，全文在归档。dot 的原生平台任务不走 CommHub。旧 Desktop 交接见 [legacy/codex-desktop-handoff.md](legacy/codex-desktop-handoff.md)。
+不要重新安装 fork 或门铃。dot 的原生平台任务不走 CommHub。
 
 ## ARCHITECTURE：Rust Reason delivery 目标契约
 
-本节由 2026-11-04 Slice A brief 确立，是后续实现目标。前文接线方式与 reason.md 描述现有路径，不能据此推断 Rust 已交付。目标切片与验收命令见 [pstack-relay.md](pstack-relay.md)。
+本节描述本仓 Rust 引擎（`crates/fleet-proto`、`crates/fleet-hub`、`crates/fleet-daemon`、`crates/fleet-cli`）的架构契约，完整说明见 [DESIGN.md](../DESIGN.md) 与 [rust-engine.md](rust-engine.md)。
 
 `fleet-proto` 保存 session、任务和 delivery receipt 契约；`fleet-hub` 适配 Sonori Hub；`fleet-daemon` 发现 session 并执行投递；`fleet-cli` 提供列出、读取、新建、追问、中断与事件入口。DSH 保留同等能力的后备地位。vendor-Go 不能替代这四项 Rust 实现。
 

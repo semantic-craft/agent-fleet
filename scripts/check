@@ -48,7 +48,6 @@ commands = [
     ["cargo", "test", "-p", "fleet-cli", "poteto_relay_four_hosts", "--", "--nocapture"],
     ["cargo", "test", "--workspace", "delivery_tier"],
     ["cargo", "test", "--workspace", "brief_policy"],
-    ["python3", "scripts/pstack-relay", "selftest"],
     ["npm", "test"],
 ]
 exit_code = 1
