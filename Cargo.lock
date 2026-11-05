@@ -164,6 +164,7 @@ dependencies = [
  "fleet-daemon",
  "fleet-proto",
  "serde_json",
+ "tungstenite",
 ]
 
 [[package]]

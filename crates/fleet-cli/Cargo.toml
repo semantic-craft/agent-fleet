@@ -8,3 +8,6 @@ publish.workspace = true
 fleet-proto.workspace = true
 fleet-daemon.workspace = true
 serde_json.workspace = true
+
+[dev-dependencies]
+tungstenite = { version = "0.28", default-features = false, features = ["handshake"] }

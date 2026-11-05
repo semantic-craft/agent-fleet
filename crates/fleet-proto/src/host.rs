@@ -227,11 +227,19 @@ pub struct HostSessionReceipt {
     pub host: DesktopHostKind,
     pub delivery_id: String,
     pub project_id: String,
+    #[serde(alias = "conversation_id")]
     pub session_id: String,
     pub turn_id: String,
     pub project_dir: PathBuf,
     pub workspace_uris: Vec<String>,
     pub tier: DeliveryTier,
+}
+
+impl HostSessionReceipt {
+    /// Antigravity Desktop and unified callers refer to `session_id` as `conversation_id`.
+    pub fn conversation_id(&self) -> &str {
+        &self.session_id
+    }
 }
 
 #[cfg(test)]

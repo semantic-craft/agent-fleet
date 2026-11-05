@@ -2,11 +2,29 @@ mod execution;
 pub use execution::{ExecutionError, NodeDaemon, SelectedSession};
 mod desktop;
 pub use desktop::{DesktopDelivery, DesktopError, DesktopReceipt};
+mod antigravity;
+pub use antigravity::{
+    discover_antigravity_hubs, read_conversation_summary, verify_summary_binding,
+    AntigravityConversationSummary, AntigravityHubInfo, AntigravityReceipt,
+    AntigravityRuntimeConfig,
+};
+mod tri_hosts;
+pub use tri_hosts::{
+    read_cindy_transcript, read_codex_project, read_codex_thread, verify_codex_project_binding,
+    verify_codex_thread_binding, CindyRuntimeConfig, CindySessionReceipt, CindySessionSnapshot,
+    CodexProjectRow, CodexThreadRow, DshRuntimeConfig, DshSessionReceipt, DshSessionSnapshot,
+    OpenAiDotsReceipt, OpenAiDotsRuntimeConfig,
+};
 mod host_adapter;
 pub use host_adapter::{
     build_host_adapter, AntigravityDesktopAdapter, CindyAdapter, DeepSeekHarnessAdapter,
     DesktopHostAdapter, HostAdapterError, OpenAiDotsAdapter, PersistedSessionRecord,
     PersistedTurnRecord,
+};
+mod relay_self_dev;
+pub use relay_self_dev::{
+    run_host_poteto_relay, HostRelayClosureReceipt, HostRuntimeOptions,
+    HostStoreVerificationEvidence, PotetoRelayTask,
 };
 
 use fleet_proto::{SessionId, SessionRecord, SessionSelector, SessionState};

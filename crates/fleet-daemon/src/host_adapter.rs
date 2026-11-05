@@ -36,6 +36,10 @@ pub enum HostAdapterError {
     DuplicateDelivery(String),
     InvalidModel(String),
     ForbiddenProjectId(String),
+    AntigravityProtocol(String),
+    OpenAiDotsProtocol(String),
+    DshProtocol(String),
+    CindyProtocol(String),
 }
 
 impl fmt::Display for HostAdapterError {
@@ -75,6 +79,18 @@ impl fmt::Display for HostAdapterError {
                 f,
                 "unscoped CLI/default bucket project_id rejected for sidebar visibility: {id}"
             ),
+            Self::AntigravityProtocol(reason) => {
+                write!(f, "antigravity desktop adapter error: {reason}")
+            }
+            Self::OpenAiDotsProtocol(reason) => {
+                write!(f, "openai-dots desktop adapter error: {reason}")
+            }
+            Self::DshProtocol(reason) => {
+                write!(f, "deepseek-harness desktop adapter error: {reason}")
+            }
+            Self::CindyProtocol(reason) => {
+                write!(f, "cindy desktop adapter error: {reason}")
+            }
         }
     }
 }
@@ -270,10 +286,11 @@ impl HostLifecycleCore {
         })
     }
 
-    fn ensure_sidebar_project(
+    fn ensure_sidebar_project_with_override(
         &mut self,
         slug: &str,
         title: Option<&str>,
+        project_id_override: Option<String>,
     ) -> Result<SidebarProjectBinding, HostAdapterError> {
         let dir = self.ensure_project_dir(slug)?;
         let resolved_title = match title {
@@ -283,12 +300,16 @@ impl HostLifecycleCore {
             }
             None => slug.to_string(),
         };
-        let project_id = self
-            .state
-            .slug_to_project_id
-            .get(slug)
-            .cloned()
-            .unwrap_or_else(|| format!("proj-{}-{slug}", self.host.as_str()));
+        let project_id = match project_id_override {
+            Some(id) => id,
+            None => self
+                .state
+                .slug_to_project_id
+                .get(slug)
+                .cloned()
+                .unwrap_or_else(|| format!("proj-{}-{slug}", self.host.as_str())),
+        };
+        validate_nonempty_id("project_id", &project_id)?;
         validate_sidebar_project_id(&project_id)?;
         let binding = SidebarProjectBinding {
             host: self.host,
@@ -305,10 +326,18 @@ impl HostLifecycleCore {
         Ok(binding)
     }
 
-    fn create_session(
+    fn ensure_sidebar_project(
         &mut self,
+        slug: &str,
+        title: Option<&str>,
+    ) -> Result<SidebarProjectBinding, HostAdapterError> {
+        self.ensure_sidebar_project_with_override(slug, title, None)
+    }
+
+    fn validate_create_session(
+        &self,
         request: &CreateSessionRequest,
-    ) -> Result<HostSessionReceipt, HostAdapterError> {
+    ) -> Result<SidebarProjectBinding, HostAdapterError> {
         validate_nonempty_id("delivery_id", &request.delivery_id)?;
         validate_nonempty_id("project_id", &request.project_id)?;
         validate_sidebar_project_id(&request.project_id)?;
@@ -335,6 +364,22 @@ impl HostLifecycleCore {
                 supplied: canonical_dir,
             });
         }
+        if self.state.claimed_deliveries.contains(&request.delivery_id) {
+            return Err(HostAdapterError::DuplicateDelivery(
+                request.delivery_id.clone(),
+            ));
+        }
+        Ok(project)
+    }
+
+    fn commit_created_session(
+        &mut self,
+        request: &CreateSessionRequest,
+        project: SidebarProjectBinding,
+        session_id_override: Option<String>,
+        turn_id_override: Option<String>,
+        workspace_uris_override: Option<Vec<String>>,
+    ) -> Result<HostSessionReceipt, HostAdapterError> {
         if !self
             .state
             .claimed_deliveries
@@ -346,12 +391,16 @@ impl HostLifecycleCore {
         }
         self.state.next_session_seq += 1;
         self.state.next_turn_seq += 1;
-        let session_id = format!(
-            "{}-session-{}",
-            self.host.as_str(),
-            self.state.next_session_seq
-        );
-        let turn_id = format!("{}-turn-{}", self.host.as_str(), self.state.next_turn_seq);
+        let session_id = session_id_override.unwrap_or_else(|| {
+            format!(
+                "{}-session-{}",
+                self.host.as_str(),
+                self.state.next_session_seq
+            )
+        });
+        let turn_id = turn_id_override
+            .unwrap_or_else(|| format!("{}-turn-{}", self.host.as_str(), self.state.next_turn_seq));
+        let workspace_uris = workspace_uris_override.unwrap_or(project.workspace_uris);
 
         let session_record = PersistedSessionRecord {
             host: self.host,
@@ -359,7 +408,7 @@ impl HostLifecycleCore {
             session_id: session_id.clone(),
             title: request.title.clone(),
             project_dir: project.project_dir.clone(),
-            workspace_uris: project.workspace_uris.clone(),
+            workspace_uris: workspace_uris.clone(),
             turns: vec![PersistedTurnRecord {
                 delivery_id: request.delivery_id.clone(),
                 turn_id: turn_id.clone(),
@@ -379,15 +428,15 @@ impl HostLifecycleCore {
             session_id,
             turn_id,
             project_dir: project.project_dir,
-            workspace_uris: project.workspace_uris,
+            workspace_uris,
             tier: DeliveryTier::ThreadVisible,
         })
     }
 
-    fn deliver_turn(
-        &mut self,
+    fn validate_deliver_turn(
+        &self,
         request: &DeliverTurnRequest,
-    ) -> Result<HostSessionReceipt, HostAdapterError> {
+    ) -> Result<SidebarProjectBinding, HostAdapterError> {
         validate_nonempty_id("delivery_id", &request.delivery_id)?;
         validate_nonempty_id("project_id", &request.project_id)?;
         validate_sidebar_project_id(&request.project_id)?;
@@ -433,6 +482,21 @@ impl HostLifecycleCore {
                 supplied: canonical_dir,
             });
         }
+        if self.state.claimed_deliveries.contains(&request.delivery_id) {
+            return Err(HostAdapterError::DuplicateDelivery(
+                request.delivery_id.clone(),
+            ));
+        }
+        Ok(project)
+    }
+
+    fn commit_delivered_turn(
+        &mut self,
+        request: &DeliverTurnRequest,
+        project: SidebarProjectBinding,
+        turn_id_override: Option<String>,
+        workspace_uris_override: Option<Vec<String>>,
+    ) -> Result<HostSessionReceipt, HostAdapterError> {
         if !self
             .state
             .claimed_deliveries
@@ -443,8 +507,11 @@ impl HostLifecycleCore {
             ));
         }
         self.state.next_turn_seq += 1;
-        let turn_id = format!("{}-turn-{}", self.host.as_str(), self.state.next_turn_seq);
+        let turn_id = turn_id_override
+            .unwrap_or_else(|| format!("{}-turn-{}", self.host.as_str(), self.state.next_turn_seq));
+        let workspace_uris = workspace_uris_override.unwrap_or(project.workspace_uris);
         if let Some(session_mut) = self.state.sessions.get_mut(&request.session_id) {
+            session_mut.workspace_uris = workspace_uris.clone();
             session_mut.turns.push(PersistedTurnRecord {
                 delivery_id: request.delivery_id.clone(),
                 turn_id: turn_id.clone(),
@@ -461,7 +528,7 @@ impl HostLifecycleCore {
             session_id: request.session_id.clone(),
             turn_id,
             project_dir: project.project_dir,
-            workspace_uris: project.workspace_uris,
+            workspace_uris,
             tier: DeliveryTier::ThreadVisible,
         })
     }
@@ -494,81 +561,1414 @@ fn validate_model(model: Option<&str>) -> Result<(), HostAdapterError> {
     Ok(())
 }
 
-macro_rules! define_host_adapter {
-    ($name:ident, $variant:ident) => {
-        #[derive(Debug)]
-        pub struct $name {
-            core: HostLifecycleCore,
-        }
-
-        impl $name {
-            pub fn new(
-                projects_root: PathBuf,
-                state_root: PathBuf,
-            ) -> Result<Self, HostAdapterError> {
-                Ok(Self {
-                    core: HostLifecycleCore::new(
-                        DesktopHostKind::$variant,
-                        projects_root,
-                        state_root,
-                    )?,
-                })
-            }
-
-            pub fn session(&self, session_id: &str) -> Option<&PersistedSessionRecord> {
-                self.core.session(session_id)
-            }
-
-            pub fn project(&self, project_id: &str) -> Option<&SidebarProjectBinding> {
-                self.core.project(project_id)
-            }
-        }
-
-        impl DesktopHostAdapter for $name {
-            fn host_kind(&self) -> DesktopHostKind {
-                self.core.host
-            }
-
-            fn projects_root(&self) -> &Path {
-                &self.core.projects_root
-            }
-
-            fn ensure_project_dir(
-                &mut self,
-                slug: &str,
-            ) -> Result<ProjectDirRecord, HostAdapterError> {
-                self.core.ensure_project_dir(slug)
-            }
-
-            fn ensure_sidebar_project(
-                &mut self,
-                slug: &str,
-                title: Option<&str>,
-            ) -> Result<SidebarProjectBinding, HostAdapterError> {
-                self.core.ensure_sidebar_project(slug, title)
-            }
-
-            fn create_session(
-                &mut self,
-                request: &CreateSessionRequest,
-            ) -> Result<HostSessionReceipt, HostAdapterError> {
-                self.core.create_session(request)
-            }
-
-            fn deliver_turn(
-                &mut self,
-                request: &DeliverTurnRequest,
-            ) -> Result<HostSessionReceipt, HostAdapterError> {
-                self.core.deliver_turn(request)
-            }
-        }
-    };
+#[derive(Debug)]
+pub struct OpenAiDotsAdapter {
+    core: HostLifecycleCore,
+    pub(crate) runtime: Option<crate::tri_hosts::OpenAiDotsRuntimeConfig>,
 }
 
-define_host_adapter!(OpenAiDotsAdapter, OpenaiDots);
-define_host_adapter!(CindyAdapter, Cindy);
-define_host_adapter!(DeepSeekHarnessAdapter, DeepseekHarness);
-define_host_adapter!(AntigravityDesktopAdapter, AntigravityDesktop);
+impl OpenAiDotsAdapter {
+    pub fn new(
+        projects_root: PathBuf,
+        state_root: PathBuf,
+    ) -> Result<Self, HostAdapterError> {
+        Ok(Self {
+            core: HostLifecycleCore::new(
+                DesktopHostKind::OpenaiDots,
+                projects_root,
+                state_root,
+            )?,
+            runtime: None,
+        })
+    }
+
+    pub fn with_runtime(
+        projects_root: PathBuf,
+        state_root: PathBuf,
+        runtime: crate::tri_hosts::OpenAiDotsRuntimeConfig,
+    ) -> Result<Self, HostAdapterError> {
+        if !runtime.codex_root.is_absolute() {
+            return Err(HostAdapterError::OpenAiDotsProtocol(format!(
+                "codex_root must be absolute: {}",
+                runtime.codex_root.display()
+            )));
+        }
+        if !runtime.app_server_socket.is_absolute() {
+            return Err(HostAdapterError::OpenAiDotsProtocol(format!(
+                "app_server_socket must be absolute: {}",
+                runtime.app_server_socket.display()
+            )));
+        }
+        let mut adapter = Self::new(projects_root, state_root)?;
+        adapter.runtime = Some(runtime);
+        Ok(adapter)
+    }
+
+    pub fn session(&self, session_id: &str) -> Option<&PersistedSessionRecord> {
+        self.core.session(session_id)
+    }
+
+    pub fn project(&self, project_id: &str) -> Option<&SidebarProjectBinding> {
+        self.core.project(project_id)
+    }
+
+    pub fn read_project_row(
+        &self,
+        project_id: &str,
+    ) -> Result<Option<crate::tri_hosts::CodexProjectRow>, HostAdapterError> {
+        let Some(runtime) = &self.runtime else {
+            return Err(HostAdapterError::OpenAiDotsProtocol(
+                "OpenAiDotsRuntimeConfig is not configured on this adapter".into(),
+            ));
+        };
+        crate::tri_hosts::read_codex_project(
+            &runtime.sqlite3_bin,
+            &runtime.state_db_path(),
+            project_id,
+        )
+    }
+
+    pub fn read_thread_row(
+        &self,
+        thread_id: &str,
+    ) -> Result<Option<crate::tri_hosts::CodexThreadRow>, HostAdapterError> {
+        let Some(runtime) = &self.runtime else {
+            return Err(HostAdapterError::OpenAiDotsProtocol(
+                "OpenAiDotsRuntimeConfig is not configured on this adapter".into(),
+            ));
+        };
+        crate::tri_hosts::read_codex_thread(
+            &runtime.sqlite3_bin,
+            &runtime.state_db_path(),
+            thread_id,
+        )
+    }
+
+    pub fn create_dots_session(
+        &mut self,
+        request: &CreateSessionRequest,
+    ) -> Result<crate::tri_hosts::OpenAiDotsReceipt, HostAdapterError> {
+        let receipt = self.create_session(request)?;
+        let Some(runtime) = &self.runtime else {
+            return Ok(crate::tri_hosts::OpenAiDotsReceipt {
+                host: receipt.host,
+                delivery_id: receipt.delivery_id,
+                project_id: receipt.project_id,
+                thread_id: receipt.session_id.clone(),
+                session_id: receipt.session_id.clone(),
+                turn_id: receipt.turn_id,
+                project_dir: receipt.project_dir,
+                workspace_uris: receipt.workspace_uris,
+                preview: request.prompt.clone(),
+                deep_link: format!("codex://threads/{}", receipt.session_id),
+                tier: receipt.tier,
+            });
+        };
+        let row = crate::tri_hosts::read_codex_thread(
+            &runtime.sqlite3_bin,
+            &runtime.state_db_path(),
+            &receipt.session_id,
+        )?
+        .ok_or_else(|| {
+            HostAdapterError::OpenAiDotsProtocol(format!(
+                "thread {} missing from state_5.sqlite after create_session",
+                receipt.session_id
+            ))
+        })?;
+        crate::tri_hosts::verify_codex_thread_binding(
+            &row,
+            &receipt.project_id,
+            &receipt.project_dir,
+        )?;
+        Ok(crate::tri_hosts::OpenAiDotsReceipt {
+            host: receipt.host,
+            delivery_id: receipt.delivery_id,
+            project_id: row.project_id,
+            thread_id: row.thread_id.clone(),
+            session_id: row.thread_id.clone(),
+            turn_id: receipt.turn_id,
+            project_dir: receipt.project_dir,
+            workspace_uris: receipt.workspace_uris,
+            preview: row.preview,
+            deep_link: format!("codex://threads/{}", row.thread_id),
+            tier: receipt.tier,
+        })
+    }
+
+    pub fn deliver_dots_turn(
+        &mut self,
+        request: &DeliverTurnRequest,
+    ) -> Result<crate::tri_hosts::OpenAiDotsReceipt, HostAdapterError> {
+        let receipt = self.deliver_turn(request)?;
+        let Some(runtime) = &self.runtime else {
+            return Ok(crate::tri_hosts::OpenAiDotsReceipt {
+                host: receipt.host,
+                delivery_id: receipt.delivery_id,
+                project_id: receipt.project_id,
+                thread_id: receipt.session_id.clone(),
+                session_id: receipt.session_id.clone(),
+                turn_id: receipt.turn_id,
+                project_dir: receipt.project_dir,
+                workspace_uris: receipt.workspace_uris,
+                preview: request.prompt.clone(),
+                deep_link: format!("codex://threads/{}", receipt.session_id),
+                tier: receipt.tier,
+            });
+        };
+        let row = crate::tri_hosts::read_codex_thread(
+            &runtime.sqlite3_bin,
+            &runtime.state_db_path(),
+            &receipt.session_id,
+        )?
+        .ok_or_else(|| {
+            HostAdapterError::OpenAiDotsProtocol(format!(
+                "thread {} missing from state_5.sqlite after deliver_turn",
+                receipt.session_id
+            ))
+        })?;
+        crate::tri_hosts::verify_codex_thread_binding(
+            &row,
+            &receipt.project_id,
+            &receipt.project_dir,
+        )?;
+        Ok(crate::tri_hosts::OpenAiDotsReceipt {
+            host: receipt.host,
+            delivery_id: receipt.delivery_id,
+            project_id: row.project_id,
+            thread_id: row.thread_id.clone(),
+            session_id: row.thread_id.clone(),
+            turn_id: receipt.turn_id,
+            project_dir: receipt.project_dir,
+            workspace_uris: receipt.workspace_uris,
+            preview: row.preview,
+            deep_link: format!("codex://threads/{}", row.thread_id),
+            tier: receipt.tier,
+        })
+    }
+}
+
+impl DesktopHostAdapter for OpenAiDotsAdapter {
+    fn host_kind(&self) -> DesktopHostKind {
+        self.core.host
+    }
+
+    fn projects_root(&self) -> &Path {
+        &self.core.projects_root
+    }
+
+    fn ensure_project_dir(&mut self, slug: &str) -> Result<ProjectDirRecord, HostAdapterError> {
+        self.core.ensure_project_dir(slug)
+    }
+
+    fn ensure_sidebar_project(
+        &mut self,
+        slug: &str,
+        title: Option<&str>,
+    ) -> Result<SidebarProjectBinding, HostAdapterError> {
+        let dir = self.core.ensure_project_dir(slug)?;
+        let Some(runtime) = self.runtime.clone() else {
+            return self.core.ensure_sidebar_project(slug, title);
+        };
+        if let Some(existing_id) = self.core.state.slug_to_project_id.get(slug).cloned() {
+            if self.core.state.projects.contains_key(&existing_id) {
+                return self.core.ensure_sidebar_project_with_override(
+                    slug,
+                    title,
+                    Some(existing_id),
+                );
+            }
+        }
+        let resolved_title = match title {
+            Some(t) => {
+                validate_nonempty_id("project title", t)?;
+                t.to_string()
+            }
+            None => slug.to_string(),
+        };
+        let mut client = crate::tri_hosts::AppServerClient::connect(&runtime)?;
+        let result = client.request(
+            "project/create",
+            serde_json::json!({
+                "name": resolved_title,
+                "rootPath": dir.path,
+                "roots": [dir.path],
+            }),
+        )?;
+        let project_id = result
+            .pointer("/project/id")
+            .or_else(|| result.get("projectId"))
+            .or_else(|| result.get("id"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| {
+                HostAdapterError::OpenAiDotsProtocol(
+                    "codex app-server project/create response omitted project id".into(),
+                )
+            })?;
+        let row = crate::tri_hosts::read_codex_project(
+            &runtime.sqlite3_bin,
+            &runtime.state_db_path(),
+            &project_id,
+        )?
+        .ok_or_else(|| {
+            HostAdapterError::OpenAiDotsProtocol(format!(
+                "project {project_id} missing from state_5.sqlite projects/project_roots after project/create"
+            ))
+        })?;
+        crate::tri_hosts::verify_codex_project_binding(&row, &project_id, &dir.path)?;
+        self.core
+            .ensure_sidebar_project_with_override(slug, title, Some(project_id))
+    }
+
+    fn create_session(
+        &mut self,
+        request: &CreateSessionRequest,
+    ) -> Result<HostSessionReceipt, HostAdapterError> {
+        let project = self.core.validate_create_session(request)?;
+        let Some(runtime) = self.runtime.clone() else {
+            return self
+                .core
+                .commit_created_session(request, project, None, None, None);
+        };
+        let mut client = crate::tri_hosts::AppServerClient::connect(&runtime)?;
+        let mut start_params = serde_json::json!({
+            "projectId": project.project_id,
+            "cwd": project.project_dir,
+            "title": request.title,
+        });
+        if let Some(model) = &request.model {
+            start_params["model"] = serde_json::json!(model);
+        }
+        let started = client.request("thread/start", start_params)?;
+        let thread_id = started
+            .pointer("/thread/id")
+            .or_else(|| started.get("threadId"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| {
+                HostAdapterError::OpenAiDotsProtocol(
+                    "codex app-server thread/start omitted thread.id".into(),
+                )
+            })?;
+        let mut turn_params = serde_json::json!({
+            "threadId": thread_id,
+            "projectId": project.project_id,
+            "cwd": project.project_dir,
+            "clientUserMessageId": request.delivery_id,
+            "input": [{"type": "text", "text": request.prompt, "text_elements": []}],
+        });
+        if let Some(model) = &request.model {
+            turn_params["model"] = serde_json::json!(model);
+        }
+        let turn_resp = client.request("turn/start", turn_params)?;
+        let turn_id = turn_resp
+            .pointer("/turn/id")
+            .or_else(|| turn_resp.get("turnId"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| {
+                HostAdapterError::OpenAiDotsProtocol(
+                    "codex app-server turn/start omitted turn.id".into(),
+                )
+            })?;
+        let row = crate::tri_hosts::read_codex_thread(
+            &runtime.sqlite3_bin,
+            &runtime.state_db_path(),
+            &thread_id,
+        )?
+        .ok_or_else(|| {
+            HostAdapterError::OpenAiDotsProtocol(format!(
+                "thread {thread_id} missing from state_5.sqlite after thread/start + turn/start"
+            ))
+        })?;
+        crate::tri_hosts::verify_codex_thread_binding(
+            &row,
+            &project.project_id,
+            &project.project_dir,
+        )?;
+        self.core.commit_created_session(
+            request,
+            project,
+            Some(thread_id),
+            Some(turn_id),
+            None,
+        )
+    }
+
+    fn deliver_turn(
+        &mut self,
+        request: &DeliverTurnRequest,
+    ) -> Result<HostSessionReceipt, HostAdapterError> {
+        let project = self.core.validate_deliver_turn(request)?;
+        let Some(runtime) = self.runtime.clone() else {
+            return self
+                .core
+                .commit_delivered_turn(request, project, None, None);
+        };
+        let mut client = crate::tri_hosts::AppServerClient::connect(&runtime)?;
+        let resumed = client.request(
+            "thread/resume",
+            serde_json::json!({
+                "threadId": request.session_id,
+                "projectId": project.project_id,
+                "cwd": project.project_dir,
+            }),
+        )?;
+        if let Some(resumed_id) = resumed
+            .pointer("/thread/id")
+            .or_else(|| resumed.get("threadId"))
+            .and_then(serde_json::Value::as_str)
+        {
+            if resumed_id != request.session_id {
+                return Err(HostAdapterError::OpenAiDotsProtocol(format!(
+                    "thread/resume returned mismatched threadId {resumed_id}, expected {}",
+                    request.session_id
+                )));
+            }
+        }
+        let mut turn_params = serde_json::json!({
+            "threadId": request.session_id,
+            "projectId": project.project_id,
+            "cwd": project.project_dir,
+            "clientUserMessageId": request.delivery_id,
+            "input": [{"type": "text", "text": request.prompt, "text_elements": []}],
+        });
+        if let Some(model) = &request.model {
+            turn_params["model"] = serde_json::json!(model);
+        }
+        let turn_resp = client.request("turn/start", turn_params)?;
+        let turn_id = turn_resp
+            .pointer("/turn/id")
+            .or_else(|| turn_resp.get("turnId"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| {
+                HostAdapterError::OpenAiDotsProtocol(
+                    "codex app-server turn/start omitted turn.id on follow-up".into(),
+                )
+            })?;
+        let row = crate::tri_hosts::read_codex_thread(
+            &runtime.sqlite3_bin,
+            &runtime.state_db_path(),
+            &request.session_id,
+        )?
+        .ok_or_else(|| {
+            HostAdapterError::OpenAiDotsProtocol(format!(
+                "thread {} missing from state_5.sqlite after deliver_turn",
+                request.session_id
+            ))
+        })?;
+        crate::tri_hosts::verify_codex_thread_binding(
+            &row,
+            &project.project_id,
+            &project.project_dir,
+        )?;
+        self.core
+            .commit_delivered_turn(request, project, Some(turn_id), None)
+    }
+}
+
+#[derive(Debug)]
+pub struct DeepSeekHarnessAdapter {
+    core: HostLifecycleCore,
+    pub(crate) runtime: Option<crate::tri_hosts::DshRuntimeConfig>,
+}
+
+impl DeepSeekHarnessAdapter {
+    pub fn new(
+        projects_root: PathBuf,
+        state_root: PathBuf,
+    ) -> Result<Self, HostAdapterError> {
+        Ok(Self {
+            core: HostLifecycleCore::new(
+                DesktopHostKind::DeepseekHarness,
+                projects_root,
+                state_root,
+            )?,
+            runtime: None,
+        })
+    }
+
+    pub fn with_runtime(
+        projects_root: PathBuf,
+        state_root: PathBuf,
+        runtime: crate::tri_hosts::DshRuntimeConfig,
+    ) -> Result<Self, HostAdapterError> {
+        let _ = crate::tri_hosts::parse_loopback_http_endpoint(&runtime.base_url)?;
+        let mut adapter = Self::new(projects_root, state_root)?;
+        adapter.runtime = Some(runtime);
+        Ok(adapter)
+    }
+
+    pub fn session(&self, session_id: &str) -> Option<&PersistedSessionRecord> {
+        self.core.session(session_id)
+    }
+
+    pub fn project(&self, project_id: &str) -> Option<&SidebarProjectBinding> {
+        self.core.project(project_id)
+    }
+
+    pub fn read_dsh_session(
+        &self,
+        session_id: &str,
+    ) -> Result<crate::tri_hosts::DshSessionSnapshot, HostAdapterError> {
+        let Some(runtime) = &self.runtime else {
+            return Err(HostAdapterError::DshProtocol(
+                "DshRuntimeConfig is not configured on this adapter".into(),
+            ));
+        };
+        let val = crate::tri_hosts::dsh_http_request(
+            runtime,
+            "GET",
+            &format!("/v1/sessions/{session_id}"),
+            None,
+        )?;
+        let session_obj = val.get("session").unwrap_or(&val);
+        let returned_id = session_obj
+            .get("id")
+            .or_else(|| session_obj.get("session_id"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let project_id = session_obj
+            .get("project_id")
+            .or_else(|| session_obj.get("projectId"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let title = session_obj
+            .get("title")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let cwd = PathBuf::from(
+            session_obj
+                .get("cwd")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default(),
+        );
+        let turns = session_obj
+            .get("turns")
+            .and_then(serde_json::Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let last_turn_id = turns
+            .last()
+            .and_then(|t| t.get("id").or_else(|| t.get("turn_id")))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string);
+        let status = session_obj
+            .get("status")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("active")
+            .to_string();
+        Ok(crate::tri_hosts::DshSessionSnapshot {
+            session_id: returned_id,
+            project_id,
+            title,
+            cwd,
+            turn_count: turns.len(),
+            last_turn_id,
+            status,
+        })
+    }
+
+    pub fn create_dsh_session(
+        &mut self,
+        request: &CreateSessionRequest,
+    ) -> Result<crate::tri_hosts::DshSessionReceipt, HostAdapterError> {
+        let receipt = self.create_session(request)?;
+        let Some(_runtime) = &self.runtime else {
+            return Ok(crate::tri_hosts::DshSessionReceipt {
+                host: receipt.host,
+                delivery_id: receipt.delivery_id,
+                project_id: receipt.project_id,
+                session_id: receipt.session_id,
+                turn_id: receipt.turn_id,
+                project_dir: receipt.project_dir,
+                workspace_uris: receipt.workspace_uris,
+                turn_count: 1,
+                status: "active".into(),
+                tier: receipt.tier,
+            });
+        };
+        let snap = self.read_dsh_session(&receipt.session_id)?;
+        if snap.cwd != receipt.project_dir {
+            return Err(HostAdapterError::ProjectDirMismatch {
+                expected: receipt.project_dir,
+                supplied: snap.cwd,
+            });
+        }
+        if !snap.project_id.is_empty() && snap.project_id != receipt.project_id {
+            return Err(HostAdapterError::SessionProjectMismatch {
+                session_id: receipt.session_id,
+                expected_project_id: receipt.project_id,
+                supplied_project_id: snap.project_id,
+            });
+        }
+        Ok(crate::tri_hosts::DshSessionReceipt {
+            host: receipt.host,
+            delivery_id: receipt.delivery_id,
+            project_id: receipt.project_id,
+            session_id: receipt.session_id,
+            turn_id: receipt.turn_id,
+            project_dir: receipt.project_dir,
+            workspace_uris: receipt.workspace_uris,
+            turn_count: snap.turn_count,
+            status: snap.status,
+            tier: receipt.tier,
+        })
+    }
+
+    pub fn deliver_dsh_turn(
+        &mut self,
+        request: &DeliverTurnRequest,
+    ) -> Result<crate::tri_hosts::DshSessionReceipt, HostAdapterError> {
+        let receipt = self.deliver_turn(request)?;
+        let Some(_runtime) = &self.runtime else {
+            return Ok(crate::tri_hosts::DshSessionReceipt {
+                host: receipt.host,
+                delivery_id: receipt.delivery_id,
+                project_id: receipt.project_id,
+                session_id: receipt.session_id,
+                turn_id: receipt.turn_id,
+                project_dir: receipt.project_dir,
+                workspace_uris: receipt.workspace_uris,
+                turn_count: 2,
+                status: "active".into(),
+                tier: receipt.tier,
+            });
+        };
+        let snap = self.read_dsh_session(&receipt.session_id)?;
+        if snap.cwd != receipt.project_dir {
+            return Err(HostAdapterError::ProjectDirMismatch {
+                expected: receipt.project_dir,
+                supplied: snap.cwd,
+            });
+        }
+        if !snap.project_id.is_empty() && snap.project_id != receipt.project_id {
+            return Err(HostAdapterError::SessionProjectMismatch {
+                session_id: receipt.session_id,
+                expected_project_id: receipt.project_id,
+                supplied_project_id: snap.project_id,
+            });
+        }
+        Ok(crate::tri_hosts::DshSessionReceipt {
+            host: receipt.host,
+            delivery_id: receipt.delivery_id,
+            project_id: receipt.project_id,
+            session_id: receipt.session_id,
+            turn_id: receipt.turn_id,
+            project_dir: receipt.project_dir,
+            workspace_uris: receipt.workspace_uris,
+            turn_count: snap.turn_count,
+            status: snap.status,
+            tier: receipt.tier,
+        })
+    }
+}
+
+impl DesktopHostAdapter for DeepSeekHarnessAdapter {
+    fn host_kind(&self) -> DesktopHostKind {
+        self.core.host
+    }
+
+    fn projects_root(&self) -> &Path {
+        &self.core.projects_root
+    }
+
+    fn ensure_project_dir(&mut self, slug: &str) -> Result<ProjectDirRecord, HostAdapterError> {
+        self.core.ensure_project_dir(slug)
+    }
+
+    fn ensure_sidebar_project(
+        &mut self,
+        slug: &str,
+        title: Option<&str>,
+    ) -> Result<SidebarProjectBinding, HostAdapterError> {
+        self.core.ensure_sidebar_project(slug, title)
+    }
+
+    fn create_session(
+        &mut self,
+        request: &CreateSessionRequest,
+    ) -> Result<HostSessionReceipt, HostAdapterError> {
+        let project = self.core.validate_create_session(request)?;
+        let Some(runtime) = self.runtime.clone() else {
+            return self
+                .core
+                .commit_created_session(request, project, None, None, None);
+        };
+        let create_body = serde_json::json!({
+            "project_id": project.project_id,
+            "cwd": project.project_dir,
+            "title": request.title,
+            "delivery_id": request.delivery_id,
+        });
+        let create_resp = crate::tri_hosts::dsh_http_request(
+            &runtime,
+            "POST",
+            "/v1/sessions",
+            Some(&create_body),
+        )?;
+        let session_obj = create_resp.get("session").unwrap_or(&create_resp);
+        let session_id = session_obj
+            .get("id")
+            .or_else(|| session_obj.get("session_id"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| {
+                HostAdapterError::DshProtocol(
+                    "DSH POST /v1/sessions response omitted session id".into(),
+                )
+            })?;
+        if let Some(returned_cwd) = session_obj.get("cwd").and_then(serde_json::Value::as_str) {
+            if Path::new(returned_cwd) != project.project_dir {
+                return Err(HostAdapterError::ProjectDirMismatch {
+                    expected: project.project_dir,
+                    supplied: PathBuf::from(returned_cwd),
+                });
+            }
+        }
+        let mut turn_body = serde_json::json!({
+            "delivery_id": request.delivery_id,
+            "project_id": project.project_id,
+            "cwd": project.project_dir,
+            "prompt": request.prompt,
+        });
+        if let Some(model) = &request.model {
+            turn_body["model"] = serde_json::json!(model);
+        }
+        let turn_resp = crate::tri_hosts::dsh_http_request(
+            &runtime,
+            "POST",
+            &format!("/v1/sessions/{session_id}/turns"),
+            Some(&turn_body),
+        )?;
+        let turn_obj = turn_resp.get("turn").unwrap_or(&turn_resp);
+        let turn_id = turn_obj
+            .get("id")
+            .or_else(|| turn_obj.get("turn_id"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| {
+                HostAdapterError::DshProtocol(
+                    "DSH POST /v1/sessions/<id>/turns response omitted turn id".into(),
+                )
+            })?;
+        let snap = self.read_dsh_session(&session_id)?;
+        if snap.cwd != project.project_dir {
+            return Err(HostAdapterError::ProjectDirMismatch {
+                expected: project.project_dir,
+                supplied: snap.cwd,
+            });
+        }
+        if !snap.project_id.is_empty() && snap.project_id != project.project_id {
+            return Err(HostAdapterError::SessionProjectMismatch {
+                session_id,
+                expected_project_id: project.project_id,
+                supplied_project_id: snap.project_id,
+            });
+        }
+        self.core.commit_created_session(
+            request,
+            project,
+            Some(session_id),
+            Some(turn_id),
+            None,
+        )
+    }
+
+    fn deliver_turn(
+        &mut self,
+        request: &DeliverTurnRequest,
+    ) -> Result<HostSessionReceipt, HostAdapterError> {
+        let project = self.core.validate_deliver_turn(request)?;
+        let Some(runtime) = self.runtime.clone() else {
+            return self
+                .core
+                .commit_delivered_turn(request, project, None, None);
+        };
+        let mut turn_body = serde_json::json!({
+            "delivery_id": request.delivery_id,
+            "project_id": project.project_id,
+            "cwd": project.project_dir,
+            "prompt": request.prompt,
+        });
+        if let Some(model) = &request.model {
+            turn_body["model"] = serde_json::json!(model);
+        }
+        let turn_resp = crate::tri_hosts::dsh_http_request(
+            &runtime,
+            "POST",
+            &format!("/v1/sessions/{}/turns", request.session_id),
+            Some(&turn_body),
+        )?;
+        let turn_obj = turn_resp.get("turn").unwrap_or(&turn_resp);
+        let turn_id = turn_obj
+            .get("id")
+            .or_else(|| turn_obj.get("turn_id"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| {
+                HostAdapterError::DshProtocol(
+                    "DSH POST /v1/sessions/<id>/turns follow-up omitted turn id".into(),
+                )
+            })?;
+        let snap = self.read_dsh_session(&request.session_id)?;
+        if snap.cwd != project.project_dir {
+            return Err(HostAdapterError::ProjectDirMismatch {
+                expected: project.project_dir,
+                supplied: snap.cwd,
+            });
+        }
+        if !snap.project_id.is_empty() && snap.project_id != project.project_id {
+            return Err(HostAdapterError::SessionProjectMismatch {
+                session_id: request.session_id.clone(),
+                expected_project_id: project.project_id,
+                supplied_project_id: snap.project_id,
+            });
+        }
+        self.core
+            .commit_delivered_turn(request, project, Some(turn_id), None)
+    }
+}
+
+#[derive(Debug)]
+pub struct CindyAdapter {
+    core: HostLifecycleCore,
+    pub(crate) runtime: Option<crate::tri_hosts::CindyRuntimeConfig>,
+}
+
+impl CindyAdapter {
+    pub fn new(
+        projects_root: PathBuf,
+        state_root: PathBuf,
+    ) -> Result<Self, HostAdapterError> {
+        Ok(Self {
+            core: HostLifecycleCore::new(
+                DesktopHostKind::Cindy,
+                projects_root,
+                state_root,
+            )?,
+            runtime: None,
+        })
+    }
+
+    pub fn with_runtime(
+        projects_root: PathBuf,
+        state_root: PathBuf,
+        runtime: crate::tri_hosts::CindyRuntimeConfig,
+    ) -> Result<Self, HostAdapterError> {
+        if !runtime.cindy_root.is_absolute() {
+            return Err(HostAdapterError::CindyProtocol(format!(
+                "cindy_root must be absolute: {}",
+                runtime.cindy_root.display()
+            )));
+        }
+        if !runtime.gateway_socket.is_absolute() {
+            return Err(HostAdapterError::CindyProtocol(format!(
+                "gateway_socket must be absolute: {}",
+                runtime.gateway_socket.display()
+            )));
+        }
+        let mut adapter = Self::new(projects_root, state_root)?;
+        adapter.runtime = Some(runtime);
+        Ok(adapter)
+    }
+
+    pub fn session(&self, session_id: &str) -> Option<&PersistedSessionRecord> {
+        self.core.session(session_id)
+    }
+
+    pub fn project(&self, project_id: &str) -> Option<&SidebarProjectBinding> {
+        self.core.project(project_id)
+    }
+
+    pub fn read_cindy_session(
+        &self,
+        session_key: &str,
+    ) -> Result<crate::tri_hosts::CindySessionSnapshot, HostAdapterError> {
+        let Some(runtime) = &self.runtime else {
+            return Err(HostAdapterError::CindyProtocol(
+                "CindyRuntimeConfig is not configured on this adapter".into(),
+            ));
+        };
+        let mut client = crate::tri_hosts::CindyGatewayClient::connect(runtime)?;
+        let resp = client.request(
+            "sessions.get",
+            serde_json::json!({
+                "sessionKey": session_key,
+            }),
+        )?;
+        let sess = resp.get("session").unwrap_or(&resp);
+        let key = sess
+            .get("sessionKey")
+            .or_else(|| sess.get("session_id"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let project_id = sess
+            .get("projectId")
+            .or_else(|| sess.get("project_id"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let title = sess
+            .get("title")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let cwd = PathBuf::from(
+            sess.get("cwd")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default(),
+        );
+        let turns = sess
+            .get("turns")
+            .and_then(serde_json::Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let last_turn_id = turns
+            .last()
+            .and_then(|t| t.get("turnId").or_else(|| t.get("id")))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string);
+        let transcript_path = sess
+            .get("transcriptPath")
+            .and_then(serde_json::Value::as_str)
+            .map(PathBuf::from)
+            .unwrap_or_else(|| runtime.transcripts_dir().join(format!("{key}.jsonl")));
+        Ok(crate::tri_hosts::CindySessionSnapshot {
+            session_key: key,
+            project_id,
+            title,
+            cwd,
+            turn_count: turns.len(),
+            last_turn_id,
+            transcript_path,
+        })
+    }
+
+    pub fn create_cindy_session(
+        &mut self,
+        request: &CreateSessionRequest,
+    ) -> Result<crate::tri_hosts::CindySessionReceipt, HostAdapterError> {
+        let receipt = self.create_session(request)?;
+        let Some(_runtime) = &self.runtime else {
+            return Ok(crate::tri_hosts::CindySessionReceipt {
+                host: receipt.host,
+                delivery_id: receipt.delivery_id,
+                project_id: receipt.project_id,
+                session_key: receipt.session_id.clone(),
+                session_id: receipt.session_id.clone(),
+                turn_id: receipt.turn_id,
+                project_dir: receipt.project_dir.clone(),
+                workspace_uris: receipt.workspace_uris,
+                transcript_path: receipt.project_dir.join(format!("{}.jsonl", receipt.session_id)),
+                turn_count: 1,
+                tier: receipt.tier,
+            });
+        };
+        let snap = self.read_cindy_session(&receipt.session_id)?;
+        let entries = crate::tri_hosts::read_cindy_transcript(&snap.transcript_path)?;
+        if entries.is_empty() {
+            return Err(HostAdapterError::CindyProtocol(format!(
+                "Cindy transcript {} is empty after create_session",
+                snap.transcript_path.display()
+            )));
+        }
+        Ok(crate::tri_hosts::CindySessionReceipt {
+            host: receipt.host,
+            delivery_id: receipt.delivery_id,
+            project_id: receipt.project_id,
+            session_key: snap.session_key.clone(),
+            session_id: snap.session_key,
+            turn_id: receipt.turn_id,
+            project_dir: receipt.project_dir,
+            workspace_uris: receipt.workspace_uris,
+            transcript_path: snap.transcript_path,
+            turn_count: snap.turn_count,
+            tier: receipt.tier,
+        })
+    }
+
+    pub fn deliver_cindy_turn(
+        &mut self,
+        request: &DeliverTurnRequest,
+    ) -> Result<crate::tri_hosts::CindySessionReceipt, HostAdapterError> {
+        let receipt = self.deliver_turn(request)?;
+        let Some(_runtime) = &self.runtime else {
+            return Ok(crate::tri_hosts::CindySessionReceipt {
+                host: receipt.host,
+                delivery_id: receipt.delivery_id,
+                project_id: receipt.project_id,
+                session_key: receipt.session_id.clone(),
+                session_id: receipt.session_id.clone(),
+                turn_id: receipt.turn_id,
+                project_dir: receipt.project_dir.clone(),
+                workspace_uris: receipt.workspace_uris,
+                transcript_path: receipt.project_dir.join(format!("{}.jsonl", receipt.session_id)),
+                turn_count: 2,
+                tier: receipt.tier,
+            });
+        };
+        let snap = self.read_cindy_session(&receipt.session_id)?;
+        let entries = crate::tri_hosts::read_cindy_transcript(&snap.transcript_path)?;
+        if entries.len() < 2 {
+            return Err(HostAdapterError::CindyProtocol(format!(
+                "Cindy transcript {} has fewer than 2 entries after deliver_turn",
+                snap.transcript_path.display()
+            )));
+        }
+        Ok(crate::tri_hosts::CindySessionReceipt {
+            host: receipt.host,
+            delivery_id: receipt.delivery_id,
+            project_id: receipt.project_id,
+            session_key: snap.session_key.clone(),
+            session_id: snap.session_key,
+            turn_id: receipt.turn_id,
+            project_dir: receipt.project_dir,
+            workspace_uris: receipt.workspace_uris,
+            transcript_path: snap.transcript_path,
+            turn_count: snap.turn_count,
+            tier: receipt.tier,
+        })
+    }
+}
+
+impl DesktopHostAdapter for CindyAdapter {
+    fn host_kind(&self) -> DesktopHostKind {
+        self.core.host
+    }
+
+    fn projects_root(&self) -> &Path {
+        &self.core.projects_root
+    }
+
+    fn ensure_project_dir(&mut self, slug: &str) -> Result<ProjectDirRecord, HostAdapterError> {
+        self.core.ensure_project_dir(slug)
+    }
+
+    fn ensure_sidebar_project(
+        &mut self,
+        slug: &str,
+        title: Option<&str>,
+    ) -> Result<SidebarProjectBinding, HostAdapterError> {
+        let dir = self.core.ensure_project_dir(slug)?;
+        let Some(runtime) = self.runtime.clone() else {
+            return self.core.ensure_sidebar_project(slug, title);
+        };
+        if let Some(existing_id) = self.core.state.slug_to_project_id.get(slug).cloned() {
+            if self.core.state.projects.contains_key(&existing_id) {
+                return self.core.ensure_sidebar_project_with_override(
+                    slug,
+                    title,
+                    Some(existing_id),
+                );
+            }
+        }
+        let resolved_title = match title {
+            Some(t) => {
+                validate_nonempty_id("project title", t)?;
+                t.to_string()
+            }
+            None => slug.to_string(),
+        };
+        let mut client = crate::tri_hosts::CindyGatewayClient::connect(&runtime)?;
+        let patched = client.request(
+            "sessions.patch",
+            serde_json::json!({
+                "slug": slug,
+                "title": resolved_title,
+                "cwd": dir.path,
+                "workspaceUris": [dir.workspace_uri],
+            }),
+        )?;
+        let project_id = patched
+            .get("projectId")
+            .or_else(|| patched.get("project_id"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("proj-cindy-{slug}"));
+        self.core
+            .ensure_sidebar_project_with_override(slug, title, Some(project_id))
+    }
+
+    fn create_session(
+        &mut self,
+        request: &CreateSessionRequest,
+    ) -> Result<HostSessionReceipt, HostAdapterError> {
+        let project = self.core.validate_create_session(request)?;
+        let Some(runtime) = self.runtime.clone() else {
+            return self
+                .core
+                .commit_created_session(request, project, None, None, None);
+        };
+        let mut client = crate::tri_hosts::CindyGatewayClient::connect(&runtime)?;
+        let created = client.request(
+            "sessions.create",
+            serde_json::json!({
+                "projectId": project.project_id,
+                "cwd": project.project_dir,
+                "title": request.title,
+                "requestKey": format!("{}:create", request.delivery_id),
+            }),
+        )?;
+        let session_key = created
+            .get("sessionKey")
+            .or_else(|| created.get("session_id"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| {
+                HostAdapterError::CindyProtocol(
+                    "Cindy gateway sessions.create omitted sessionKey".into(),
+                )
+            })?;
+        let mut send_params = serde_json::json!({
+            "sessionKey": session_key,
+            "projectId": project.project_id,
+            "cwd": project.project_dir,
+            "deliveryId": request.delivery_id,
+            "text": request.prompt,
+        });
+        if let Some(model) = &request.model {
+            send_params["model"] = serde_json::json!(model);
+        }
+        let sent = client.request("cindy_session_send", send_params)?;
+        let turn_id = sent
+            .get("turnId")
+            .or_else(|| sent.get("runId"))
+            .or_else(|| sent.get("turn_id"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| {
+                HostAdapterError::CindyProtocol(
+                    "Cindy gateway cindy_session_send omitted turnId/runId".into(),
+                )
+            })?;
+        let snap = self.read_cindy_session(&session_key)?;
+        if snap.cwd != project.project_dir {
+            return Err(HostAdapterError::ProjectDirMismatch {
+                expected: project.project_dir,
+                supplied: snap.cwd,
+            });
+        }
+        if snap.project_id != project.project_id {
+            return Err(HostAdapterError::SessionProjectMismatch {
+                session_id: session_key,
+                expected_project_id: project.project_id,
+                supplied_project_id: snap.project_id,
+            });
+        }
+        self.core.commit_created_session(
+            request,
+            project,
+            Some(session_key),
+            Some(turn_id),
+            None,
+        )
+    }
+
+    fn deliver_turn(
+        &mut self,
+        request: &DeliverTurnRequest,
+    ) -> Result<HostSessionReceipt, HostAdapterError> {
+        let project = self.core.validate_deliver_turn(request)?;
+        let Some(runtime) = self.runtime.clone() else {
+            return self
+                .core
+                .commit_delivered_turn(request, project, None, None);
+        };
+        let mut client = crate::tri_hosts::CindyGatewayClient::connect(&runtime)?;
+        let mut send_params = serde_json::json!({
+            "sessionKey": request.session_id,
+            "projectId": project.project_id,
+            "cwd": project.project_dir,
+            "deliveryId": request.delivery_id,
+            "text": request.prompt,
+        });
+        if let Some(model) = &request.model {
+            send_params["model"] = serde_json::json!(model);
+        }
+        let sent = client.request("cindy_session_send", send_params)?;
+        let turn_id = sent
+            .get("turnId")
+            .or_else(|| sent.get("runId"))
+            .or_else(|| sent.get("turn_id"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| {
+                HostAdapterError::CindyProtocol(
+                    "Cindy gateway cindy_session_send follow-up omitted turnId/runId".into(),
+                )
+            })?;
+        let snap = self.read_cindy_session(&request.session_id)?;
+        if snap.cwd != project.project_dir {
+            return Err(HostAdapterError::ProjectDirMismatch {
+                expected: project.project_dir,
+                supplied: snap.cwd,
+            });
+        }
+        if snap.project_id != project.project_id {
+            return Err(HostAdapterError::SessionProjectMismatch {
+                session_id: request.session_id.clone(),
+                expected_project_id: project.project_id,
+                supplied_project_id: snap.project_id,
+            });
+        }
+        self.core
+            .commit_delivered_turn(request, project, Some(turn_id), None)
+    }
+}
+
+#[derive(Debug)]
+pub struct AntigravityDesktopAdapter {
+    core: HostLifecycleCore,
+    pub(crate) runtime: Option<crate::antigravity::AntigravityRuntimeConfig>,
+}
+
+impl AntigravityDesktopAdapter {
+    pub fn new(
+        projects_root: PathBuf,
+        state_root: PathBuf,
+    ) -> Result<Self, HostAdapterError> {
+        Ok(Self {
+            core: HostLifecycleCore::new(
+                DesktopHostKind::AntigravityDesktop,
+                projects_root,
+                state_root,
+            )?,
+            runtime: None,
+        })
+    }
+
+    pub fn session(&self, session_id: &str) -> Option<&PersistedSessionRecord> {
+        self.core.session(session_id)
+    }
+
+    pub fn project(&self, project_id: &str) -> Option<&SidebarProjectBinding> {
+        self.core.project(project_id)
+    }
+}
+
+impl DesktopHostAdapter for AntigravityDesktopAdapter {
+    fn host_kind(&self) -> DesktopHostKind {
+        self.core.host
+    }
+
+    fn projects_root(&self) -> &Path {
+        &self.core.projects_root
+    }
+
+    fn ensure_project_dir(&mut self, slug: &str) -> Result<ProjectDirRecord, HostAdapterError> {
+        self.core.ensure_project_dir(slug)
+    }
+
+    fn ensure_sidebar_project(
+        &mut self,
+        slug: &str,
+        title: Option<&str>,
+    ) -> Result<SidebarProjectBinding, HostAdapterError> {
+        let dir = self.core.ensure_project_dir(slug)?;
+        let Some(runtime) = self.runtime.clone() else {
+            return self.core.ensure_sidebar_project(slug, title);
+        };
+        if let Some(existing_id) = self.core.state.slug_to_project_id.get(slug).cloned() {
+            if self.core.state.projects.contains_key(&existing_id) {
+                return self.core.ensure_sidebar_project_with_override(
+                    slug,
+                    title,
+                    Some(existing_id),
+                );
+            }
+        }
+        let project_name = match title {
+            Some(t) => {
+                validate_nonempty_id("project title", t)?;
+                t.to_string()
+            }
+            None => slug.to_string(),
+        };
+        let hubs = crate::antigravity::discover_antigravity_hubs(&runtime.daemon_dir())?;
+        let args = vec![
+            "--new-project".into(),
+            "--project".into(),
+            project_name.into(),
+            "--add-dir".into(),
+            dir.path.as_os_str().to_os_string(),
+            "--output-format".into(),
+            "json".into(),
+        ];
+        let payload = crate::antigravity::run_agy_command(
+            &runtime,
+            &dir.path,
+            &args,
+            hubs.first(),
+        )?;
+        let project_id = payload
+            .get("project_id")
+            .or_else(|| payload.get("projectId"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("proj-{}-{slug}", self.core.host.as_str()));
+        self.core
+            .ensure_sidebar_project_with_override(slug, title, Some(project_id))
+    }
+
+    fn create_session(
+        &mut self,
+        request: &CreateSessionRequest,
+    ) -> Result<HostSessionReceipt, HostAdapterError> {
+        let project = self.core.validate_create_session(request)?;
+        let Some(runtime) = self.runtime.clone() else {
+            return self
+                .core
+                .commit_created_session(request, project, None, None, None);
+        };
+        let hubs = crate::antigravity::discover_antigravity_hubs(&runtime.daemon_dir())?;
+        let mut args: Vec<std::ffi::OsString> = vec![
+            "--project".into(),
+            request.project_id.clone().into(),
+            "--add-dir".into(),
+            project.project_dir.as_os_str().to_os_string(),
+            "--output-format".into(),
+            "json".into(),
+        ];
+        if let Some(model) = &request.model {
+            args.push("--model".into());
+            args.push(model.into());
+        }
+        args.push("-p".into());
+        args.push(request.prompt.clone().into());
+
+        let payload = crate::antigravity::run_agy_command(
+            &runtime,
+            &project.project_dir,
+            &args,
+            hubs.first(),
+        )?;
+        let conversation_id = payload
+            .get("conversation_id")
+            .or_else(|| payload.get("conversationId"))
+            .or_else(|| payload.get("session_id"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| {
+                HostAdapterError::AntigravityProtocol(
+                    "agy create_session output did not include conversation_id".into(),
+                )
+            })?;
+        let turn_id = payload
+            .get("turn_id")
+            .or_else(|| payload.get("turnId"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string);
+
+        let summary = crate::antigravity::read_conversation_summary(
+            &runtime.sqlite3_bin,
+            &runtime.summaries_db_path(),
+            &conversation_id,
+        )?
+        .ok_or_else(|| {
+            HostAdapterError::AntigravityProtocol(format!(
+                "conversation {conversation_id} missing from conversation_summaries.db"
+            ))
+        })?;
+        let expected_uri = format!("file://{}", project.project_dir.display());
+        crate::antigravity::verify_summary_binding(
+            &summary,
+            &project.project_id,
+            &expected_uri,
+        )?;
+
+        self.core.commit_created_session(
+            request,
+            project,
+            Some(conversation_id),
+            turn_id,
+            Some(summary.workspace_uris),
+        )
+    }
+
+    fn deliver_turn(
+        &mut self,
+        request: &DeliverTurnRequest,
+    ) -> Result<HostSessionReceipt, HostAdapterError> {
+        let project = self.core.validate_deliver_turn(request)?;
+        let Some(runtime) = self.runtime.clone() else {
+            return self
+                .core
+                .commit_delivered_turn(request, project, None, None);
+        };
+        let hubs = crate::antigravity::discover_antigravity_hubs(&runtime.daemon_dir())?;
+        let mut args: Vec<std::ffi::OsString> = vec![
+            "--conversation".into(),
+            request.session_id.clone().into(),
+            "--project".into(),
+            request.project_id.clone().into(),
+            "--add-dir".into(),
+            project.project_dir.as_os_str().to_os_string(),
+            "--output-format".into(),
+            "json".into(),
+        ];
+        if let Some(model) = &request.model {
+            args.push("--model".into());
+            args.push(model.into());
+        }
+        args.push("-p".into());
+        args.push(request.prompt.clone().into());
+
+        let payload = crate::antigravity::run_agy_command(
+            &runtime,
+            &project.project_dir,
+            &args,
+            hubs.first(),
+        )?;
+        if let Some(returned_conv) = payload
+            .get("conversation_id")
+            .or_else(|| payload.get("conversationId"))
+            .and_then(serde_json::Value::as_str)
+        {
+            if returned_conv != request.session_id {
+                return Err(HostAdapterError::AntigravityProtocol(format!(
+                    "agy --conversation {} returned mismatched conversation_id {returned_conv}",
+                    request.session_id
+                )));
+            }
+        }
+        let turn_id = payload
+            .get("turn_id")
+            .or_else(|| payload.get("turnId"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string);
+
+        let summary = crate::antigravity::read_conversation_summary(
+            &runtime.sqlite3_bin,
+            &runtime.summaries_db_path(),
+            &request.session_id,
+        )?
+        .ok_or_else(|| {
+            HostAdapterError::AntigravityProtocol(format!(
+                "conversation {} missing from conversation_summaries.db after deliver_turn",
+                request.session_id
+            ))
+        })?;
+        let expected_uri = format!("file://{}", project.project_dir.display());
+        crate::antigravity::verify_summary_binding(
+            &summary,
+            &project.project_id,
+            &expected_uri,
+        )?;
+
+        self.core.commit_delivered_turn(
+            request,
+            project,
+            turn_id,
+            Some(summary.workspace_uris),
+        )
+    }
+}
 
 /// Factory constructing a boxed `DesktopHostAdapter` for any of the four canonical hosts.
 pub fn build_host_adapter(
