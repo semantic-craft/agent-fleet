@@ -1471,7 +1471,7 @@ else:
     assert_eq!(lines[0]["id"], 1);
     assert_eq!(lines[0]["result"]["serverInfo"]["name"], "agent-fleet-mcp");
     assert_eq!(lines[1]["id"], 2);
-    assert_eq!(lines[1]["result"]["tools"].as_array().unwrap().len(), 4);
+    assert_eq!(lines[1]["result"]["tools"].as_array().unwrap().len(), 5);
     assert_eq!(lines[2]["id"], 3);
     assert_eq!(lines[2]["result"]["isError"], false);
     assert_eq!(
@@ -1480,4 +1480,236 @@ else:
     );
     assert_eq!(lines[3]["id"], 4);
     assert_eq!(lines[3]["result"]["isError"], false);
+}
+
+#[test]
+fn grokbot_bidirectional_interoperability_with_all_five_desktop_hosts_and_agent_wiring() {
+    use std::process::Stdio;
+
+    let f = FourHostClusterFixture::new();
+    let config_home = f.root.join("config-home");
+    fs::create_dir_all(&config_home).unwrap();
+
+    // 1. Run `fleet-cli setup --wire-agents true --config-home <dir>` and verify idempotent wiring
+    let setup_out = f.run_cli(&[
+        "setup",
+        "--projects-root",
+        &f.projects_root.display().to_string(),
+        "--state-root",
+        &f.state_root.display().to_string(),
+        "--wire-agents",
+        "true",
+        "--config-home",
+        &config_home.display().to_string(),
+    ]);
+    assert!(
+        setup_out.status.success(),
+        "setup failed: {}",
+        String::from_utf8_lossy(&setup_out.stderr)
+    );
+    let setup_val: Value = serde_json::from_slice(&setup_out.stdout).unwrap();
+    assert_eq!(setup_val["status"], "ok");
+    assert_eq!(setup_val["grokbot"]["ready"], true);
+    assert_eq!(
+        setup_val["canonical_hosts"].as_array().unwrap().len(),
+        5
+    );
+    assert_eq!(
+        setup_val["wired_agents"].as_array().unwrap().len(),
+        6
+    );
+    assert!(config_home.join(".grok/config.toml").exists());
+    assert!(config_home.join(".grok/hooks/agent-fleet.json").exists());
+    assert!(config_home.join(".gemini/config/mcp_config.json").exists());
+    assert!(config_home.join(".codex/config.toml").exists());
+    assert!(config_home.join(".dsh/cordis.patch.yml").exists());
+    assert!(config_home.join(".zcode/cli/config.json").exists());
+    assert!(config_home.join(".cindy/mcp.json").exists());
+
+    // 2. GrokBot dispatches tasks to all 5 desktop hosts via `fleet-cli send --from grokbot`
+    let hosts = [
+        ("antigravity-desktop", "grok-to-agy"),
+        ("openai-dots", "grok-to-dots"),
+        ("deepseek-harness", "grok-to-dsh"),
+        ("cindy", "grok-to-cindy"),
+        ("zcode", "grok-to-zcode"),
+    ];
+
+    let mut outbound_ids = Vec::new();
+    for (host, slug) in hosts {
+        let out = f.run_cli(&[
+            "send",
+            "--to",
+            &format!("{host}/{slug}"),
+            "--from",
+            "grokbot",
+            "--title",
+            &format!("GrokBot Task for {host}"),
+            "--prompt",
+            &format!("Please inspect {slug} and reply to grokbot."),
+            "--projects-root",
+            &f.projects_root.display().to_string(),
+            "--state-root",
+            &f.state_root.display().to_string(),
+        ]);
+        assert!(
+            out.status.success(),
+            "grokbot -> {host} failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let val: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(val["from"], "grokbot");
+        assert_eq!(val["peer_framed"], true);
+        assert_eq!(val["host"], host);
+        assert_eq!(
+            val["project_dir"],
+            f.projects_root.join(slug).display().to_string()
+        );
+        assert!(val["session_id"].as_str().is_some());
+        let msg_id = val["delivery_id"].as_str().unwrap().to_string();
+        outbound_ids.push((host, slug, msg_id));
+    }
+
+    // Verify each desktop host's unread mailbox entry via `fleet-cli hook <host> stop` contains `<fleet-message from="grokbot" ...>`
+    for (host, _slug, _msg_id) in &outbound_ids {
+        let inbox_out = f.run_cli(&[
+            "inbox",
+            "--for",
+            host,
+            "--state-root",
+            &f.state_root.display().to_string(),
+            "--ack",
+            "false",
+        ]);
+        assert!(inbox_out.status.success());
+        let inbox_val: Value = serde_json::from_slice(&inbox_out.stdout).unwrap();
+        assert_eq!(inbox_val["count"], 1);
+        assert_eq!(inbox_val["messages"][0]["from"], "grokbot");
+
+        let hook_out = f.run_cli(&[
+            "hook",
+            host,
+            "stop",
+            "--state-root",
+            &f.state_root.display().to_string(),
+        ]);
+        assert!(hook_out.status.success());
+        let hook_stdout = String::from_utf8_lossy(&hook_out.stdout);
+        assert!(hook_stdout.contains("<fleet-message from=\"grokbot\""));
+        assert!(hook_stdout.contains("</fleet-message>"));
+    }
+
+    // 3. All 5 desktop hosts reply back to `grokbot` using `--to grokbot --from <host>/<slug> --reply-to <id>`
+    for (host, slug, msg_id) in &outbound_ids {
+        let reply_out = f.run_cli(&[
+            "send",
+            "--to",
+            "grokbot",
+            "--from",
+            &format!("{host}/{slug}"),
+            "--reply-to",
+            msg_id,
+            "--title",
+            &format!("Reply from {host}"),
+            "--prompt",
+            &format!("Completed {slug} on {host}."),
+            "--projects-root",
+            &f.projects_root.display().to_string(),
+            "--state-root",
+            &f.state_root.display().to_string(),
+        ]);
+        assert!(
+            reply_out.status.success(),
+            "{host} -> grokbot reply failed: {}",
+            String::from_utf8_lossy(&reply_out.stderr)
+        );
+        let reply_val: Value = serde_json::from_slice(&reply_out.stdout).unwrap();
+        assert_eq!(reply_val["host"], "grokbot");
+        assert_eq!(reply_val["to"], "grokbot/agent-fleet");
+        assert_eq!(reply_val["reply_to"], *msg_id);
+        assert_eq!(reply_val["tier"], "accepted");
+    }
+
+    // 4. Verify `fleet-cli who` reports 5 unread messages in `grokbot` inbox
+    let who_out = f.run_cli(&[
+        "who",
+        "--state-root",
+        &f.state_root.display().to_string(),
+    ]);
+    assert!(who_out.status.success());
+    let who_val: Value = serde_json::from_slice(&who_out.stdout).unwrap();
+    assert_eq!(who_val["grokbot"]["unread_inbox_count"], 5);
+    assert_eq!(who_val["canonical_peers"].as_array().unwrap().len(), 6);
+
+    // 5. Verify GrokBot can pull its 5 replies via MCP `check_inbox` tool (and idempotently gets 0 on second call)
+    let mut mcp_child = Command::new(env!("CARGO_BIN_EXE_fleet-cli"))
+        .args([
+            "mcp",
+            "--projects-root",
+            &f.projects_root.display().to_string(),
+            "--state-root",
+            &f.state_root.display().to_string(),
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .env_clear()
+        .spawn()
+        .unwrap();
+
+    let requests = [
+        json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "check_inbox",
+                "arguments": {
+                    "for_agent": "grokbot",
+                    "ack": true
+                }
+            }
+        }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": "check_inbox",
+                "arguments": {
+                    "for_agent": "grokbot",
+                    "ack": true
+                }
+            }
+        }),
+    ];
+    {
+        let stdin = mcp_child.stdin.as_mut().unwrap();
+        for req in &requests {
+            writeln!(stdin, "{req}").unwrap();
+        }
+    }
+    let mcp_out = mcp_child.wait_with_output().unwrap();
+    assert!(mcp_out.status.success());
+    let lines: Vec<Value> = String::from_utf8_lossy(&mcp_out.stdout)
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(lines.len(), 2);
+    assert_eq!(
+        lines[0]["result"]["structuredContent"]["count"],
+        5
+    );
+    assert_eq!(
+        lines[0]["result"]["structuredContent"]["framed_messages"]
+            .as_array()
+            .unwrap()
+            .len(),
+        5
+    );
+    assert_eq!(
+        lines[1]["result"]["structuredContent"]["count"],
+        0
+    );
 }

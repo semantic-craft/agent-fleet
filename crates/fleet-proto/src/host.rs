@@ -289,6 +289,113 @@ impl ExternalAgentManifest {
     }
 }
 
+/// Normalizes a peer or caller identifier (`grokbot`, `grok`, `grok-bot`, `grok-cli`, or a canonical desktop host).
+pub fn normalize_peer_id(raw: &str) -> Result<String, ProjectPathError> {
+    let trimmed = raw.trim();
+    validate_nonempty_id("peer_id", trimmed)?;
+    if let Some((agent_part, slug_part)) = trimmed.split_once('/') {
+        let norm_agent = normalize_single_agent_id(agent_part)?;
+        let norm_slug = validate_project_slug(slug_part.trim())?;
+        Ok(format!("{norm_agent}/{norm_slug}"))
+    } else {
+        normalize_single_agent_id(trimmed)
+    }
+}
+
+fn normalize_single_agent_id(raw: &str) -> Result<String, ProjectPathError> {
+    let trimmed = raw.trim();
+    if let Ok(desktop) = DesktopHostKind::parse(trimmed) {
+        return Ok(desktop.as_str().to_string());
+    }
+    match trimmed.to_ascii_lowercase().as_str() {
+        "grok" | "grokbot" | "grok-bot" | "grok_bot" | "grok-cli" => Ok("grokbot".to_string()),
+        _ => {
+            validate_project_slug(trimmed)?;
+            Ok(trimmed.to_string())
+        }
+    }
+}
+
+/// Small text file attachment carried alongside a peer message (modeled on Reason Network's inbox attachments).
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MessageAttachment {
+    pub relative_path: String,
+    pub size_bytes: usize,
+    pub saved_path: Option<PathBuf>,
+}
+
+/// Bidirectional peer message record persisted in the engine's mailbox store (`<state_root>/mailboxes.json`).
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct InboxMessage {
+    pub id: String,
+    pub from: String,
+    pub to: String,
+    pub project_slug: Option<String>,
+    pub session_id: Option<String>,
+    pub reply_to: Option<String>,
+    pub body: String,
+    #[serde(default)]
+    pub files: Vec<MessageAttachment>,
+    #[serde(default = "default_true")]
+    pub wake: bool,
+    #[serde(default)]
+    pub notify: bool,
+    pub created_at_unix: u64,
+    #[serde(default)]
+    pub delivered: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl InboxMessage {
+    /// Renders the message as a structured peer input block (`<fleet-message ...>`) so the receiving
+    /// desktop agent or GrokBot knows the sender identity, project repo, message ID, and how to reply.
+    pub fn format_peer_frame(&self) -> String {
+        let repo_attr = self
+            .project_slug
+            .as_deref()
+            .map(|s| format!(" repo=\"{s}\""))
+            .unwrap_or_default();
+        let reply_attr = self
+            .reply_to
+            .as_deref()
+            .map(|r| format!(" reply_to=\"{r}\""))
+            .unwrap_or_default();
+        let mut out = format!(
+            "<fleet-message from=\"{}\" to=\"{}\" id=\"{}\"{}{}>\n{}\n</fleet-message>\nFrom peer agent \"{}\". Reply with the agent-fleet send_message tool to \"{}\" with reply_to=\"{}\".",
+            self.from,
+            self.to,
+            self.id,
+            repo_attr,
+            reply_attr,
+            self.body.trim(),
+            self.from,
+            self.from,
+            self.id
+        );
+        if !self.files.is_empty() {
+            out.push_str("\nAttached files:");
+            for f in &self.files {
+                if let Some(saved) = &f.saved_path {
+                    out.push_str(&format!(
+                        "\n- {} ({} bytes) -> {}",
+                        f.relative_path,
+                        f.size_bytes,
+                        saved.display()
+                    ));
+                } else {
+                    out.push_str(&format!("\n- {} ({} bytes)", f.relative_path, f.size_bytes));
+                }
+            }
+        }
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

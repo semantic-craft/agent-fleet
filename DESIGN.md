@@ -63,13 +63,16 @@ Every canonical desktop host implements the `DesktopHostAdapter` trait in `crate
 - Model selection belongs to the dispatcher configuration (`--model` or host config such as Codex Magpie `zcode/GLM-5.3-Flash`).
 - `validate_brief` (`crates/fleet-proto/src/brief.rs`) rejects prompts that ask a worker agent to self-attest its model identity or abort with `MODEL_WRONG`.
 
-## 3. Open-Source Extensibility (`agents.d` and MCP)
+## 3. Open-Source Extensibility, Peer Mailbox, and MCP
 
-### 3.1 Standard MCP Server (`fleet-cli mcp`)
-Any MCP-capable client (Claude Code, Cursor, OpenCode, Gemini CLI, Zed, or custom orchestrators) can wire `fleet-cli mcp --projects-root <dir> --state-root <dir>` over stdio JSON-RPC 2.0. It exposes four tools:
-- `list_team`: enumerates all five canonical desktop hosts, their sidebar projects and active sessions, live `SessionDirectory` entries, and registered external agents.
-- `send_message`: dispatches a new task or same-session follow-up turn to `<agent>/<project-slug>` (`antigravity-desktop`, `openai-dots`, `deepseek-harness`, `cindy`, `zcode`, or any external agent ID).
-- `message_status`: reads back the correlated session and turn history for a host and `session_id`.
+### 3.1 Standard MCP Server (`fleet-cli mcp`) and Peer Mailbox (`FleetMailboxStore`)
+Any MCP-capable client (GrokBot, Claude Code, Cursor, OpenCode, Gemini CLI, Zed, or custom orchestrators) can wire `fleet-cli mcp --projects-root <dir> --state-root <dir>` over stdio JSON-RPC 2.0, or run `fleet-cli setup --wire-agents true` to automatically wire `.grok/config.toml` + `.grok/hooks/agent-fleet.json`, `.gemini/config/mcp_config.json`, `.codex/config.toml`, `.dsh/cordis.patch.yml`, `.zcode/cli/config.json`, and `.cindy/mcp.json`.
+
+It exposes five tools:
+- `list_team`: enumerates all five canonical desktop hosts, `grokbot` unread inbox state, sidebar projects and active sessions, live `SessionDirectory` entries, and registered external agents.
+- `send_message`: dispatches a new task or same-session follow-up turn to `<agent>/<project-slug>` (`antigravity-desktop`, `openai-dots`, `deepseek-harness`, `cindy`, `zcode`, `grokbot`, or any external agent ID). When `from` is provided, the message is framed as a peer `<fleet-message from="..." to="..." id="..." repo="...">` block (never spoofing the human user) and recorded in `<state_root>/mailboxes.json`.
+- `check_inbox`: pulls unread peer messages and replies from `<state_root>/mailboxes.json` for `for_agent` (defaulting to `grokbot` or `FLEET_AGENT`) and idempotently marks them delivered (`ack: true`).
+- `message_status`: reads back the correlated session and turn history for a desktop host (`session_id`) or a `grokbot` mailbox message ID.
 - `register_agent`: registers a third-party open-source agent manifest in `<state_root>/agents.d/<id>.json`.
 
 ### 3.2 Pluggable External Agent Manifests (`agents.d/<id>.json`)

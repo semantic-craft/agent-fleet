@@ -3,8 +3,8 @@
 **agent-fleet 是融合 [sleep2agi/agent-network](https://github.com/sleep2agi/agent-network) 与 [reason-machines/reason-network](https://github.com/reason-machines/reason-network) 优势的开源多 Agent 协同与桌面侧栏派活引擎**。
 
 它同时提供两层核心能力：
-1. **五大桌面 Agent 左侧栏项目会话互派**：支持 **Antigravity Desktop** (`antigravity-desktop`)、**Codex Desktop** (`openai-dots` / `codex`)、**DeepSeek Harness Desktop** (`deepseek-harness` / `dsh`)、**Cindy Desktop** (`cindy`) 与 **ZCode Desktop** (`zcode`) 五个桌面端之间互相派活。任何一端发出的任务都会在目标桌面端左侧栏对应的项目（`~/Projects/<slug>`）下自动挂载并显示真实会话线程，后续追问留在同一会话内。
-2. **Reason Network 级开放接入与第三方开源 Agent 扩展**：任何电脑运行本引擎后，外部开源 Agent 均可通过标准 JSON-RPC 2.0 stdio MCP 服务（`fleet-cli mcp`）访问团队目录与互相派活，或通过 `<state_root>/agents.d/<id>.json` 插件清单（`fleet-cli agents register`）零改 Rust 核心接入新 Agent。架构与存储契约详见 [DESIGN.md](DESIGN.md) 与 [docs/rust-engine.md](docs/rust-engine.md)。
+1. **五大桌面 Agent 与 GrokBot 双向互派**：支持 **Antigravity Desktop** (`antigravity-desktop`)、**Codex Desktop** (`openai-dots` / `codex`)、**DeepSeek Harness Desktop** (`deepseek-harness` / `dsh`)、**Cindy Desktop** (`cindy`)、**ZCode Desktop** (`zcode`) 五大桌面端之间，以及 **GrokBot** (`grokbot` / `grok`) 与这五大桌面端之间双向派活。任何一端发往桌面宿主的任务都会在目标桌面端左侧栏对应的项目（`~/Projects/<slug>`）下自动挂载并显示真实会话线程（带 `<fleet-message from="...">` 对等信封），桌面端也可通过 `--to grokbot --reply-to <id>` 回信，由 GrokBot 通过 `check_inbox` 或 `fleet-cli hook` 幂等拉取。
+2. **Reason Network 级独立引擎与第三方开源 Agent 扩展**：`agent-fleet` 自身即为独立完整的 Rust 协调引擎，无需外部守护进程即可通过 `fleet-cli setup --wire-agents true` 自动接线本地 Grok / 五大桌面宿主配置，通过标准 JSON-RPC 2.0 stdio MCP 服务（`fleet-cli mcp`）暴露 `list_team`、`send_message`、`check_inbox`、`message_status`、`register_agent` 五大工具，或通过 `<state_root>/agents.d/<id>.json` 插件清单（`fleet-cli agents register`）零改 Rust 核心接入新 Agent。架构与存储契约详见 [DESIGN.md](DESIGN.md) 与 [docs/rust-engine.md](docs/rust-engine.md)。
 
 体系落在专属的 `~/Projects`（少仓；主 A 可换 Grok、Dots 或 Cindy）。四层、外循环 orchestrator、内循环编排和 worker 互派见 [docs/architecture.md](docs/architecture.md)。PODAS 只是伞名，没有目录。
 
@@ -17,6 +17,7 @@
 | `deepseek-harness` | `dsh` | `~/.dsh/storages/workspace.json` + `session_projcache` + 双帧 `session.v4.jsonl.zstd` | `deepseek-harness/my-project` |
 | `cindy` | `cindy-desktop` | Cindy Gateway (`sessions.patch` + `sessions.create` + `cindy_session_send`) + JSONL | `cindy/my-project` |
 | `zcode` | `zcode-desktop` | `~/.zcode/v2/tasks-index.sqlite` (`projects` + `project_roots` + `tasks`) + `cli/db/db.sqlite` | `zcode/my-project` |
+| `grokbot` (对等信箱节点) | `grok`, `grok-bot`, `grok-cli` | `<state_root>/mailboxes.json` 幂等信箱 + `<fleet-message>` 对等信封 + `.grok/config.toml` & `hooks` | `grokbot/my-project` |
 
 ## 快速上手（任何电脑一键搭建互通服务）
 
@@ -24,24 +25,30 @@
 # 1. 编译开源 Rust 引擎（包含 fleet-proto、fleet-hub、fleet-daemon、fleet-cli）
 cargo build --workspace
 
-# 2. 初始化工作区并生成标准 MCP 配置与健康检查报告
-cargo run -p fleet-cli -- setup --projects-root "$HOME/Projects" --state-root "$HOME/.local/state/agent-fleet"
-cargo run -p fleet-cli -- doctor --projects-root "$HOME/Projects" --state-root "$HOME/.local/state/agent-fleet"
+# 2. 初始化工作区，自动将 MCP 与生命周期 Hook 写入 GrokBot 及五大桌面宿主配置
+cargo run -p fleet-cli -- setup --wire-agents true
+cargo run -p fleet-cli -- doctor
 
-# 3. 查看当前五大桌面宿主、左侧栏项目会话与已注册外部开源 Agent
-cargo run -p fleet-cli -- who --state-root "$HOME/.local/state/agent-fleet"
+# 3. 查看当前五大桌面宿主、GrokBot 未读信箱与已注册外部开源 Agent
+cargo run -p fleet-cli -- who
 
-# 4. 向任意桌面 Agent 派活（自动创建 ~/Projects/<slug> 并挂载到目标桌面左侧栏项目下）
+# 4. 从 GrokBot 向任意桌面 Agent 派活（自动创建 ~/Projects/<slug> 并挂载到目标桌面左侧栏项目下）
 cargo run -p fleet-cli -- send \
+  --from grokbot \
   --to zcode/demo-service \
-  --projects-root "$HOME/Projects" \
-  --state-root "$HOME/.local/state/agent-fleet" \
   --title "Demo Service Architecture" \
   --prompt "Inspect the repository and run ./scripts/check."
 
-# 5. 注册第三方开源 Agent（零改 Rust 核心即可加入派活网络）
+# 5. 桌面 Agent 完成任务后向 GrokBot 回信，并由 GrokBot 拉取未读回执
+cargo run -p fleet-cli -- send \
+  --from zcode/demo-service \
+  --to grokbot \
+  --reply-to send-zcode-1 \
+  --prompt "All checks passed."
+cargo run -p fleet-cli -- inbox --for grokbot
+
+# 6. 注册第三方开源 Agent（零改 Rust 核心即可加入派活网络）
 cargo run -p fleet-cli -- agents register \
-  --state-root "$HOME/.local/state/agent-fleet" \
   --id open-coder \
   --name "OpenCoder CLI" \
   --command /usr/local/bin/open-coder \
@@ -50,7 +57,7 @@ cargo run -p fleet-cli -- agents register \
 
 ### 将任意开源 Agent 接入 MCP (`fleet-cli mcp`)
 
-在 Claude Code、Cursor、OpenCode、ZCode、Codex 或 Antigravity 的 MCP 配置中加入：
+在 Grok、Claude Code、Cursor、OpenCode、ZCode、Codex 或 Antigravity 的 MCP 配置中加入（或直接运行 `fleet-cli setup --wire-agents true` 自动写入）：
 
 ```json
 {
@@ -69,7 +76,7 @@ cargo run -p fleet-cli -- agents register \
 }
 ```
 
-接入后即可直接调用 `list_team`、`send_message`、`message_status` 与 `register_agent` 四个标准 MCP 工具，实现跨桌面 Agent 的双向派活与同线程追问。
+接入后即可直接调用 `list_team`、`send_message`、`check_inbox`、`message_status` 与 `register_agent` 五个标准 MCP 工具，实现 GrokBot 与五大桌面 Agent 之间的双向派活与同线程追问。
 
 ## 当前派活（本机）
 

@@ -1,12 +1,13 @@
 use fleet_daemon::{
-    inspect_host_state, run_host_poteto_relay, AntigravityDesktopAdapter, AntigravityRuntimeConfig,
-    CindyAdapter, CindyRuntimeConfig, DeepSeekHarnessAdapter, DesktopHostAdapter, DshRuntimeConfig,
-    ExternalAgentRegistry, HostRuntimeOptions, OpenAiDotsAdapter, OpenAiDotsRuntimeConfig,
-    PotetoRelayTask, SessionDirectory, ZcodeAdapter, ZcodeRuntimeConfig,
+    inspect_host_state, run_host_poteto_relay, wire_agent_configs, AntigravityDesktopAdapter,
+    AntigravityRuntimeConfig, CindyAdapter, CindyRuntimeConfig, DeepSeekHarnessAdapter,
+    DesktopHostAdapter, DshRuntimeConfig, ExternalAgentRegistry, FleetMailboxStore,
+    HostRuntimeOptions, OpenAiDotsAdapter, OpenAiDotsRuntimeConfig, PotetoRelayTask,
+    SessionDirectory, ZcodeAdapter, ZcodeRuntimeConfig,
 };
 use fleet_proto::{
-    CreateSessionRequest, DeliverTurnRequest, DesktopHostKind, ExternalAgentManifest,
-    SessionSelector,
+    normalize_peer_id, CreateSessionRequest, DeliverTurnRequest, DesktopHostKind,
+    ExternalAgentManifest, InboxMessage, SessionSelector,
 };
 use serde_json::{json, Value};
 use std::{
@@ -20,7 +21,7 @@ use std::{
 };
 
 const USAGE: &str =
-    "usage: fleet-cli <sessions|hosts|relay|who|send|agents|setup|doctor|mcp> ...";
+    "usage: fleet-cli <sessions|hosts|relay|who|send|inbox|hook|agents|setup|doctor|mcp> ...";
 
 static NEXT_DELIVERY_SEQ: AtomicU64 = AtomicU64::new(1);
 
@@ -434,6 +435,12 @@ fn build_team_inventory(
     let ext_registry = ExternalAgentRegistry::new(state_root.to_path_buf())
         .map_err(|e| e.to_string())?;
     let external_agents = ext_registry.list().map_err(|e| e.to_string())?;
+    let mailbox = FleetMailboxStore::new(state_root.to_path_buf()).map_err(|e| e.to_string())?;
+    let grokbot_unread = mailbox
+        .check_inbox("grokbot", false)
+        .map_err(|e| e.to_string())?
+        .len();
+    let total_messages = mailbox.list_all().map_err(|e| e.to_string())?.len();
 
     let live_sessions = if let Some(dir) = directory_opt {
         if dir.exists() {
@@ -446,9 +453,19 @@ fn build_team_inventory(
         Vec::new()
     };
 
+    let mut canonical_peers = vec!["grokbot"];
+    canonical_peers.extend(DesktopHostKind::ALL.iter().map(|h| h.as_str()));
+
     Ok(json!({
         "engine": "agent-fleet",
         "canonical_desktop_hosts": DesktopHostKind::ALL.iter().map(|h| h.as_str()).collect::<Vec<_>>(),
+        "canonical_peers": canonical_peers,
+        "grokbot": {
+            "peer_id": "grokbot",
+            "unread_inbox_count": grokbot_unread,
+            "ready": true,
+        },
+        "mailbox_messages_count": total_messages,
         "desktop_hosts": desktop_hosts,
         "external_agents": external_agents,
         "session_directory": live_sessions,
@@ -500,6 +517,13 @@ fn run_who(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn is_grokbot_target(raw: &str) -> bool {
+    matches!(
+        raw.trim().to_ascii_lowercase().as_str(),
+        "grok" | "grokbot" | "grok-bot" | "grok_bot" | "grok-cli"
+    )
+}
+
 fn parse_target_and_slug(
     to_raw: &str,
     slug_opt: Option<&str>,
@@ -509,6 +533,9 @@ fn parse_target_and_slug(
             return Err("invalid --to target; expected <agent>/<project-slug>".into());
         }
         Ok((host_part.trim().to_string(), slug_part.trim().to_string()))
+    } else if is_grokbot_target(to_raw) {
+        let slug = slug_opt.unwrap_or("agent-fleet").trim().to_string();
+        Ok(("grokbot".to_string(), slug))
     } else {
         let slug = slug_opt.ok_or(
             "--slug is required when --to does not specify <agent>/<project-slug>",
@@ -529,10 +556,75 @@ fn dispatch_unified_message(
     prompt: String,
     model_opt: Option<String>,
     execute_external: bool,
+    from_opt: Option<String>,
+    reply_to_opt: Option<String>,
     rt: &HostRuntimeOptions,
 ) -> Result<Value, String> {
     let resolved_title = title_opt.unwrap_or_else(|| slug.to_string());
+    let created_at_unix = now()?;
+
+    if is_grokbot_target(target_agent) {
+        let sender = from_opt
+            .as_deref()
+            .map(normalize_peer_id)
+            .transpose()
+            .map_err(|e| e.to_string())?
+            .unwrap_or_else(|| "terminal".to_string());
+        let to_addr = format!("grokbot/{slug}");
+        let msg = InboxMessage {
+            id: delivery_id.clone(),
+            from: sender.clone(),
+            to: to_addr.clone(),
+            project_slug: Some(slug.to_string()),
+            session_id: session_id_opt.clone(),
+            reply_to: reply_to_opt.clone(),
+            body: prompt,
+            files: Vec::new(),
+            wake: true,
+            notify: false,
+            created_at_unix,
+            delivered: false,
+        };
+        let mailbox = FleetMailboxStore::new(state_root).map_err(|e| e.to_string())?;
+        let saved = mailbox.enqueue(msg).map_err(|e| e.to_string())?;
+        return Ok(json!({
+            "host": "grokbot",
+            "delivery_id": saved.id,
+            "from": saved.from,
+            "to": saved.to,
+            "project_slug": slug,
+            "reply_to": saved.reply_to,
+            "tier": "accepted",
+        }));
+    }
+
     if let Ok(host_kind) = DesktopHostKind::parse(target_agent) {
+        let to_addr = format!("{}/{slug}", host_kind.as_str());
+        let effective_prompt = if let Some(raw_from) = &from_opt {
+            let norm_from = normalize_peer_id(raw_from).map_err(|e| e.to_string())?;
+            let msg = InboxMessage {
+                id: delivery_id.clone(),
+                from: norm_from,
+                to: to_addr,
+                project_slug: Some(slug.to_string()),
+                session_id: session_id_opt.clone(),
+                reply_to: reply_to_opt.clone(),
+                body: prompt,
+                files: Vec::new(),
+                wake: true,
+                notify: false,
+                created_at_unix,
+                delivered: false,
+            };
+            let framed = msg.format_peer_frame();
+            let mailbox =
+                FleetMailboxStore::new(state_root.clone()).map_err(|e| e.to_string())?;
+            mailbox.enqueue(msg).map_err(|e| e.to_string())?;
+            framed
+        } else {
+            prompt
+        };
+
         let mut adapter =
             build_configured_adapter(host_kind, projects_root, state_root, rt)?;
         let binding = adapter
@@ -544,7 +636,7 @@ fn dispatch_unified_message(
                 project_id: binding.project_id,
                 session_id,
                 project_dir: binding.project_dir,
-                prompt,
+                prompt: effective_prompt,
                 model: model_opt,
             };
             adapter.deliver_turn(&req).map_err(|e| e.to_string())?
@@ -554,12 +646,23 @@ fn dispatch_unified_message(
                 project_id: binding.project_id,
                 project_dir: binding.project_dir,
                 title: resolved_title,
-                prompt,
+                prompt: effective_prompt,
                 model: model_opt,
             };
             adapter.create_session(&req).map_err(|e| e.to_string())?
         };
-        serde_json::to_value(receipt).map_err(|e| e.to_string())
+        let mut val = serde_json::to_value(receipt).map_err(|e| e.to_string())?;
+        if let Some(raw_from) = from_opt {
+            let norm_from = normalize_peer_id(&raw_from).map_err(|e| e.to_string())?;
+            if let Some(obj) = val.as_object_mut() {
+                obj.insert("from".into(), json!(norm_from));
+                obj.insert("peer_framed".into(), json!(true));
+                if let Some(r) = reply_to_opt {
+                    obj.insert("reply_to".into(), json!(r));
+                }
+            }
+        }
+        Ok(val)
     } else {
         let registry =
             ExternalAgentRegistry::new(state_root).map_err(|e| e.to_string())?;
@@ -581,7 +684,9 @@ fn dispatch_unified_message(
 
 fn run_send(args: &[String]) -> Result<(), String> {
     let allowed = &[
+        "--from",
         "--to",
+        "--reply-to",
         "--slug",
         "--projects-root",
         "--state-root",
@@ -630,10 +735,55 @@ fn run_send(args: &[String]) -> Result<(), String> {
         prompt,
         options.get("--model").cloned(),
         execute_external,
+        options.get("--from").cloned(),
+        options.get("--reply-to").cloned(),
         &rt,
     )?;
     let output = serde_json::to_string_pretty(&val).map_err(|e| e.to_string())?;
     println!("{output}");
+    Ok(())
+}
+
+fn run_inbox(args: &[String]) -> Result<(), String> {
+    let allowed = &["--for", "--ack", "--state-root"];
+    let options = parse_key_value_pairs(&args[1..], allowed)?;
+    let recipient = options.get("--for").ok_or(USAGE)?;
+    let ack = options
+        .get("--ack")
+        .is_none_or(|v| v == "true" || v == "1");
+    let state_root = resolve_state_root(&options)?;
+    let mailbox = FleetMailboxStore::new(state_root).map_err(|e| e.to_string())?;
+    let messages = mailbox
+        .check_inbox(recipient, ack)
+        .map_err(|e| e.to_string())?;
+    let out = json!({
+        "recipient": recipient,
+        "count": messages.len(),
+        "messages": messages,
+    });
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?
+    );
+    Ok(())
+}
+
+fn run_hook(args: &[String]) -> Result<(), String> {
+    if args.len() < 3 {
+        return Err(USAGE.into());
+    }
+    let agent = &args[1];
+    let _event = &args[2];
+    let allowed = &["--state-root"];
+    let options = parse_key_value_pairs(&args[3..], allowed)?;
+    let state_root = resolve_state_root(&options)?;
+    let mailbox = FleetMailboxStore::new(state_root).map_err(|e| e.to_string())?;
+    let messages = mailbox
+        .check_inbox(agent, true)
+        .map_err(|e| e.to_string())?;
+    for msg in messages {
+        println!("{}", msg.format_peer_frame());
+    }
     Ok(())
 }
 
@@ -705,6 +855,8 @@ fn build_setup_or_doctor_report(
     mode: &str,
     projects_root: &Path,
     state_root: &Path,
+    wire_agents: bool,
+    config_home_opt: Option<&Path>,
 ) -> Result<Value, String> {
     if !projects_root.is_absolute() || !state_root.is_absolute() {
         return Err("projects-root and state-root must be absolute paths".into());
@@ -716,9 +868,25 @@ fn build_setup_or_doctor_report(
     let registry =
         ExternalAgentRegistry::new(state_root.to_path_buf()).map_err(|e| e.to_string())?;
     let external_agents = registry.list().map_err(|e| e.to_string())?;
+    let mailbox = FleetMailboxStore::new(state_root.to_path_buf()).map_err(|e| e.to_string())?;
+    let grokbot_unread = mailbox
+        .check_inbox("grokbot", false)
+        .map_err(|e| e.to_string())?
+        .len();
 
     let sqlite_ready = Path::new("/usr/bin/sqlite3").exists();
     let exe_path = env::current_exe().unwrap_or_else(|_| PathBuf::from("fleet-cli"));
+
+    let wired_agents = if mode == "setup" && wire_agents {
+        let home_dir = config_home_opt
+            .map(PathBuf::from)
+            .or_else(|| env::var("HOME").ok().map(PathBuf::from))
+            .ok_or("cannot determine config-home for --wire-agents")?;
+        wire_agent_configs(&home_dir, &exe_path, projects_root, state_root)
+            .map_err(|e| e.to_string())?
+    } else {
+        Vec::new()
+    };
 
     let mut host_checks = Vec::new();
     for kind in DesktopHostKind::ALL {
@@ -739,7 +907,14 @@ fn build_setup_or_doctor_report(
         "projects_root": projects_root,
         "state_root": state_root,
         "sqlite3_available": sqlite_ready,
+        "grokbot": {
+            "peer_id": "grokbot",
+            "mailbox_file": mailbox.mailbox_file(),
+            "unread_inbox_count": grokbot_unread,
+            "ready": true,
+        },
         "canonical_hosts": host_checks,
+        "wired_agents": wired_agents,
         "external_agents_count": external_agents.len(),
         "mcp_server_config": {
             "mcpServers": {
@@ -759,11 +934,26 @@ fn build_setup_or_doctor_report(
 }
 
 fn run_setup_or_doctor(mode: &str, args: &[String]) -> Result<(), String> {
-    let allowed = &["--projects-root", "--state-root"];
+    let allowed = &[
+        "--projects-root",
+        "--state-root",
+        "--wire-agents",
+        "--config-home",
+    ];
     let options = parse_key_value_pairs(&args[1..], allowed)?;
     let projects_root = resolve_projects_root(&options)?;
     let state_root = resolve_state_root(&options)?;
-    let report = build_setup_or_doctor_report(mode, &projects_root, &state_root)?;
+    let wire_agents = options
+        .get("--wire-agents")
+        .is_some_and(|v| v == "true" || v == "1");
+    let config_home_opt = options.get("--config-home").map(PathBuf::from);
+    let report = build_setup_or_doctor_report(
+        mode,
+        &projects_root,
+        &state_root,
+        wire_agents,
+        config_home_opt.as_deref(),
+    )?;
     println!(
         "{}",
         serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?
@@ -776,7 +966,7 @@ fn mcp_tools_schema() -> Value {
         "tools": [
             {
                 "name": "list_team",
-                "description": "List all five canonical desktop agents (antigravity-desktop, openai-dots, deepseek-harness, cindy, zcode), their sidebar projects and sessions, plus any registered external open-source agents.",
+                "description": "List GrokBot, all five canonical desktop agents (antigravity-desktop, openai-dots, deepseek-harness, cindy, zcode), their sidebar projects and sessions, plus any registered external open-source agents.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {},
@@ -785,13 +975,21 @@ fn mcp_tools_schema() -> Value {
             },
             {
                 "name": "send_message",
-                "description": "Dispatch a task or follow-up message to any of the five desktop agents or a registered external agent. Automatically creates <projects_root>/<slug> and mounts the project in the target desktop sidebar.",
+                "description": "Dispatch a task, peer message, or reply between GrokBot, any of the five desktop agents, or a registered external agent. Automatically creates <projects_root>/<slug> and mounts the project in the target desktop sidebar.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
+                        "from": {
+                            "type": "string",
+                            "description": "Optional sender identity (e.g. 'grokbot', 'antigravity-desktop/my-app', 'zcode/my-app'). When set, frames the message with <fleet-message> and records it in the peer mailbox."
+                        },
                         "to": {
                             "type": "string",
-                            "description": "Target agent or <agent>/<project-slug> (e.g. 'zcode/my-app', 'antigravity-desktop/my-app', 'openai-dots/my-app', 'deepseek-harness/my-app', 'cindy/my-app')."
+                            "description": "Target agent or <agent>/<project-slug> (e.g. 'grokbot', 'zcode/my-app', 'antigravity-desktop/my-app', 'openai-dots/my-app', 'deepseek-harness/my-app', 'cindy/my-app')."
+                        },
+                        "reply_to": {
+                            "type": "string",
+                            "description": "Optional message/delivery ID being replied to."
                         },
                         "slug": {
                             "type": "string",
@@ -826,18 +1024,35 @@ fn mcp_tools_schema() -> Value {
                 }
             },
             {
+                "name": "check_inbox",
+                "description": "Check unread peer messages or replies addressed to GrokBot or any desktop agent (modeled on Reason Network check_inbox).",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "for_agent": {
+                            "type": "string",
+                            "description": "Recipient agent or <agent>/<slug> (defaults to 'grokbot' or FLEET_AGENT env var)."
+                        },
+                        "ack": {
+                            "type": "boolean",
+                            "description": "Mark returned messages as delivered (default true)."
+                        }
+                    }
+                }
+            },
+            {
                 "name": "message_status",
-                "description": "Read back the correlated project and session state for a desktop host and session_id.",
+                "description": "Read back the correlated project and session state for a desktop host and session_id, or a peer message by delivery_id.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "host": {
                             "type": "string",
-                            "description": "Canonical desktop host (openai-dots, cindy, deepseek-harness, antigravity-desktop, zcode)."
+                            "description": "Canonical desktop host (openai-dots, cindy, deepseek-harness, antigravity-desktop, zcode) or 'grokbot'."
                         },
                         "session_id": {
                             "type": "string",
-                            "description": "Session or conversation ID to inspect."
+                            "description": "Session/conversation ID (or message delivery_id when host is 'grokbot') to inspect."
                         }
                     },
                     "required": ["host", "session_id"]
@@ -889,11 +1104,13 @@ fn handle_mcp_tool_call(
             let (target_agent, slug) = parse_target_and_slug(to_raw, slug_opt)?;
             let prompt = args
                 .get("prompt")
+                .or_else(|| args.get("message"))
                 .and_then(Value::as_str)
                 .ok_or("send_message requires 'prompt'")?
                 .to_string();
             let delivery_id = args
                 .get("delivery_id")
+                .or_else(|| args.get("idempotency_key"))
                 .and_then(Value::as_str)
                 .map(str::to_string)
                 .unwrap_or_else(|| unique_delivery_id("mcp", &target_agent));
@@ -907,6 +1124,15 @@ fn handle_mcp_tool_call(
                 .map(str::to_string);
             let model_opt = args
                 .get("model")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let from_opt = args
+                .get("from")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .or_else(|| env::var("FLEET_AGENT").ok());
+            let reply_to_opt = args
+                .get("reply_to")
                 .and_then(Value::as_str)
                 .map(str::to_string);
             let execute_external = args
@@ -924,8 +1150,31 @@ fn handle_mcp_tool_call(
                 prompt,
                 model_opt,
                 execute_external,
+                from_opt,
+                reply_to_opt,
                 rt,
             )?
+        }
+        "check_inbox" => {
+            let recipient = args
+                .get("for_agent")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .or_else(|| env::var("FLEET_AGENT").ok())
+                .unwrap_or_else(|| "grokbot".to_string());
+            let ack = args.get("ack").and_then(Value::as_bool).unwrap_or(true);
+            let mailbox =
+                FleetMailboxStore::new(state_root.to_path_buf()).map_err(|e| e.to_string())?;
+            let messages = mailbox
+                .check_inbox(&recipient, ack)
+                .map_err(|e| e.to_string())?;
+            let framed: Vec<String> = messages.iter().map(InboxMessage::format_peer_frame).collect();
+            json!({
+                "recipient": recipient,
+                "count": messages.len(),
+                "messages": messages,
+                "framed_messages": framed,
+            })
         }
         "message_status" => {
             let host_str = args
@@ -936,14 +1185,24 @@ fn handle_mcp_tool_call(
                 .get("session_id")
                 .and_then(Value::as_str)
                 .ok_or("message_status requires 'session_id'")?;
-            let kind = DesktopHostKind::parse(host_str).map_err(|e| e.to_string())?;
-            let (_projects, sessions) =
-                inspect_host_state(kind, state_root).map_err(|e| e.to_string())?;
-            let session = sessions
-                .into_iter()
-                .find(|s| s.session_id == session_id)
-                .ok_or_else(|| format!("session {session_id} not found on {kind}"))?;
-            serde_json::to_value(session).map_err(|e| e.to_string())?
+            if is_grokbot_target(host_str) || host_str == "mailbox" {
+                let mailbox =
+                    FleetMailboxStore::new(state_root.to_path_buf()).map_err(|e| e.to_string())?;
+                let msg = mailbox
+                    .get_message(session_id)
+                    .map_err(|e| e.to_string())?
+                    .ok_or_else(|| format!("message {session_id} not found in mailbox"))?;
+                serde_json::to_value(msg).map_err(|e| e.to_string())?
+            } else {
+                let kind = DesktopHostKind::parse(host_str).map_err(|e| e.to_string())?;
+                let (_projects, sessions) =
+                    inspect_host_state(kind, state_root).map_err(|e| e.to_string())?;
+                let session = sessions
+                    .into_iter()
+                    .find(|s| s.session_id == session_id)
+                    .ok_or_else(|| format!("session {session_id} not found on {kind}"))?;
+                serde_json::to_value(session).map_err(|e| e.to_string())?
+            }
         }
         "register_agent" => {
             let id = args
@@ -1138,6 +1397,8 @@ fn run() -> Result<(), String> {
         "relay" => run_relay(&args),
         "who" => run_who(&args),
         "send" => run_send(&args),
+        "inbox" => run_inbox(&args),
+        "hook" => run_hook(&args),
         "agents" => run_agents(&args),
         "setup" => run_setup_or_doctor("setup", &args),
         "doctor" => run_setup_or_doctor("doctor", &args),

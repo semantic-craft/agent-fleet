@@ -1,7 +1,8 @@
 use fleet_proto::{
-    resolve_project_dir_in_root, validate_brief, validate_nonempty_id, BriefPolicyError,
-    CreateSessionRequest, DeliverTurnRequest, DeliveryTier, DesktopHostKind, ExternalAgentManifest,
-    HostSessionReceipt, ProjectDirRecord, ProjectPathError, SidebarProjectBinding,
+    normalize_peer_id, resolve_project_dir_in_root, validate_brief, validate_nonempty_id,
+    BriefPolicyError, CreateSessionRequest, DeliverTurnRequest, DeliveryTier, DesktopHostKind,
+    ExternalAgentManifest, HostSessionReceipt, InboxMessage, ProjectDirRecord, ProjectPathError,
+    SidebarProjectBinding,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -2798,4 +2799,295 @@ impl ExternalAgentRegistry {
             stdout_preview,
         })
     }
+}
+
+/// Persistent bidirectional peer mailbox store (`<state_root>/mailboxes.json`), enabling GrokBot
+/// and the five canonical desktop hosts to exchange messages, replies, and `check_inbox` pulls.
+#[derive(Debug)]
+pub struct FleetMailboxStore {
+    state_root: PathBuf,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+struct PersistedMailboxState {
+    #[serde(default)]
+    messages: Vec<InboxMessage>,
+}
+
+impl FleetMailboxStore {
+    pub fn new(state_root: PathBuf) -> Result<Self, HostAdapterError> {
+        if !state_root.is_absolute() {
+            return Err(ProjectPathError::InvalidRoot(state_root).into());
+        }
+        fs::create_dir_all(&state_root)?;
+        Ok(Self { state_root })
+    }
+
+    pub fn mailbox_file(&self) -> PathBuf {
+        self.state_root.join("mailboxes.json")
+    }
+
+    fn load(&self) -> Result<PersistedMailboxState, HostAdapterError> {
+        let path = self.mailbox_file();
+        if !path.exists() {
+            return Ok(PersistedMailboxState::default());
+        }
+        let bytes = fs::read(&path)?;
+        serde_json::from_slice(&bytes).map_err(|e| {
+            HostAdapterError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("corrupt {}: {e}", path.display()),
+            ))
+        })
+    }
+
+    fn save(&self, state: &PersistedMailboxState) -> Result<(), HostAdapterError> {
+        let path = self.mailbox_file();
+        let tmp = path.with_extension("json.tmp");
+        let bytes = serde_json::to_vec_pretty(state)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
+        fs::write(&tmp, bytes)?;
+        fs::rename(&tmp, &path)?;
+        Ok(())
+    }
+
+    /// Enqueues a peer message idempotently by `message.id`.
+    pub fn enqueue(&self, mut message: InboxMessage) -> Result<InboxMessage, HostAdapterError> {
+        validate_nonempty_id("message.id", &message.id)?;
+        message.from = normalize_peer_id(&message.from)?;
+        message.to = normalize_peer_id(&message.to)?;
+        validate_brief(&message.body)?;
+        let mut state = self.load()?;
+        if let Some(existing) = state.messages.iter().find(|m| m.id == message.id) {
+            if existing.from == message.from
+                && existing.to == message.to
+                && existing.body == message.body
+            {
+                return Ok(existing.clone());
+            }
+            return Err(HostAdapterError::DuplicateDelivery(message.id));
+        }
+        state.messages.push(message.clone());
+        self.save(&state)?;
+        Ok(message)
+    }
+
+    /// Reads unread messages for `recipient` (matching either `<agent>` or `<agent>/<slug>`),
+    /// optionally marking them delivered so hooks and `check_inbox` do not re-deliver them.
+    pub fn check_inbox(
+        &self,
+        recipient: &str,
+        mark_delivered: bool,
+    ) -> Result<Vec<InboxMessage>, HostAdapterError> {
+        let norm = normalize_peer_id(recipient)?;
+        let prefix = format!("{norm}/");
+        let mut state = self.load()?;
+        let mut matched = Vec::new();
+        let mut changed = false;
+        for msg in &mut state.messages {
+            let is_match = msg.to == norm || msg.to.starts_with(&prefix);
+            if is_match && !msg.delivered {
+                matched.push(msg.clone());
+                if mark_delivered {
+                    msg.delivered = true;
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            self.save(&state)?;
+        }
+        Ok(matched)
+    }
+
+    pub fn get_message(&self, id: &str) -> Result<Option<InboxMessage>, HostAdapterError> {
+        let state = self.load()?;
+        Ok(state.messages.into_iter().find(|m| m.id == id))
+    }
+
+    pub fn list_all(&self) -> Result<Vec<InboxMessage>, HostAdapterError> {
+        Ok(self.load()?.messages)
+    }
+}
+
+/// Summary of wiring `agent-fleet` MCP and lifecycle hooks into a local agent configuration directory.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentWiringReport {
+    pub agent: String,
+    pub config_files: Vec<PathBuf>,
+    pub wired: bool,
+}
+
+fn write_atomic_json(path: &Path, val: &serde_json::Value) -> Result<(), HostAdapterError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let tmp = path.with_extension("tmp-fleet");
+    let text = serde_json::to_string_pretty(val)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
+    fs::write(&tmp, format!("{text}\n"))?;
+    fs::rename(&tmp, path)?;
+    Ok(())
+}
+
+/// Wires `fleet-cli mcp` and `fleet-cli hook` into GrokBot/Grok CLI and all five canonical desktop hosts
+/// under `config_home` (modeled on `reason-machines/reason-network/src/setup.rs`).
+pub fn wire_agent_configs(
+    config_home: &Path,
+    fleet_exe: &Path,
+    projects_root: &Path,
+    state_root: &Path,
+) -> Result<Vec<AgentWiringReport>, HostAdapterError> {
+    if !config_home.is_absolute() || !projects_root.is_absolute() || !state_root.is_absolute() {
+        return Err(ProjectPathError::InvalidRoot(config_home.to_path_buf()).into());
+    }
+    let exe_str = fleet_exe.display().to_string();
+    let proj_str = projects_root.display().to_string();
+    let state_str = state_root.display().to_string();
+
+    let mut reports = Vec::new();
+
+    // 1. GrokBot / Grok CLI (.grok/config.toml + .grok/hooks/agent-fleet.json)
+    let grok_dir = config_home.join(".grok");
+    fs::create_dir_all(grok_dir.join("hooks"))?;
+    let grok_toml_path = grok_dir.join("config.toml");
+    let grok_toml = format!(
+        "# Managed by agent-fleet setup\n[mcp_servers.agent-fleet]\ncommand = \"{exe_str}\"\nargs = [\"mcp\", \"--projects-root\", \"{proj_str}\", \"--state-root\", \"{state_str}\"]\nenabled = true\ntool_timeout_sec = 660\n\n[mcp_servers.agent-fleet.env]\nFLEET_AGENT = \"grokbot\"\n"
+    );
+    fs::write(&grok_toml_path, grok_toml)?;
+    let grok_hooks_path = grok_dir.join("hooks/agent-fleet.json");
+    let grok_hook_cmd = format!(
+        "'{exe_str}' hook grokbot stop --state-root '{state_str}'"
+    );
+    write_atomic_json(
+        &grok_hooks_path,
+        &serde_json::json!({
+            "hooks": {
+                "SessionStart": [{ "matcher": "*", "hooks": [{ "type": "command", "command": grok_hook_cmd, "timeout": 10 }] }],
+                "PostToolUse": [{ "matcher": "*", "hooks": [{ "type": "command", "command": grok_hook_cmd, "timeout": 10 }] }],
+                "Stop": [{ "hooks": [{ "type": "command", "command": grok_hook_cmd, "timeout": 10 }] }]
+            }
+        }),
+    )?;
+    reports.push(AgentWiringReport {
+        agent: "grokbot".into(),
+        config_files: vec![grok_toml_path, grok_hooks_path],
+        wired: true,
+    });
+
+    // 2. Antigravity Desktop (.gemini/config/mcp_config.json + .gemini/config/hooks.json)
+    let agy_dir = config_home.join(".gemini/config");
+    let agy_mcp_path = agy_dir.join("mcp_config.json");
+    let agy_hooks_path = agy_dir.join("hooks.json");
+    write_atomic_json(
+        &agy_mcp_path,
+        &serde_json::json!({
+            "mcpServers": {
+                "agent-fleet": {
+                    "command": exe_str,
+                    "args": ["mcp", "--projects-root", proj_str, "--state-root", state_str],
+                    "env": { "FLEET_AGENT": "antigravity-desktop" }
+                }
+            }
+        }),
+    )?;
+    write_atomic_json(
+        &agy_hooks_path,
+        &serde_json::json!({
+            "agent-fleet": {
+                "enabled": true,
+                "SessionStart": [{ "type": "command", "command": format!("'{exe_str}' hook antigravity-desktop session-start --state-root '{state_str}'"), "timeout": 15 }],
+                "Stop": [{ "type": "command", "command": format!("'{exe_str}' hook antigravity-desktop stop --state-root '{state_str}'"), "timeout": 15 }]
+            }
+        }),
+    )?;
+    reports.push(AgentWiringReport {
+        agent: "antigravity-desktop".into(),
+        config_files: vec![agy_mcp_path, agy_hooks_path],
+        wired: true,
+    });
+
+    // 3. Codex Desktop (.codex/config.toml + .codex/hooks.json)
+    let codex_dir = config_home.join(".codex");
+    fs::create_dir_all(&codex_dir)?;
+    let codex_toml_path = codex_dir.join("config.toml");
+    let codex_toml = format!(
+        "# Managed by agent-fleet setup\n[mcp_servers.agent-fleet]\ncommand = \"{exe_str}\"\nargs = [\"mcp\", \"--projects-root\", \"{proj_str}\", \"--state-root\", \"{state_str}\"]\ntool_timeout_sec = 660\ndefault_tools_approval_mode = \"approve\"\n\n[mcp_servers.agent-fleet.env]\nFLEET_AGENT = \"openai-dots\"\n"
+    );
+    fs::write(&codex_toml_path, codex_toml)?;
+    let codex_hooks_path = codex_dir.join("hooks.json");
+    write_atomic_json(
+        &codex_hooks_path,
+        &serde_json::json!({
+            "hooks": {
+                "SessionStart": [{ "matcher": "*", "hooks": [{ "type": "command", "command": format!("'{exe_str}' hook openai-dots session-start --state-root '{state_str}'"), "timeout": 10 }] }],
+                "Stop": [{ "hooks": [{ "type": "command", "command": format!("'{exe_str}' hook openai-dots stop --state-root '{state_str}'"), "timeout": 10 }] }]
+            }
+        }),
+    )?;
+    reports.push(AgentWiringReport {
+        agent: "openai-dots".into(),
+        config_files: vec![codex_toml_path, codex_hooks_path],
+        wired: true,
+    });
+
+    // 4. DeepSeek Harness (.dsh/cordis.patch.yml)
+    let dsh_dir = config_home.join(".dsh");
+    fs::create_dir_all(&dsh_dir)?;
+    let dsh_patch_path = dsh_dir.join("cordis.patch.yml");
+    let dsh_yaml = format!(
+        "# === agent-fleet MCP BEGIN ===\n- insert:\n    - id: mcp-agent-fleet\n      name: '@deepseek-ai/dsh-mcp-client'\n      config:\n        serverName: agent-fleet\n        transport: stdio\n        command: '{exe_str}'\n        args:\n          - mcp\n          - --projects-root\n          - '{proj_str}'\n          - --state-root\n          - '{state_str}'\n        env:\n          FLEET_AGENT: deepseek-harness\n        toolCallTimeoutMs: 660000\n# === agent-fleet MCP END ===\n"
+    );
+    fs::write(&dsh_patch_path, dsh_yaml)?;
+    reports.push(AgentWiringReport {
+        agent: "deepseek-harness".into(),
+        config_files: vec![dsh_patch_path],
+        wired: true,
+    });
+
+    // 5. ZCode Desktop (.zcode/cli/config.json)
+    let zcode_cfg_path = config_home.join(".zcode/cli/config.json");
+    write_atomic_json(
+        &zcode_cfg_path,
+        &serde_json::json!({
+            "mcp": {
+                "servers": {
+                    "agent-fleet": {
+                        "type": "stdio",
+                        "command": exe_str,
+                        "args": ["mcp", "--projects-root", proj_str, "--state-root", state_str],
+                        "env": { "FLEET_AGENT": "zcode" }
+                    }
+                }
+            }
+        }),
+    )?;
+    reports.push(AgentWiringReport {
+        agent: "zcode".into(),
+        config_files: vec![zcode_cfg_path],
+        wired: true,
+    });
+
+    // 6. Cindy Desktop (.cindy/mcp.json)
+    let cindy_cfg_path = config_home.join(".cindy/mcp.json");
+    write_atomic_json(
+        &cindy_cfg_path,
+        &serde_json::json!({
+            "mcpServers": {
+                "agent-fleet": {
+                    "command": exe_str,
+                    "args": ["mcp", "--projects-root", proj_str, "--state-root", state_str],
+                    "env": { "FLEET_AGENT": "cindy" }
+                }
+            }
+        }),
+    )?;
+    reports.push(AgentWiringReport {
+        agent: "cindy".into(),
+        config_files: vec![cindy_cfg_path],
+        wired: true,
+    });
+
+    Ok(reports)
 }

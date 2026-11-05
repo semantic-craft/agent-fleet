@@ -24,10 +24,10 @@ pub use tri_hosts::{
 };
 mod host_adapter;
 pub use host_adapter::{
-    build_host_adapter, inspect_host_state, AntigravityDesktopAdapter, CindyAdapter,
-    DeepSeekHarnessAdapter, DesktopHostAdapter, ExternalAgentReceipt, ExternalAgentRegistry,
-    HostAdapterError, OpenAiDotsAdapter, PersistedSessionRecord, PersistedTurnRecord,
-    ZcodeAdapter,
+    build_host_adapter, inspect_host_state, wire_agent_configs, AgentWiringReport,
+    AntigravityDesktopAdapter, CindyAdapter, DeepSeekHarnessAdapter, DesktopHostAdapter,
+    ExternalAgentReceipt, ExternalAgentRegistry, FleetMailboxStore, HostAdapterError,
+    OpenAiDotsAdapter, PersistedSessionRecord, PersistedTurnRecord, ZcodeAdapter,
 };
 mod relay_self_dev;
 pub use relay_self_dev::{

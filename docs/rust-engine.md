@@ -9,10 +9,10 @@ Hub 的部署版本与 CLI 版本是两个边界；本页的 HTTPS 探测不证�
 
 | Crate | SEEN：当前实现 | 尚未接通的边界 |
 | --- | --- | --- |
-| `fleet-proto` | `SessionId`、`SessionRecord`、`SessionSelector`、`DeliveryTier`、`DesktopHostKind`（五大桌面宿主：`openai-dots`、`cindy`、`deepseek-harness`、`antigravity-desktop`、`zcode`）、`ExternalAgentManifest` 以及 `validate_brief` | 不是 ANet 密码协议实现，也没有完整任务账本 |
+| `fleet-proto` | `SessionId`、`SessionRecord`、`SessionSelector`、`DeliveryTier`、`DesktopHostKind`（五大桌面宿主：`openai-dots`、`cindy`、`deepseek-harness`、`antigravity-desktop`、`zcode`）、`InboxMessage`（含 `<fleet-message>` 对等信封格式化）、`ExternalAgentManifest` 以及 `validate_brief` | 不是 ANet 密码协议实现，也没有完整任务账本 |
 | `fleet-hub` | 调用者提供密封 envelope 和授权证明；relay send、持久关联、重启后 status 回读 | 不生成身份、签名或 token，不密封 envelope，不验证 dack |
-| `fleet-daemon` | 只读 session directory、cwd 校验与实际子进程执行、Codex 原生 Unix WebSocket 投递对象、五大桌面宿主侧栏项目与会话适配器（`DesktopHostAdapter`）及外部开源 Agent 注册表（`ExternalAgentRegistry`） | 无 runtime 配置时仅落本地状态并返回 `accepted`；带 runtime 配置时回读各桌面原生状态库验证 `thread-visible` |
-| `fleet-cli` | `sessions`、`hosts`、`relay`、`who`、`send`、`agents`、`setup`、`doctor` 与标准 JSON-RPC 2.0 stdio `mcp` 服务 | 跨机远程派活仍配合官方 ANet 0.3.9 CLI |
+| `fleet-daemon` | 只读 session directory、cwd 校验与实际子进程执行、Codex 原生 Unix WebSocket 投递对象、五大桌面宿主侧栏项目与会话适配器（`DesktopHostAdapter`）、GrokBot 与五大桌面端双向幂等信箱（`FleetMailboxStore`）、`wire_agent_configs` 自动接线及外部开源 Agent 注册表（`ExternalAgentRegistry`） | 无 runtime 配置时仅落本地状态并返回 `accepted`；带 runtime 配置时回读各桌面原生状态库验证 `thread-visible` |
+| `fleet-cli` | `sessions`、`hosts`、`relay`、`who`、`send`、`inbox`、`hook`、`agents`、`setup`（含 `--wire-agents true`）、`doctor` 与标准 JSON-RPC 2.0 stdio `mcp` 服务（5 工具：`list_team`、`send_message`、`check_inbox`、`message_status`、`register_agent`） | 跨机远程派活仍配合官方 ANet 0.3.9 CLI |
 
 源码入口分别为 [proto](../crates/fleet-proto/src/lib.rs)、[hub](../crates/fleet-hub/src/lib.rs)、
 [daemon](../crates/fleet-daemon/src/lib.rs)、[cli](../crates/fleet-cli/src/main.rs)。
