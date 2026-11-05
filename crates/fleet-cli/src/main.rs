@@ -1,9 +1,9 @@
 use fleet_daemon::{
-    inspect_host_state, run_host_poteto_relay, wire_agent_configs, AntigravityDesktopAdapter,
-    AntigravityRuntimeConfig, CindyAdapter, CindyRuntimeConfig, DeepSeekHarnessAdapter,
-    DesktopHostAdapter, DshRuntimeConfig, ExternalAgentRegistry, FleetMailboxStore,
-    HostRuntimeOptions, OpenAiDotsAdapter, OpenAiDotsRuntimeConfig, PotetoRelayTask,
-    SessionDirectory, ZcodeAdapter, ZcodeRuntimeConfig,
+    inspect_host_state, read_antigravity_latest_response, run_host_poteto_relay,
+    wire_agent_configs, AntigravityDesktopAdapter, AntigravityRuntimeConfig, CindyAdapter,
+    CindyRuntimeConfig, DeepSeekHarnessAdapter, DesktopHostAdapter, DshRuntimeConfig,
+    ExternalAgentRegistry, FleetMailboxStore, HostRuntimeOptions, OpenAiDotsAdapter,
+    OpenAiDotsRuntimeConfig, PotetoRelayTask, SessionDirectory, ZcodeAdapter, ZcodeRuntimeConfig,
 };
 use fleet_proto::{
     normalize_peer_id, CreateSessionRequest, DeliverTurnRequest, DesktopHostKind,
@@ -159,14 +159,22 @@ fn parse_runtime_options(
             ));
         }
         (None, None) => {
-            let state_overridden =
-                options.contains_key("--state-root") || env::var("FLEET_STATE_ROOT").is_ok();
+            let home_opt = env::var("HOME").ok().map(PathBuf::from);
+            let default_state_root = home_opt
+                .as_ref()
+                .map(|h| h.join(".local").join("state").join("agent-fleet"));
+            let state_overridden = options
+                .get("--state-root")
+                .is_some_and(|s| default_state_root.as_deref() != Some(Path::new(s)))
+                || env::var("FLEET_STATE_ROOT")
+                    .ok()
+                    .is_some_and(|s| default_state_root.as_deref() != Some(Path::new(&s)));
             let force_auto = env::var("FLEET_AUTO_ANTIGRAVITY_RUNTIME")
                 .is_ok_and(|v| v == "1" || v == "true");
             let disable_auto = env::var("FLEET_NO_AUTO_ANTIGRAVITY_RUNTIME")
                 .is_ok_and(|v| v == "1" || v == "true");
             if (!state_overridden || force_auto) && !disable_auto {
-                if let Some(home) = env::var("HOME").ok().map(PathBuf::from) {
+                if let Some(home) = home_opt {
                     let default_root = home.join(".gemini").join("antigravity");
                     let candidate_bins = [
                         home.join(".local").join("bin").join("agy"),
@@ -1459,34 +1467,39 @@ fn resolve_anet_bin(options: &BTreeMap<String, String>) -> PathBuf {
     PathBuf::from("anet")
 }
 
-fn run_anet_sync(args: &[String]) -> Result<(), String> {
-    let allowed = &[
-        "--identity",
-        "--slug",
-        "--projects-root",
-        "--state-root",
-        "--anet-bin",
-        "--tasks-json",
-        "--session-id",
-        "--antigravity-root",
-        "--agy-bin",
-    ];
-    let options = parse_key_value_pairs(&args[1..], allowed)?;
-    let identity = options
-        .get("--identity")
-        .cloned()
-        .unwrap_or_else(|| "agy".to_string());
-    let default_slug = options
-        .get("--slug")
-        .cloned()
-        .unwrap_or_else(|| "agent-fleet".to_string());
-    let projects_root = resolve_projects_root(&options)?;
-    let state_root = resolve_state_root(&options)?;
-    let anet_bin = resolve_anet_bin(&options);
-    let rt = parse_runtime_options(&options)?;
-    let explicit_session_id = options.get("--session-id").cloned();
+fn infer_slug_from_goal(goal: &str, projects_root: &Path, default_slug: &str) -> String {
+    if let Ok(entries) = fs::read_dir(projects_root) {
+        let mut candidates: Vec<String> = entries
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().is_dir())
+            .filter_map(|e| e.file_name().into_string().ok())
+            .filter(|name| !name.starts_with('.'))
+            .collect();
+        candidates.sort_by_key(|s| std::cmp::Reverse(s.len()));
+        for name in &candidates {
+            if goal.contains(&format!("Projects/{name}"))
+                || goal.contains(&format!("project={name}"))
+                || goal.contains(&format!("slug={name}"))
+                || goal.contains(&format!("`{name}`"))
+            {
+                return name.clone();
+            }
+        }
+    }
+    default_slug.to_string()
+}
 
-    fs::create_dir_all(&state_root).map_err(|e| e.to_string())?;
+fn run_anet_sync_once(
+    identity: &str,
+    default_slug: &str,
+    projects_root: &Path,
+    state_root: &Path,
+    anet_bin: &Path,
+    tasks_json_opt: Option<&str>,
+    explicit_session_id: Option<&str>,
+    rt: &HostRuntimeOptions,
+) -> Result<Value, String> {
+    fs::create_dir_all(state_root).map_err(|e| e.to_string())?;
     let ledger_path = state_root.join("anet-bridged-tasks.json");
     let mut bridged_ids: BTreeSet<String> = if ledger_path.is_file() {
         let raw = fs::read_to_string(&ledger_path).map_err(|e| e.to_string())?;
@@ -1495,12 +1508,12 @@ fn run_anet_sync(args: &[String]) -> Result<(), String> {
         BTreeSet::new()
     };
 
-    let inbox_val: Value = if let Some(tasks_file) = options.get("--tasks-json") {
+    let inbox_val: Value = if let Some(tasks_file) = tasks_json_opt {
         let raw = fs::read_to_string(tasks_file).map_err(|e| e.to_string())?;
         serde_json::from_str(&raw).map_err(|e| e.to_string())?
     } else {
-        let output = Command::new(&anet_bin)
-            .args(["--id", &identity, "inbox", "--pending"])
+        let output = Command::new(anet_bin)
+            .args(["--id", identity, "inbox", "--pending"])
             .output()
             .map_err(|e| format!("failed to run {}: {e}", anet_bin.display()))?;
         if !output.status.success() {
@@ -1549,21 +1562,22 @@ fn run_anet_sync(args: &[String]) -> Result<(), String> {
             continue;
         }
 
+        let resolved_slug = infer_slug_from_goal(&goal, projects_root, default_slug);
         let title = format!("ANet Inbound {task_id}");
         let dispatch_val = dispatch_unified_message(
             "antigravity-desktop",
-            &default_slug,
-            projects_root.clone(),
-            state_root.clone(),
+            &resolved_slug,
+            projects_root.to_path_buf(),
+            state_root.to_path_buf(),
             format!("anet-inbound-{task_id}"),
-            explicit_session_id.clone(),
+            explicit_session_id.map(str::to_string),
             Some(title),
             goal.clone(),
             None,
             false,
             Some("grokbot".to_string()),
             Some(task_id.clone()),
-            &rt,
+            rt,
         )?;
         let desktop_session_id = dispatch_val
             .get("session_id")
@@ -1576,21 +1590,30 @@ fn run_anet_sync(args: &[String]) -> Result<(), String> {
             .unwrap_or("")
             .to_string();
 
+        let live_response = rt
+            .antigravity
+            .as_ref()
+            .and_then(|cfg| read_antigravity_latest_response(cfg, &desktop_session_id));
+
         let reply_text = if goal.contains("AGY_INBOX_OK_20261105") {
             "AGY_INBOX_OK_20261105".to_string()
+        } else if let Some(resp) = live_response.filter(|s| !s.is_empty()) {
+            format!(
+                "{resp}\n\n[Antigravity Desktop project={resolved_slug} ({desktop_project_id}) conversation_id={desktop_session_id}]"
+            )
         } else {
             format!(
-                "Delivered to Antigravity Desktop project {default_slug} ({desktop_project_id}) conversation {desktop_session_id}."
+                "Delivered to Antigravity Desktop project {resolved_slug} ({desktop_project_id}) conversation {desktop_session_id}."
             )
         };
 
-        let (anet_replied, anet_completed) = if options.get("--tasks-json").is_none() {
-            let msg_out = Command::new(&anet_bin)
-                .args(["--id", &identity, "message", &task_id, &reply_text])
+        let (anet_replied, anet_completed) = if tasks_json_opt.is_none() {
+            let msg_out = Command::new(anet_bin)
+                .args(["--id", identity, "message", &task_id, &reply_text])
                 .output()
                 .map_err(|e| format!("failed to run anet message: {e}"))?;
-            let end_out = Command::new(&anet_bin)
-                .args(["--id", &identity, "end", &task_id])
+            let end_out = Command::new(anet_bin)
+                .args(["--id", identity, "end", &task_id])
                 .output()
                 .map_err(|e| format!("failed to run anet end: {e}"))?;
             (msg_out.status.success(), end_out.status.success())
@@ -1601,7 +1624,7 @@ fn run_anet_sync(args: &[String]) -> Result<(), String> {
         bridged_ids.insert(task_id.clone());
         bridged_reports.push(json!({
             "task_id": task_id,
-            "slug": default_slug,
+            "slug": resolved_slug,
             "desktop_project_id": desktop_project_id,
             "desktop_session_id": desktop_session_id,
             "reply_text": reply_text,
@@ -1616,18 +1639,84 @@ fn run_anet_sync(args: &[String]) -> Result<(), String> {
     )
     .map_err(|e| e.to_string())?;
 
-    let out = json!({
+    Ok(json!({
         "identity": identity,
         "slug": default_slug,
         "bridged_count": bridged_reports.len(),
         "bridged_tasks": bridged_reports,
         "ledger_path": ledger_path,
-    });
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?
-    );
-    Ok(())
+    }))
+}
+
+fn run_anet_sync(args: &[String]) -> Result<(), String> {
+    let allowed = &[
+        "--identity",
+        "--slug",
+        "--projects-root",
+        "--state-root",
+        "--anet-bin",
+        "--tasks-json",
+        "--session-id",
+        "--watch",
+        "--antigravity-root",
+        "--agy-bin",
+    ];
+    let options = parse_key_value_pairs(&args[1..], allowed)?;
+    let identity = options
+        .get("--identity")
+        .cloned()
+        .unwrap_or_else(|| "agy".to_string());
+    let default_slug = options
+        .get("--slug")
+        .cloned()
+        .unwrap_or_else(|| "agent-fleet".to_string());
+    let projects_root = resolve_projects_root(&options)?;
+    let state_root = resolve_state_root(&options)?;
+    let anet_bin = resolve_anet_bin(&options);
+    let rt = parse_runtime_options(&options)?;
+    let explicit_session_id = options.get("--session-id").map(String::as_str);
+    let tasks_json_opt = options.get("--tasks-json").map(String::as_str);
+    let watch = options
+        .get("--watch")
+        .is_some_and(|v| v == "true" || v == "1");
+
+    if !watch {
+        let out = run_anet_sync_once(
+            &identity,
+            &default_slug,
+            &projects_root,
+            &state_root,
+            &anet_bin,
+            tasks_json_opt,
+            explicit_session_id,
+            &rt,
+        )?;
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?
+        );
+        return Ok(());
+    }
+
+    loop {
+        if let Ok(out) = run_anet_sync_once(
+            &identity,
+            &default_slug,
+            &projects_root,
+            &state_root,
+            &anet_bin,
+            tasks_json_opt,
+            explicit_session_id,
+            &rt,
+        ) {
+            if out.get("bridged_count").and_then(Value::as_u64).unwrap_or(0) > 0 {
+                if let Ok(pretty) = serde_json::to_string(&out) {
+                    println!("{pretty}");
+                }
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_secs(2));
+    }
 }
 
 fn run() -> Result<(), String> {

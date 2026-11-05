@@ -4,9 +4,9 @@ mod desktop;
 pub use desktop::{DesktopDelivery, DesktopError, DesktopReceipt};
 mod antigravity;
 pub use antigravity::{
-    discover_antigravity_hubs, read_conversation_summary, select_matching_antigravity_project,
-    verify_summary_binding, AntigravityConversationSummary, AntigravityHubInfo, AntigravityReceipt,
-    AntigravityRuntimeConfig,
+    discover_antigravity_hubs, read_antigravity_latest_response, read_conversation_summary,
+    select_matching_antigravity_project, verify_summary_binding, AntigravityConversationSummary,
+    AntigravityHubInfo, AntigravityReceipt, AntigravityRuntimeConfig,
 };
 mod tri_hosts;
 pub use tri_hosts::{

@@ -878,6 +878,12 @@ pub(crate) fn run_agentapi_send_message(
     )?;
     let _ = hub_rpc_request(
         hub,
+        "SmartFocusConversation",
+        &json!({ "cascadeId": conversation_id }),
+        Duration::from_secs(5),
+    );
+    let _ = hub_rpc_request(
+        hub,
         "WaitForConversationFullyIdle",
         &json!({
             "conversationId": conversation_id,
@@ -886,14 +892,40 @@ pub(crate) fn run_agentapi_send_message(
         }),
         Duration::from_secs(125),
     );
-    let _ = hub_rpc_request(
-        hub,
-        "SmartFocusConversation",
-        &json!({ "cascadeId": conversation_id }),
-        Duration::from_secs(5),
-    );
     wait_for_desktop_summary_and_body(runtime, conversation_id)?;
     Ok(format!("turn-{conversation_id}-followup"))
+}
+
+pub fn read_antigravity_latest_response(
+    runtime: &AntigravityRuntimeConfig,
+    conversation_id: &str,
+) -> Option<String> {
+    let hubs = discover_antigravity_hubs(&runtime.daemon_dir()).ok()?;
+    let hub = hubs
+        .into_iter()
+        .find(|h| is_desktop_hub_agentapi_available(runtime, Some(h)))?;
+    let resp = hub_rpc_request(
+        &hub,
+        "GetCascadeTrajectory",
+        &json!({ "cascadeId": conversation_id }),
+        Duration::from_secs(10),
+    )
+    .ok()?;
+    let steps = resp.pointer("/trajectory/steps")?.as_array()?;
+    for step in steps.iter().rev() {
+        if let Some(pr) = step.get("plannerResponse") {
+            let text = pr
+                .get("modifiedResponse")
+                .or_else(|| pr.get("response"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim();
+            if !text.is_empty() {
+                return Some(text.to_string());
+            }
+        }
+    }
+    None
 }
 
 fn wait_for_desktop_summary_and_body(
