@@ -1,0 +1,298 @@
+use crate::DeliveryTier;
+use serde::{Deserialize, Serialize};
+use std::{
+    fmt,
+    path::{Component, Path, PathBuf},
+};
+
+/// Canonical four desktop hosts supported by the fleet engine.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DesktopHostKind {
+    OpenaiDots,
+    Cindy,
+    DeepseekHarness,
+    AntigravityDesktop,
+}
+
+impl DesktopHostKind {
+    pub const ALL: [Self; 4] = [
+        Self::OpenaiDots,
+        Self::Cindy,
+        Self::DeepseekHarness,
+        Self::AntigravityDesktop,
+    ];
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::OpenaiDots => "openai-dots",
+            Self::Cindy => "cindy",
+            Self::DeepseekHarness => "deepseek-harness",
+            Self::AntigravityDesktop => "antigravity-desktop",
+        }
+    }
+
+    pub fn parse(value: &str) -> Result<Self, ProjectPathError> {
+        match value.trim() {
+            "openai-dots" | "openai dots" | "codex" | "codex-desktop" => Ok(Self::OpenaiDots),
+            "cindy" => Ok(Self::Cindy),
+            "deepseek-harness" | "deepseek harness" | "dsh" => Ok(Self::DeepseekHarness),
+            "antigravity-desktop" | "antigravity desktop" | "agy" | "antigravity" => {
+                Ok(Self::AntigravityDesktop)
+            }
+            _ => Err(ProjectPathError::InvalidHost(value.to_string())),
+        }
+    }
+}
+
+impl fmt::Display for DesktopHostKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ProjectPathError {
+    InvalidRoot(PathBuf),
+    InvalidSlug(String),
+    PathTraversal(String),
+    OutsideProjectsRoot { root: PathBuf, candidate: PathBuf },
+    CacheOrHiddenSegment(String),
+    InvalidHost(String),
+    InvalidIdentifier(String),
+}
+
+impl fmt::Display for ProjectPathError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidRoot(root) => {
+                write!(f, "projects root must be an absolute path: {}", root.display())
+            }
+            Self::InvalidSlug(slug) => write!(
+                f,
+                "project slug must be a single safe segment ([A-Za-z0-9._-]): {slug}"
+            ),
+            Self::PathTraversal(input) => {
+                write!(f, "path traversal or multi-segment path rejected: {input}")
+            }
+            Self::OutsideProjectsRoot { root, candidate } => write!(
+                f,
+                "project path {} escapes allowed root {}",
+                candidate.display(),
+                root.display()
+            ),
+            Self::CacheOrHiddenSegment(seg) => {
+                write!(f, "hidden or cache segment rejected in project path: {seg}")
+            }
+            Self::InvalidHost(host) => write!(f, "unsupported desktop host kind: {host}"),
+            Self::InvalidIdentifier(reason) => write!(f, "invalid lifecycle identifier: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for ProjectPathError {}
+
+/// Validates a single project slug (`~/Projects/<slug>`) and rejects path traversal,
+/// hidden/cache segments, control chars, or multi-segment relative/absolute paths.
+pub fn validate_project_slug(slug: &str) -> Result<&str, ProjectPathError> {
+    if slug.is_empty() || slug.len() > 128 || slug.trim() != slug {
+        return Err(ProjectPathError::InvalidSlug(slug.to_string()));
+    }
+    if slug == "."
+        || slug == ".."
+        || slug.contains('/')
+        || slug.contains('\\')
+        || slug.contains("..")
+        || slug.chars().any(char::is_control)
+    {
+        return Err(ProjectPathError::PathTraversal(slug.to_string()));
+    }
+    if slug.starts_with('.') || slug.starts_with('-') {
+        return Err(ProjectPathError::CacheOrHiddenSegment(slug.to_string()));
+    }
+    let lowered = slug.to_ascii_lowercase();
+    if matches!(
+        lowered.as_str(),
+        ".cache" | "caches" | ".anet" | "private" | "_private" | "node_modules" | "target"
+    ) {
+        return Err(ProjectPathError::CacheOrHiddenSegment(slug.to_string()));
+    }
+    if !slug
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+    {
+        return Err(ProjectPathError::InvalidSlug(slug.to_string()));
+    }
+    Ok(slug)
+}
+
+/// Validates that `projects_root` is an absolute path without parent traversal or cache components,
+/// and returns the resolved child path `<projects_root>/<slug>`.
+pub fn resolve_project_dir_in_root(
+    projects_root: &Path,
+    slug: &str,
+) -> Result<PathBuf, ProjectPathError> {
+    if !projects_root.is_absolute() {
+        return Err(ProjectPathError::InvalidRoot(projects_root.to_path_buf()));
+    }
+    for component in projects_root.components() {
+        match component {
+            Component::ParentDir | Component::CurDir => {
+                return Err(ProjectPathError::PathTraversal(
+                    projects_root.display().to_string(),
+                ));
+            }
+            Component::Normal(part) => {
+                let s = part.to_string_lossy();
+                if matches!(s.as_ref(), ".cache" | ".anet") {
+                    return Err(ProjectPathError::CacheOrHiddenSegment(s.into_owned()));
+                }
+            }
+            _ => {}
+        }
+    }
+    let validated_slug = validate_project_slug(slug)?;
+    let candidate = projects_root.join(validated_slug);
+    if candidate.parent() != Some(projects_root) || !candidate.starts_with(projects_root) {
+        return Err(ProjectPathError::OutsideProjectsRoot {
+            root: projects_root.to_path_buf(),
+            candidate,
+        });
+    }
+    Ok(candidate)
+}
+
+pub fn validate_nonempty_id(field: &str, value: &str) -> Result<(), ProjectPathError> {
+    if value.is_empty()
+        || value.len() > 256
+        || value.trim() != value
+        || value.chars().any(char::is_control)
+    {
+        return Err(ProjectPathError::InvalidIdentifier(format!(
+            "{field} must be nonempty, trimmed, and free of control characters"
+        )));
+    }
+    Ok(())
+}
+
+/// Verified project directory inside the configured `projects_root`.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectDirRecord {
+    pub slug: String,
+    pub path: PathBuf,
+    pub workspace_uri: String,
+    pub created: bool,
+}
+
+/// Sidebar project binding registered in a desktop host (`projects` / `project_roots` / `workspace_uris`).
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SidebarProjectBinding {
+    pub host: DesktopHostKind,
+    pub project_id: String,
+    pub title: String,
+    pub project_dir: PathBuf,
+    pub workspace_uris: Vec<String>,
+}
+
+/// Request to create a new sidebar-visible session under a registered sidebar project.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CreateSessionRequest {
+    pub delivery_id: String,
+    pub project_id: String,
+    pub project_dir: PathBuf,
+    pub title: String,
+    pub prompt: String,
+    pub model: Option<String>,
+}
+
+/// Request to deliver a follow-up turn to an existing session in the same sidebar project.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeliverTurnRequest {
+    pub delivery_id: String,
+    pub project_id: String,
+    pub session_id: String,
+    pub project_dir: PathBuf,
+    pub prompt: String,
+    pub model: Option<String>,
+}
+
+/// Receipt proving session creation or follow-up turn delivery bound to a sidebar project.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct HostSessionReceipt {
+    pub host: DesktopHostKind,
+    pub delivery_id: String,
+    pub project_id: String,
+    pub session_id: String,
+    pub turn_id: String,
+    pub project_dir: PathBuf,
+    pub workspace_uris: Vec<String>,
+    pub tier: DeliveryTier,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn desktop_host_kind_parses_all_four_canonical_hosts() {
+        for (input, expected) in [
+            ("openai-dots", DesktopHostKind::OpenaiDots),
+            ("openai dots", DesktopHostKind::OpenaiDots),
+            ("codex", DesktopHostKind::OpenaiDots),
+            ("cindy", DesktopHostKind::Cindy),
+            ("deepseek-harness", DesktopHostKind::DeepseekHarness),
+            ("dsh", DesktopHostKind::DeepseekHarness),
+            ("antigravity-desktop", DesktopHostKind::AntigravityDesktop),
+            ("antigravity desktop", DesktopHostKind::AntigravityDesktop),
+            ("agy", DesktopHostKind::AntigravityDesktop),
+        ] {
+            assert_eq!(DesktopHostKind::parse(input).unwrap(), expected);
+        }
+        assert!(DesktopHostKind::parse("unknown-host").is_err());
+    }
+
+    #[test]
+    fn validate_project_slug_rejects_traversal_hidden_and_out_of_bounds_names() {
+        for valid in ["agent-fleet", "demo_project", "slice.i.2026"] {
+            assert_eq!(validate_project_slug(valid).unwrap(), valid);
+        }
+        for invalid in [
+            "",
+            ".",
+            "..",
+            "../escape",
+            "a/b",
+            "a\\b",
+            "/abs/path",
+            ".hidden",
+            "-flag",
+            ".cache",
+            ".anet",
+            "PRIVATE",
+            "bad space",
+            "bad\nctrl",
+        ] {
+            assert!(
+                validate_project_slug(invalid).is_err(),
+                "expected invalid slug rejection for {invalid:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_project_dir_in_root_enforces_absolute_root_and_single_child() {
+        let root = Path::new("/tmp/fleet-projects");
+        let resolved = resolve_project_dir_in_root(root, "alpha-1").unwrap();
+        assert_eq!(resolved, PathBuf::from("/tmp/fleet-projects/alpha-1"));
+
+        assert!(resolve_project_dir_in_root(Path::new("relative/root"), "alpha").is_err());
+        assert!(resolve_project_dir_in_root(Path::new("/tmp/../escape"), "alpha").is_err());
+        assert!(resolve_project_dir_in_root(Path::new("/tmp/.cache/projects"), "alpha").is_err());
+        assert!(resolve_project_dir_in_root(root, "../outside").is_err());
+    }
+}

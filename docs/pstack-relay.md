@@ -95,11 +95,11 @@ Slice B 已将 Cargo 编译与 session directory 隔离行为测试接入同一�
 - **Done Predicate**: `test -f docs/desktop-rea-dossier.md && scripts/check && python3 scripts/pstack-relay selftest` 通过；档案包含可复核 REA Evidence ID、SHA-256 摘要、SQLite/RPC 契约及四端统一 `DesktopHostAdapter` 映射。
 - **Evidence**: docs/desktop-rea-dossier.md;docs/pstack-relay.md;.scratch/pstack-relay/checks/20261105T010754.427650Z/receipt.json
 
-### [ ] Slice I: 扩展 fleet-proto 与 fleet-daemon 的项目目录创建与四端会话生命周期契约
+### [x] Slice I: 扩展 fleet-proto 与 fleet-daemon 的项目目录创建与四端会话生命周期契约
 - **Playbook**: `Feature`
 - **Outcome**: 在 `fleet-proto` 与 `fleet-daemon` 中新增统一的 `DesktopHostAdapter` 接口（覆盖 `openai-dots`、`cindy`、`deepseek-harness`、`antigravity-desktop` 四宿主），支持受控创建项目目录 (`ensure_project_dir`)、侧栏项目注册 (`ensure_sidebar_project`)、新建侧栏会话 (`create_session`) 与续接追问 (`deliver_turn`)，并拒绝路径穿越与越界目录创建。
 - **Done Predicate**: `cargo test --workspace` 与 `scripts/check` 通过；隔离测试覆盖四端适配器的项目目录创建、侧栏项目 ID 绑定、会话新建/续接及非法路径拒绝。
-- **Evidence**: pending
+- **Evidence**: crates/fleet-proto/src/host.rs;crates/fleet-daemon/src/host_adapter.rs;crates/fleet-daemon/tests/host_adapter.rs;.scratch/pstack-relay/checks/20261105T020255.186329Z/receipt.json
 
 ### [ ] Slice J: 落地 Antigravity Desktop 侧栏建项目与会话投递适配器
 - **Playbook**: `Feature`

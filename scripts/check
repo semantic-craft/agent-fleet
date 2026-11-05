@@ -42,6 +42,7 @@ commands = [
     ["cargo", "test", "-p", "fleet-hub"],
     ["cargo", "test", "-p", "fleet-daemon", "cwd_follows_session", "--", "--nocapture"],
     ["cargo", "test", "-p", "fleet-daemon", "desktop_delivery", "--", "--nocapture"],
+    ["cargo", "test", "-p", "fleet-daemon", "host_adapter", "--", "--nocapture"],
     ["cargo", "test", "--workspace", "delivery_tier"],
     ["cargo", "test", "--workspace", "brief_policy"],
     ["python3", "scripts/pstack-relay", "selftest"],

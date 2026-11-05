@@ -2,6 +2,12 @@ mod execution;
 pub use execution::{ExecutionError, NodeDaemon, SelectedSession};
 mod desktop;
 pub use desktop::{DesktopDelivery, DesktopError, DesktopReceipt};
+mod host_adapter;
+pub use host_adapter::{
+    build_host_adapter, AntigravityDesktopAdapter, CindyAdapter, DeepSeekHarnessAdapter,
+    DesktopHostAdapter, HostAdapterError, OpenAiDotsAdapter, PersistedSessionRecord,
+    PersistedTurnRecord,
+};
 
 use fleet_proto::{SessionId, SessionRecord, SessionSelector, SessionState};
 use std::{collections::BTreeMap, fmt, fs, path::Path};

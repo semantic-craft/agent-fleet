@@ -6,6 +6,13 @@ use std::path::PathBuf;
 mod brief;
 pub use brief::{validate_brief, BriefPolicyError};
 
+mod host;
+pub use host::{
+    resolve_project_dir_in_root, validate_nonempty_id, validate_project_slug, CreateSessionRequest,
+    DeliverTurnRequest, DesktopHostKind, HostSessionReceipt, ProjectDirRecord, ProjectPathError,
+    SidebarProjectBinding,
+};
+
 /// Native thread identity survives index file renames and daemon restarts.
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(deny_unknown_fields)]
