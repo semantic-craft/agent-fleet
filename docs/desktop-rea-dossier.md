@@ -130,7 +130,7 @@ Antigravity 提供两条互补的原生通道：
 
 | 桌面宿主 | 项目目录创建与侧栏挂载 | 新建侧栏会话 (`create_session`) | 续接/追问已开会话 (`deliver_turn`) | 状态回读与收据证据 |
 | --- | --- | --- | --- | --- |
-| **OpenAI Dots** (`Codex Desktop`) | `fs::create_dir_all` + `codex app-server` `project/create`（写 `state_5.sqlite` 的 `projects`/`project_roots` 并同步 `.codex-global-state.json`） | `thread/start` (绑定 `cwd` 与 `project_id`) + `turn/start` | 已加载线程走原生 `thread/resume` + `turn/start` (`docs/native-thread-selection.md`)；离线恢复走 `codex exec resume <thread_id>` | `state_5.sqlite` (`threads.project_id`, `rollout_path`) + `codex://threads/<id>` |
+| **OpenAI Dots** (`Codex Desktop`) | `fs::create_dir_all` + `codex app-server` `project/create`（写 `state_5.sqlite` 的 `projects`/`project_roots` 并同步 `.codex-global-state.json`） | `thread/start` (绑定 `cwd` 与 `project_id`) + `turn/start` | 已加载线程走原生 `thread/resume` + `turn/start`；离线恢复走 `codex exec resume <thread_id>` | `state_5.sqlite` (`threads.project_id`, `rollout_path`) + `codex://threads/<id>` |
 | **Antigravity Desktop** (`agy`) | `fs::create_dir_all` + Hub RPC `CreateProject` / `AddTrackedWorkspace` 或 `agy --new-project --project <name> --add-dir <dir>` | Hub RPC `StartCascade` + `SendUserCascadeMessage` (或 `agy --project <id> -p`) | Hub RPC `SendUserCascadeMessage` + `SmartFocusConversation` (或 `agy --conversation <id> --project <id> -p`) | `conversation_summaries.db` (`project_id`, `workspace_uris`, `status`) + `presence/<id>.lock` |
 | **DeepSeek Harness** (`DSH`) | `fs::create_dir_all` + `~/.dsh/storages/workspace.json` 工作区 UUID 绑定或 DSH Gateway | `dsh --profile headless --json` + 双帧 `session.v4.jsonl.zstd`（或 `POST /v1/sessions`） | `dsh --profile headless --session-id <id> --json`（或 `POST /v1/sessions/<id>/turns`） | `workspace.json` + `session_projcache/sessions/<id>.json` + `session.v4.jsonl.zstd` |
 | **Cindy** (`cindy`) | `fs::create_dir_all` + Gateway `sessions.patch` / 工作区目录绑定 | Gateway `sessions.create` / `chat.send` (`sessionKey`) | `plugins/agent-network-cindy` (`cindy_session_send` / `sessions.send`) | Gateway `sessions.get` / transcript JSONL |
@@ -146,7 +146,7 @@ Antigravity 提供两条互补的原生通道：
 - **Codex Desktop 侧栏全局状态**: `~/.codex/.codex-global-state.json`
 - **Codex 会话 Rollout 日志**: `~/.codex/sessions/YYYY/MM/DD/rollout-<timestamp>-<thread_id>.jsonl`
 - **DSH 原生工作区与会话缓存**: `~/.dsh/storages/workspace.json` 与 `~/.dsh/storages/session_projcache/sessions/<id>.json`
-- **DSH 本地会话网关**: `http://127.0.0.1:41937/v1/sessions` (`docs/dsh-session-only.md`)
+- **DSH 本地会话网关**: `http://127.0.0.1:41937/v1/sessions`
 - **Cindy 插件桥接实现**: `plugins/agent-network-cindy/`
 - **ZCode 桌面侧栏项目与任务 SQLite**: `~/.zcode/v2/tasks-index.sqlite`
 - **ZCode CLI 会话与消息 SQLite**: `~/.zcode/cli/db/db.sqlite`
