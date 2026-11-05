@@ -1510,6 +1510,7 @@ fn grokbot_bidirectional_interoperability_with_all_five_desktop_hosts_and_agent_
     let setup_val: Value = serde_json::from_slice(&setup_out.stdout).unwrap();
     assert_eq!(setup_val["status"], "ok");
     assert_eq!(setup_val["grokbot"]["ready"], true);
+    assert_eq!(setup_val["grokbot"]["bundle_id"], "com.anysphere.sand");
     assert_eq!(
         setup_val["canonical_hosts"].as_array().unwrap().len(),
         5
@@ -1525,6 +1526,16 @@ fn grokbot_bidirectional_interoperability_with_all_five_desktop_hosts_and_agent_
     assert!(config_home.join(".dsh/cordis.patch.yml").exists());
     assert!(config_home.join(".zcode/cli/config.json").exists());
     assert!(config_home.join(".cindy/mcp.json").exists());
+
+    let skill_out = f.run_cli(&["skill"]);
+    assert!(skill_out.status.success());
+    let skill_text = String::from_utf8_lossy(&skill_out.stdout);
+    assert!(skill_text.contains("com.anysphere.sand"));
+    assert!(skill_text.contains("com.google.antigravity"));
+    assert!(skill_text.contains("dev.zcode.app"));
+
+    let help_out = f.run_cli(&["--help"]);
+    assert!(help_out.status.success());
 
     // 2. GrokBot dispatches tasks to all 5 desktop hosts via `fleet-cli send --from grokbot`
     let hosts = [

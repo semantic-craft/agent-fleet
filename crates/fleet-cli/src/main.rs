@@ -7,7 +7,8 @@ use fleet_daemon::{
 };
 use fleet_proto::{
     normalize_peer_id, CreateSessionRequest, DeliverTurnRequest, DesktopHostKind,
-    ExternalAgentManifest, InboxMessage, SessionSelector,
+    ExternalAgentManifest, InboxMessage, SessionSelector, GROKBOT_APP_DISPLAY_NAME,
+    GROKBOT_BUNDLE_ID,
 };
 use serde_json::{json, Value};
 use std::{
@@ -21,7 +22,29 @@ use std::{
 };
 
 const USAGE: &str =
-    "usage: fleet-cli <sessions|hosts|relay|who|send|inbox|hook|agents|setup|doctor|mcp> ...";
+    "usage: fleet-cli <sessions|hosts|relay|who|send|inbox|hook|agents|setup|doctor|mcp|skill|help> ...";
+
+const SKILL_GUIDE: &str = "\
+# agent-fleet: Standalone Multi-Agent & Desktop Sidebar Engine
+
+`agent-fleet` connects **GrokBot** (`grokbot`) and the **five canonical desktop agents** with verified left-sidebar project (`~/Projects/<slug>`) and thread continuity:
+- `grokbot` (`grok`, `grok-bot`, `grok-cli`) — macOS bundle `com.anysphere.sand` (Grok Bot)
+- `antigravity-desktop` (`agy`, `antigravity`) — macOS bundle `com.google.antigravity` (Antigravity)
+- `openai-dots` (`codex`, `codex-desktop`) — macOS bundle `com.openai.codex` (ChatGPT)
+- `deepseek-harness` (`dsh`) — macOS bundle `com.deepseek.dsh` (DeepSeek Harness)
+- `cindy` (`cindy-desktop`) — macOS bundle `com.xd.cindy` (Cindy)
+- `zcode` (`zcode-desktop`) — macOS bundle `dev.zcode.app` (ZCode)
+
+## Zero-Config CLI Commands
+- `fleet-cli setup --wire-agents true`: initialize `~/Projects` + `~/.local/state/agent-fleet` and wire MCP + lifecycle hooks into GrokBot and all 5 desktop hosts.
+- `fleet-cli doctor`: inspect readiness, state files, and macOS bundle IDs for all 6 canonical peers.
+- `fleet-cli who`: list all 6 canonical peers, unread inbox counts, sidebar projects/sessions, and external `agents.d/*.json` plugins.
+- `fleet-cli send --from <peer> --to <peer>/<slug> --title \"...\" --prompt \"...\"`: dispatch a task or `<fleet-message>` peer turn and mount `<projects_root>/<slug>` in the target desktop sidebar.
+- `fleet-cli send --from <host>/<slug> --to grokbot --reply-to <delivery_id> --prompt \"...\"`: reply back to GrokBot's persistent mailbox.
+- `fleet-cli inbox --for <peer> [--ack true|false]`: pull unread peer messages from `<state_root>/mailboxes.json`.
+- `fleet-cli hook <peer> stop`: emit unread `<fleet-message>` blocks on stdout and mark them delivered.
+- `fleet-cli mcp`: run the JSON-RPC 2.0 stdio MCP server (`list_team`, `send_message`, `check_inbox`, `message_status`, `register_agent`).
+";
 
 static NEXT_DELIVERY_SEQ: AtomicU64 = AtomicU64::new(1);
 
@@ -426,6 +449,8 @@ fn build_team_inventory(
             inspect_host_state(kind, state_root).map_err(|e| e.to_string())?;
         desktop_hosts.push(json!({
             "host": kind.as_str(),
+            "bundle_id": kind.bundle_id(),
+            "app_display_name": kind.app_display_name(),
             "project_count": projects.len(),
             "session_count": sessions.len(),
             "projects": projects,
@@ -462,6 +487,8 @@ fn build_team_inventory(
         "canonical_peers": canonical_peers,
         "grokbot": {
             "peer_id": "grokbot",
+            "bundle_id": GROKBOT_BUNDLE_ID,
+            "app_display_name": GROKBOT_APP_DISPLAY_NAME,
             "unread_inbox_count": grokbot_unread,
             "ready": true,
         },
@@ -894,6 +921,8 @@ fn build_setup_or_doctor_report(
             inspect_host_state(kind, state_root).map_err(|e| e.to_string())?;
         host_checks.push(json!({
             "host": kind.as_str(),
+            "bundle_id": kind.bundle_id(),
+            "app_display_name": kind.app_display_name(),
             "state_file": state_root.join(format!("{}-state.json", kind.as_str())),
             "registered_projects": projects.len(),
             "active_sessions": sessions.len(),
@@ -909,6 +938,8 @@ fn build_setup_or_doctor_report(
         "sqlite3_available": sqlite_ready,
         "grokbot": {
             "peer_id": "grokbot",
+            "bundle_id": GROKBOT_BUNDLE_ID,
+            "app_display_name": GROKBOT_APP_DISPLAY_NAME,
             "mailbox_file": mailbox.mailbox_file(),
             "unread_inbox_count": grokbot_unread,
             "ready": true,
@@ -1403,6 +1434,14 @@ fn run() -> Result<(), String> {
         "setup" => run_setup_or_doctor("setup", &args),
         "doctor" => run_setup_or_doctor("doctor", &args),
         "mcp" => run_mcp(&args),
+        "skill" => {
+            print!("{SKILL_GUIDE}");
+            Ok(())
+        }
+        "help" | "--help" | "-h" => {
+            println!("{USAGE}\n\n{SKILL_GUIDE}");
+            Ok(())
+        }
         _ => Err(USAGE.into()),
     }
 }

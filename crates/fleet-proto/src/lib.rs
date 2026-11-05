@@ -11,7 +11,7 @@ pub use host::{
     normalize_peer_id, resolve_project_dir_in_root, validate_nonempty_id, validate_project_slug,
     CreateSessionRequest, DeliverTurnRequest, DesktopHostKind, ExternalAgentManifest,
     HostSessionReceipt, InboxMessage, MessageAttachment, ProjectDirRecord, ProjectPathError,
-    SidebarProjectBinding,
+    SidebarProjectBinding, GROKBOT_APP_DISPLAY_NAME, GROKBOT_BUNDLE_ID,
 };
 
 /// Native thread identity survives index file renames and daemon restarts.

@@ -35,6 +35,26 @@ impl DesktopHostKind {
         }
     }
 
+    pub fn bundle_id(&self) -> &'static str {
+        match self {
+            Self::OpenaiDots => "com.openai.codex",
+            Self::Cindy => "com.xd.cindy",
+            Self::DeepseekHarness => "com.deepseek.dsh",
+            Self::AntigravityDesktop => "com.google.antigravity",
+            Self::Zcode => "dev.zcode.app",
+        }
+    }
+
+    pub fn app_display_name(&self) -> &'static str {
+        match self {
+            Self::OpenaiDots => "ChatGPT",
+            Self::Cindy => "Cindy",
+            Self::DeepseekHarness => "DeepSeek Harness",
+            Self::AntigravityDesktop => "Antigravity",
+            Self::Zcode => "ZCode",
+        }
+    }
+
     pub fn parse(value: &str) -> Result<Self, ProjectPathError> {
         match value.trim() {
             "openai-dots" | "openai dots" | "codex" | "codex-desktop" => Ok(Self::OpenaiDots),
@@ -288,6 +308,9 @@ impl ExternalAgentManifest {
         Ok(())
     }
 }
+
+pub const GROKBOT_BUNDLE_ID: &str = "com.anysphere.sand";
+pub const GROKBOT_APP_DISPLAY_NAME: &str = "Grok Bot";
 
 /// Normalizes a peer or caller identifier (`grokbot`, `grok`, `grok-bot`, `grok-cli`, or a canonical desktop host).
 pub fn normalize_peer_id(raw: &str) -> Result<String, ProjectPathError> {

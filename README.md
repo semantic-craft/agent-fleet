@@ -8,16 +8,26 @@
 
 体系落在专属的 `~/Projects`（少仓；主 A 可换 Grok、Dots 或 Cindy）。四层、外循环 orchestrator、内循环编排和 worker 互派见 [docs/architecture.md](docs/architecture.md)。PODAS 只是伞名，没有目录。
 
-## 五大桌面 Agent 互通矩阵
+## 五大桌面 Agent 与 GrokBot 互通矩阵
 
-| 桌面宿主 (`DesktopHostKind`) | 简写别名 | 左侧栏项目与会话落盘契约 | CLI / MCP 目标示例 |
-| --- | --- | --- | --- |
-| `antigravity-desktop` | `agy`, `antigravity` | `hub_<port>.json` (`CreateProject` + `StartCascade`) + `conversation_summaries.db` | `antigravity-desktop/my-project` |
-| `openai-dots` | `codex`, `codex-desktop` | `state_5.sqlite` (`projects` + `project_roots` + `threads`) + `.codex-global-state.json` | `openai-dots/my-project` |
-| `deepseek-harness` | `dsh` | `~/.dsh/storages/workspace.json` + `session_projcache` + 双帧 `session.v4.jsonl.zstd` | `deepseek-harness/my-project` |
-| `cindy` | `cindy-desktop` | Cindy Gateway (`sessions.patch` + `sessions.create` + `cindy_session_send`) + JSONL | `cindy/my-project` |
-| `zcode` | `zcode-desktop` | `~/.zcode/v2/tasks-index.sqlite` (`projects` + `project_roots` + `tasks`) + `cli/db/db.sqlite` | `zcode/my-project` |
-| `grokbot` (对等信箱节点) | `grok`, `grok-bot`, `grok-cli` | `<state_root>/mailboxes.json` 幂等信箱 + `<fleet-message>` 对等信封 + `.grok/config.toml` & `hooks` | `grokbot/my-project` |
+| 对等节点 (`DesktopHostKind` / Peer) | 简写别名 | macOS `bundle_id` | 左侧栏项目与会话落盘契约 | CLI / MCP 目标示例 |
+| --- | --- | --- | --- | --- |
+| `antigravity-desktop` | `agy`, `antigravity` | `com.google.antigravity` | `hub_<port>.json` (`CreateProject` + `StartCascade`) + `conversation_summaries.db` | `antigravity-desktop/my-project` |
+| `openai-dots` | `codex`, `codex-desktop` | `com.openai.codex` | `state_5.sqlite` (`projects` + `project_roots` + `threads`) + `.codex-global-state.json` | `openai-dots/my-project` |
+| `deepseek-harness` | `dsh` | `com.deepseek.dsh` | `~/.dsh/storages/workspace.json` + `session_projcache` + 双帧 `session.v4.jsonl.zstd` | `deepseek-harness/my-project` |
+| `cindy` | `cindy-desktop` | `com.xd.cindy` | Cindy Gateway (`sessions.patch` + `sessions.create` + `cindy_session_send`) + JSONL | `cindy/my-project` |
+| `zcode` | `zcode-desktop` | `dev.zcode.app` | `~/.zcode/v2/tasks-index.sqlite` (`projects` + `project_roots` + `tasks`) + `cli/db/db.sqlite` | `zcode/my-project` |
+| `grokbot` (对等信箱节点) | `grok`, `grok-bot`, `grok-cli` | `com.anysphere.sand` | `<state_root>/mailboxes.json` 幂等信箱 + `<fleet-message>` 对等信封 + `.grok/config.toml` & `hooks` | `grokbot/my-project` |
+
+## Agent 导航（30 秒定位源码、契约与验证）
+
+| 入口 | 用途与读取时机 |
+| --- | --- |
+| [crates/AGENTS.md](crates/AGENTS.md) | Rust 引擎任务到源码、核心类型（`DesktopHostKind`、`FleetMailboxStore`、`DesktopHostAdapter`）与测试的 30 秒路由表 |
+| `cargo run -p fleet-cli -- skill` | 输出面向 AI Agent 的内嵌技能指南（6 大节点 `bundle_id`、CLI 子命令与 5 个 MCP 工具） |
+| [DESIGN.md](DESIGN.md) | 混合 Agent Network + Reason Network 引擎架构、五大桌面宿主存储契约与不变量 |
+| [docs/rust-engine.md](docs/rust-engine.md) | 四个 Rust crate 边界说明与可重放 smoke 验证 |
+| `./scripts/check` | 全仓统一门禁（Cargo 全量测试、五大桌面端 + GrokBot E2E 测试、pstack-relay 自检、311 项 Node 测试与隐私守卫） |
 
 ## 快速上手（任何电脑一键搭建互通服务）
 
