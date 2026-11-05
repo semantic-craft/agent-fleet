@@ -426,23 +426,435 @@ impl AppServerClient {
 
 // ============================================================================
 // DeepSeek Harness (DSH) local HTTP gateway (`POST /v1/sessions` & `/turns`)
+// and native CLI + store (`dsh --profile headless --json` + `~/.dsh/storages/`)
 // ============================================================================
 
-/// Configuration for `DeepSeekHarnessAdapter` talking to the local DSH session gateway
-/// (`http://127.0.0.1:<port>/v1`).
+/// Configuration for `DeepSeekHarnessAdapter`, supporting either the local HTTP gateway
+/// (`http://127.0.0.1:<port>/v1`) or native macOS DeepSeek Harness CLI + store (`~/.dsh` + `dsh`).
 #[derive(Clone, Debug)]
 pub struct DshRuntimeConfig {
-    pub base_url: String,
+    pub base_url: Option<String>,
+    pub dsh_root: Option<PathBuf>,
+    pub dsh_bin: Option<PathBuf>,
     pub timeout: Duration,
 }
 
 impl DshRuntimeConfig {
     pub fn new(base_url: impl Into<String>) -> Self {
         Self {
-            base_url: base_url.into(),
+            base_url: Some(base_url.into()),
+            dsh_root: None,
+            dsh_bin: None,
             timeout: Duration::from_secs(5),
         }
     }
+
+    pub fn new_native(dsh_root: PathBuf, dsh_bin: PathBuf) -> Self {
+        Self {
+            base_url: None,
+            dsh_root: Some(dsh_root),
+            dsh_bin: Some(dsh_bin),
+            timeout: Duration::from_secs(600),
+        }
+    }
+
+    pub fn is_native(&self) -> bool {
+        self.dsh_root.is_some() && self.dsh_bin.is_some()
+    }
+
+    pub fn workspace_json_path(&self) -> Option<PathBuf> {
+        self.dsh_root
+            .as_ref()
+            .map(|r| r.join("storages").join("workspace.json"))
+    }
+
+    pub fn session_projcache_path(&self, session_id: &str) -> Option<PathBuf> {
+        self.dsh_root.as_ref().map(|r| {
+            r.join("storages")
+                .join("session_projcache")
+                .join("sessions")
+                .join(format!("{session_id}.json"))
+        })
+    }
+
+    pub fn session_archive_path(&self, cwd: &Path, session_id: &str) -> Option<PathBuf> {
+        self.dsh_root.as_ref().map(|r| {
+            let slug = dsh_cwd_bucket_slug(cwd);
+            r.join("sessions")
+                .join(slug)
+                .join(session_id)
+                .join("session.v4.jsonl.zstd")
+        })
+    }
+}
+
+pub fn dsh_cwd_bucket_slug(cwd: &Path) -> String {
+    let raw = cwd.to_string_lossy();
+    let trimmed = raw.trim_matches('/');
+    let replaced: String = trimmed
+        .chars()
+        .map(|c| if c == '/' { '-' } else { c })
+        .collect();
+    format!("--{replaced}--")
+}
+
+fn fnv1a_u64(seed: u64, bytes: &[u8]) -> u64 {
+    let mut hash = seed;
+    for &b in bytes {
+        hash ^= u64::from(b);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
+}
+
+pub fn deterministic_dsh_workspace_uuid(project_dir: &Path) -> String {
+    let bytes = project_dir.to_string_lossy().into_owned().into_bytes();
+    let h1 = fnv1a_u64(0xcbf29ce484222325, &bytes);
+    let h2 = fnv1a_u64(0x84222325cbf29ce4, &bytes);
+    let p1 = (h1 >> 32) as u32;
+    let p2 = ((h1 >> 16) & 0xffff) as u16;
+    let p3 = ((h1 & 0x0fff) | 0x4000) as u16;
+    let p4 = (((h2 >> 48) & 0x3fff) | 0x8000) as u16;
+    let p5 = h2 & 0x0000_ffff_ffff_ffff;
+    format!("{p1:08x}-{p2:04x}-{p3:04x}-{p4:04x}-{p5:012x}")
+}
+
+/// Ensures `<project_dir>` is registered in `<dsh_root>/storages/workspace.json` and returns its
+/// workspace UUID (`project_id`).
+pub fn ensure_dsh_native_workspace(
+    dsh_root: &Path,
+    project_dir: &Path,
+    title: &str,
+) -> Result<String, HostAdapterError> {
+    if !dsh_root.is_absolute() {
+        return Err(HostAdapterError::DshProtocol(format!(
+            "dsh_root must be absolute: {}",
+            dsh_root.display()
+        )));
+    }
+    let storages_dir = dsh_root.join("storages");
+    fs::create_dir_all(&storages_dir)?;
+    let ws_path = storages_dir.join("workspace.json");
+    let mut doc: Value = if ws_path.exists() {
+        serde_json::from_slice(&fs::read(&ws_path)?).map_err(|e| {
+            HostAdapterError::DshProtocol(format!(
+                "invalid JSON in {}: {e}",
+                ws_path.display()
+            ))
+        })?
+    } else {
+        json!({
+            "unit": { "name": "workspace", "version": 2 },
+            "global": {
+                "initialized": true,
+                "workspaceIds": [],
+                "archivedSessionIds": [],
+                "pinnedSessionIds": [],
+                "defaultWorkspaceId": ""
+            },
+            "tables": {
+                "workspaces": {}
+            }
+        })
+    };
+
+    let dir_str = project_dir.to_string_lossy().into_owned();
+    let mut matched_id: Option<String> = None;
+    if let Some(workspaces) = doc
+        .pointer("/tables/workspaces")
+        .and_then(Value::as_object)
+    {
+        for (ws_id, entry) in workspaces {
+            if entry.get("path").and_then(Value::as_str) == Some(dir_str.as_str()) {
+                matched_id = Some(ws_id.clone());
+                break;
+            }
+        }
+    }
+
+    let ws_id = matched_id.unwrap_or_else(|| deterministic_dsh_workspace_uuid(project_dir));
+    if FORBIDDEN_PROJECT_BUCKETS.contains(&ws_id.trim()) {
+        return Err(HostAdapterError::ForbiddenProjectId(ws_id));
+    }
+
+    let now_iso = "2026-11-05T04:00:00.000Z";
+    if doc.get("tables").and_then(Value::as_object).is_none() {
+        doc["tables"] = json!({ "workspaces": {} });
+    }
+    if doc
+        .pointer("/tables/workspaces")
+        .and_then(Value::as_object)
+        .is_none()
+    {
+        doc["tables"]["workspaces"] = json!({});
+    }
+    let workspaces = doc
+        .pointer_mut("/tables/workspaces")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| {
+            HostAdapterError::DshProtocol("workspace.json missing tables.workspaces".into())
+        })?;
+
+    match workspaces.get_mut(&ws_id) {
+        Some(existing) => {
+            existing["path"] = json!(dir_str);
+            existing["title"] = json!(title);
+            if existing.get("sessionIds").and_then(Value::as_array).is_none() {
+                existing["sessionIds"] = json!([]);
+            }
+        }
+        None => {
+            workspaces.insert(
+                ws_id.clone(),
+                json!({
+                    "path": dir_str,
+                    "title": title,
+                    "sessionIds": [],
+                    "createdAt": now_iso,
+                    "updatedAt": now_iso,
+                }),
+            );
+        }
+    }
+
+    if doc.get("global").and_then(Value::as_object).is_none() {
+        doc["global"] = json!({
+            "initialized": true,
+            "workspaceIds": [],
+            "archivedSessionIds": [],
+            "pinnedSessionIds": [],
+            "defaultWorkspaceId": ws_id,
+        });
+    }
+    if let Some(ids) = doc
+        .pointer_mut("/global/workspaceIds")
+        .and_then(Value::as_array_mut)
+    {
+        if !ids.iter().any(|v| v.as_str() == Some(ws_id.as_str())) {
+            ids.insert(0, json!(ws_id));
+        }
+    }
+
+    let tmp_path = ws_path.with_extension("json.tmp");
+    let bytes = serde_json::to_vec_pretty(&doc)
+        .map_err(|e| HostAdapterError::DshProtocol(e.to_string()))?;
+    fs::write(&tmp_path, bytes)?;
+    fs::rename(&tmp_path, &ws_path)?;
+    Ok(ws_id)
+}
+
+/// Attaches `session_id` to `<project_id>` inside `<dsh_root>/storages/workspace.json`.
+pub fn attach_dsh_session_to_workspace(
+    dsh_root: &Path,
+    project_id: &str,
+    session_id: &str,
+) -> Result<(), HostAdapterError> {
+    let ws_path = dsh_root.join("storages").join("workspace.json");
+    if !ws_path.exists() {
+        return Err(HostAdapterError::DshProtocol(format!(
+            "workspace.json does not exist at {}",
+            ws_path.display()
+        )));
+    }
+    let mut doc: Value = serde_json::from_slice(&fs::read(&ws_path)?).map_err(|e| {
+        HostAdapterError::DshProtocol(format!("invalid JSON in {}: {e}", ws_path.display()))
+    })?;
+    let ws_entry = doc
+        .pointer_mut(&format!("/tables/workspaces/{project_id}"))
+        .ok_or_else(|| {
+            HostAdapterError::DshProtocol(format!(
+                "workspace {project_id} missing from {}",
+                ws_path.display()
+            ))
+        })?;
+    if ws_entry.get("sessionIds").and_then(Value::as_array).is_none() {
+        ws_entry["sessionIds"] = json!([]);
+    }
+    if let Some(arr) = ws_entry
+        .get_mut("sessionIds")
+        .and_then(Value::as_array_mut)
+    {
+        if !arr.iter().any(|v| v.as_str() == Some(session_id)) {
+            arr.insert(0, json!(session_id));
+        }
+    }
+    let tmp_path = ws_path.with_extension("json.tmp");
+    let bytes = serde_json::to_vec_pretty(&doc)
+        .map_err(|e| HostAdapterError::DshProtocol(e.to_string()))?;
+    fs::write(&tmp_path, bytes)?;
+    fs::rename(&tmp_path, &ws_path)?;
+    Ok(())
+}
+
+/// Reads back a session snapshot from `<dsh_root>/storages/session_projcache/sessions/<session_id>.json`
+/// and `<dsh_root>/storages/workspace.json`, plus verifies `<dsh_root>/sessions/--<cwd>--/<session_id>/session.v4.jsonl.zstd`.
+pub fn read_dsh_native_session(
+    dsh_root: &Path,
+    session_id: &str,
+) -> Result<DshSessionSnapshot, HostAdapterError> {
+    let projcache_path = dsh_root
+        .join("storages")
+        .join("session_projcache")
+        .join("sessions")
+        .join(format!("{session_id}.json"));
+    if !projcache_path.exists() {
+        return Err(HostAdapterError::DshProtocol(format!(
+            "DSH session_projcache file missing at {}",
+            projcache_path.display()
+        )));
+    }
+    let doc: Value = serde_json::from_slice(&fs::read(&projcache_path)?).map_err(|e| {
+        HostAdapterError::DshProtocol(format!(
+            "invalid JSON in {}: {e}",
+            projcache_path.display()
+        ))
+    })?;
+    let cwd_str = doc
+        .pointer("/record/identity/cwd")
+        .or_else(|| doc.pointer("/record/rows/workingDirectory/val"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let cwd = PathBuf::from(cwd_str);
+    let title = doc
+        .pointer("/record/rows/title/val")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let turn_count = doc
+        .pointer("/record/rows/turnBoundary/val/lastTurn")
+        .and_then(Value::as_u64)
+        .or_else(|| {
+            doc.pointer("/record/rows/tokenUsage/val/last/turn")
+                .and_then(Value::as_u64)
+        })
+        .unwrap_or(1) as usize;
+    let last_turn_id = Some(format!("turn-{turn_count}"));
+
+    let archive_path = dsh_root
+        .join("sessions")
+        .join(dsh_cwd_bucket_slug(&cwd))
+        .join(session_id)
+        .join("session.v4.jsonl.zstd");
+    if !archive_path.exists() {
+        return Err(HostAdapterError::DshProtocol(format!(
+            "DSH session archive missing at {}",
+            archive_path.display()
+        )));
+    }
+
+    let mut project_id = String::new();
+    let ws_path = dsh_root.join("storages").join("workspace.json");
+    if ws_path.exists() {
+        if let Ok(ws_doc) = serde_json::from_slice::<Value>(&fs::read(&ws_path)?) {
+            if let Some(workspaces) = ws_doc
+                .pointer("/tables/workspaces")
+                .and_then(Value::as_object)
+            {
+                for (ws_id, entry) in workspaces {
+                    let has_session = entry
+                        .get("sessionIds")
+                        .and_then(Value::as_array)
+                        .is_some_and(|arr| arr.iter().any(|v| v.as_str() == Some(session_id)));
+                    if has_session {
+                        project_id = ws_id.clone();
+                        break;
+                    }
+                }
+                if project_id.is_empty() {
+                    for (ws_id, entry) in workspaces {
+                        if entry.get("path").and_then(Value::as_str) == Some(cwd_str) {
+                            project_id = ws_id.clone();
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(DshSessionSnapshot {
+        session_id: session_id.to_string(),
+        project_id,
+        title,
+        cwd,
+        turn_count,
+        last_turn_id,
+        status: "completed".into(),
+    })
+}
+
+/// Runs `dsh --profile headless [--session-id <id>] --json <prompt>` in `cwd` and returns `(session_id, turn_id)`.
+pub fn run_dsh_headless_command(
+    dsh_root: &Path,
+    dsh_bin: &Path,
+    cwd: &Path,
+    session_id: Option<&str>,
+    prompt: &str,
+) -> Result<(String, String), HostAdapterError> {
+    if !dsh_bin.is_absolute() {
+        return Err(HostAdapterError::DshProtocol(format!(
+            "dsh executable path must be absolute: {}",
+            dsh_bin.display()
+        )));
+    }
+    let mut cmd = Command::new(dsh_bin);
+    cmd.current_dir(cwd)
+        .env("DSH_HOME", dsh_root)
+        .env("DSH_PERMISSION_MODE", "danger-full-access")
+        .arg("--profile")
+        .arg("headless");
+    if let Some(sid) = session_id {
+        cmd.arg("--session-id").arg(sid);
+    }
+    cmd.arg("--json").arg(prompt);
+
+    let output = cmd.output()?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        return Err(HostAdapterError::DshProtocol(format!(
+            "dsh headless command failed (status {}): stderr={} stdout={}",
+            output.status,
+            stderr.trim(),
+            stdout.trim()
+        )));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut parsed_session_id: Option<String> = session_id.map(str::to_string);
+    let mut parsed_turn: u64 = 1;
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if !trimmed.starts_with('{') {
+            continue;
+        }
+        let Ok(val) = serde_json::from_str::<Value>(trimmed) else {
+            continue;
+        };
+        match val.get("type").and_then(Value::as_str) {
+            Some("session") => {
+                if let Some(sid) = val
+                    .get("sessionId")
+                    .or_else(|| val.get("session_id"))
+                    .and_then(Value::as_str)
+                {
+                    parsed_session_id = Some(sid.to_string());
+                }
+            }
+            Some("status") => {
+                if let Some(t) = val.get("turn").and_then(Value::as_u64) {
+                    parsed_turn = t;
+                }
+            }
+            _ => {}
+        }
+    }
+    let final_sid = parsed_session_id.ok_or_else(|| {
+        HostAdapterError::DshProtocol(
+            "dsh --profile headless --json output did not emit a session event with sessionId"
+                .into(),
+        )
+    })?;
+    Ok((final_sid, format!("turn-{parsed_turn}")))
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -526,7 +938,12 @@ pub(crate) fn dsh_http_request(
     path: &str,
     body: Option<&Value>,
 ) -> Result<Value, HostAdapterError> {
-    let (host, port, base_path) = parse_loopback_http_endpoint(&runtime.base_url)?;
+    let base_url = runtime.base_url.as_deref().ok_or_else(|| {
+        HostAdapterError::DshProtocol(
+            "DshRuntimeConfig base_url is not set (native DSH mode active)".into(),
+        )
+    })?;
+    let (host, port, base_path) = parse_loopback_http_endpoint(base_url)?;
     let full_path = if base_path.is_empty() || path.starts_with(&format!("{base_path}/")) {
         path.to_string()
     } else {

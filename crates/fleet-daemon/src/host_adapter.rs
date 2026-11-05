@@ -1018,7 +1018,26 @@ impl DeepSeekHarnessAdapter {
         state_root: PathBuf,
         runtime: crate::tri_hosts::DshRuntimeConfig,
     ) -> Result<Self, HostAdapterError> {
-        let _ = crate::tri_hosts::parse_loopback_http_endpoint(&runtime.base_url)?;
+        if let Some(base_url) = &runtime.base_url {
+            let _ = crate::tri_hosts::parse_loopback_http_endpoint(base_url)?;
+        } else if let (Some(dsh_root), Some(dsh_bin)) = (&runtime.dsh_root, &runtime.dsh_bin) {
+            if !dsh_root.is_absolute() {
+                return Err(HostAdapterError::DshProtocol(format!(
+                    "dsh_root must be absolute: {}",
+                    dsh_root.display()
+                )));
+            }
+            if !dsh_bin.is_absolute() {
+                return Err(HostAdapterError::DshProtocol(format!(
+                    "dsh_bin must be absolute: {}",
+                    dsh_bin.display()
+                )));
+            }
+        } else {
+            return Err(HostAdapterError::DshProtocol(
+                "DshRuntimeConfig requires either base_url or (dsh_root, dsh_bin)".into(),
+            ));
+        }
         let mut adapter = Self::new(projects_root, state_root)?;
         adapter.runtime = Some(runtime);
         Ok(adapter)
@@ -1041,6 +1060,9 @@ impl DeepSeekHarnessAdapter {
                 "DshRuntimeConfig is not configured on this adapter".into(),
             ));
         };
+        if let Some(dsh_root) = &runtime.dsh_root {
+            return crate::tri_hosts::read_dsh_native_session(dsh_root, session_id);
+        }
         let val = crate::tri_hosts::dsh_http_request(
             runtime,
             "GET",
@@ -1210,7 +1232,27 @@ impl DesktopHostAdapter for DeepSeekHarnessAdapter {
         slug: &str,
         title: Option<&str>,
     ) -> Result<SidebarProjectBinding, HostAdapterError> {
-        self.core.ensure_sidebar_project(slug, title)
+        let dir = self.core.ensure_project_dir(slug)?;
+        let Some(runtime) = self.runtime.clone() else {
+            return self.core.ensure_sidebar_project(slug, title);
+        };
+        let Some(dsh_root) = &runtime.dsh_root else {
+            return self.core.ensure_sidebar_project(slug, title);
+        };
+        let resolved_title = match title {
+            Some(t) => {
+                validate_nonempty_id("project title", t)?;
+                t.to_string()
+            }
+            None => slug.to_string(),
+        };
+        let ws_id = crate::tri_hosts::ensure_dsh_native_workspace(
+            dsh_root,
+            &dir.path,
+            &resolved_title,
+        )?;
+        self.core
+            .ensure_sidebar_project_with_override(slug, title, Some(ws_id))
     }
 
     fn create_session(
@@ -1228,6 +1270,42 @@ impl DesktopHostAdapter for DeepSeekHarnessAdapter {
                 DeliveryTier::Accepted,
             );
         };
+        if let (Some(dsh_root), Some(dsh_bin)) = (&runtime.dsh_root, &runtime.dsh_bin) {
+            let (session_id, turn_id) = crate::tri_hosts::run_dsh_headless_command(
+                dsh_root,
+                dsh_bin,
+                &project.project_dir,
+                None,
+                &request.prompt,
+            )?;
+            crate::tri_hosts::attach_dsh_session_to_workspace(
+                dsh_root,
+                &project.project_id,
+                &session_id,
+            )?;
+            let snap = self.read_dsh_session(&session_id)?;
+            if snap.cwd != project.project_dir {
+                return Err(HostAdapterError::ProjectDirMismatch {
+                    expected: project.project_dir,
+                    supplied: snap.cwd,
+                });
+            }
+            if !snap.project_id.is_empty() && snap.project_id != project.project_id {
+                return Err(HostAdapterError::SessionProjectMismatch {
+                    session_id,
+                    expected_project_id: project.project_id,
+                    supplied_project_id: snap.project_id,
+                });
+            }
+            return self.core.commit_created_session(
+                request,
+                project,
+                Some(session_id),
+                Some(turn_id),
+                None,
+                DeliveryTier::ThreadVisible,
+            );
+        }
         let create_body = serde_json::json!({
             "project_id": project.project_id,
             "cwd": project.project_dir,
@@ -1323,6 +1401,42 @@ impl DesktopHostAdapter for DeepSeekHarnessAdapter {
                 DeliveryTier::Accepted,
             );
         };
+        if let (Some(dsh_root), Some(dsh_bin)) = (&runtime.dsh_root, &runtime.dsh_bin) {
+            let (returned_sid, turn_id) = crate::tri_hosts::run_dsh_headless_command(
+                dsh_root,
+                dsh_bin,
+                &project.project_dir,
+                Some(&request.session_id),
+                &request.prompt,
+            )?;
+            if returned_sid != request.session_id {
+                return Err(HostAdapterError::DshProtocol(format!(
+                    "dsh --session-id {} returned mismatched session_id {returned_sid}",
+                    request.session_id
+                )));
+            }
+            let snap = self.read_dsh_session(&request.session_id)?;
+            if snap.cwd != project.project_dir {
+                return Err(HostAdapterError::ProjectDirMismatch {
+                    expected: project.project_dir,
+                    supplied: snap.cwd,
+                });
+            }
+            if !snap.project_id.is_empty() && snap.project_id != project.project_id {
+                return Err(HostAdapterError::SessionProjectMismatch {
+                    session_id: request.session_id.clone(),
+                    expected_project_id: project.project_id,
+                    supplied_project_id: snap.project_id,
+                });
+            }
+            return self.core.commit_delivered_turn(
+                request,
+                project,
+                Some(turn_id),
+                None,
+                DeliveryTier::ThreadVisible,
+            );
+        }
         let mut turn_body = serde_json::json!({
             "delivery_id": request.delivery_id,
             "project_id": project.project_id,

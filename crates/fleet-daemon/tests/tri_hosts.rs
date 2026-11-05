@@ -992,6 +992,134 @@ fn dsh_rejects_mismatched_cwd_on_gateway_readback() {
 }
 
 #[test]
+fn dsh_native_cli_registers_workspace_json_and_verifies_session_projcache_and_archive() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = std::env::temp_dir().join(format!(
+        "fleet-dsh-native-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let projects_root = root.join("Projects");
+    let state_root = root.join("state");
+    let dsh_root = root.join(".dsh");
+    fs::create_dir_all(&projects_root).unwrap();
+    fs::create_dir_all(&state_root).unwrap();
+    fs::create_dir_all(dsh_root.join("storages/session_projcache/sessions")).unwrap();
+    fs::create_dir_all(dsh_root.join("sessions")).unwrap();
+
+    let fake_dsh_bin = root.join("fake-dsh.sh");
+    let script = r#"#!/bin/sh
+set -eu
+SID="session-11111111-2222-4333-8444-555555555555"
+TURN=1
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --session-id)
+      SID="$2"
+      TURN=2
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+CWD_NOW="$(pwd -P)"
+SLUG="--$(printf '%s' "$CWD_NOW" | sed 's|^/||; s|/$||; s|/|-|g')--"
+mkdir -p "$DSH_HOME/sessions/$SLUG/$SID"
+printf 'mock-zstd-archive\n' > "$DSH_HOME/sessions/$SLUG/$SID/session.v4.jsonl.zstd"
+mkdir -p "$DSH_HOME/storages/session_projcache/sessions"
+cat > "$DSH_HOME/storages/session_projcache/sessions/$SID.json" <<EOF
+{
+  "version": 7,
+  "record": {
+    "identity": {
+      "formatVersion": 4,
+      "createdAt": 1793850818052,
+      "cwd": "$CWD_NOW",
+      "isSeeded": false,
+      "inheritedEventCount": 0
+    },
+    "rows": {
+      "title": { "ver": 1, "seq": 10, "val": "Native DSH Test Session" },
+      "workingDirectory": { "ver": 1, "seq": 10, "val": "$CWD_NOW" },
+      "turnBoundary": { "ver": 2, "seq": 10, "val": { "lastTurn": $TURN } }
+    }
+  }
+}
+EOF
+printf '{"type":"session","sessionId":"%s","cwd":"%s"}\n' "$SID" "$CWD_NOW"
+printf '{"type":"status","phase":"turn_start","turn":%s}\n' "$TURN"
+printf '{"type":"status","phase":"turn_end","turn":%s,"reason":{"kind":"completed"}}\n' "$TURN"
+printf '{"type":"final","text":"READY"}\n'
+"#;
+    fs::write(&fake_dsh_bin, script).unwrap();
+    let mut perms = fs::metadata(&fake_dsh_bin).unwrap().permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&fake_dsh_bin, perms).unwrap();
+
+    let runtime = DshRuntimeConfig::new_native(dsh_root.clone(), fake_dsh_bin);
+    let mut adapter = DeepSeekHarnessAdapter::with_runtime(
+        projects_root.clone(),
+        state_root,
+        runtime,
+    )
+    .unwrap();
+
+    let binding = adapter
+        .ensure_sidebar_project("glaux-book", Some("glaux-book"))
+        .unwrap();
+    assert_eq!(binding.host, DesktopHostKind::DeepseekHarness);
+    assert_eq!(binding.project_dir, projects_root.join("glaux-book"));
+
+    let created = adapter
+        .create_dsh_session(&CreateSessionRequest {
+            delivery_id: "dsh-native-1".into(),
+            project_id: binding.project_id.clone(),
+            project_dir: binding.project_dir.clone(),
+            title: "Translate Maitra Paper".into(),
+            prompt: "Resume translation of Code Without Copyright.".into(),
+            model: Some("group/ds-flash".into()),
+        })
+        .unwrap();
+    assert_eq!(
+        created.session_id,
+        "session-11111111-2222-4333-8444-555555555555"
+    );
+    assert_eq!(created.turn_id, "turn-1");
+    assert_eq!(created.turn_count, 1);
+
+    let followup = adapter
+        .deliver_dsh_turn(&DeliverTurnRequest {
+            delivery_id: "dsh-native-2".into(),
+            project_id: binding.project_id.clone(),
+            session_id: created.session_id.clone(),
+            project_dir: binding.project_dir.clone(),
+            prompt: "Verify EPUB and Zotero attachment.".into(),
+            model: Some("group/ds-flash".into()),
+        })
+        .unwrap();
+    assert_eq!(followup.session_id, created.session_id);
+    assert_eq!(followup.turn_id, "turn-2");
+    assert_eq!(followup.turn_count, 2);
+
+    let ws_doc: Value =
+        serde_json::from_slice(&fs::read(dsh_root.join("storages/workspace.json")).unwrap())
+            .unwrap();
+    let sess_ids = ws_doc
+        .pointer(&format!("/tables/workspaces/{}/sessionIds", binding.project_id))
+        .and_then(Value::as_array)
+        .unwrap();
+    assert!(sess_ids
+        .iter()
+        .any(|v| v.as_str() == Some("session-11111111-2222-4333-8444-555555555555")));
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
 fn cindy_creates_project_dir_binds_gateway_session_cwd_and_sends_followup_via_cindy_session_send() {
     let f = CindyGatewayFixture::new(false);
     let mut adapter = CindyAdapter::with_runtime(

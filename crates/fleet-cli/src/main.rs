@@ -80,7 +80,28 @@ fn parse_runtime_options(options: &BTreeMap<String, String>) -> Result<HostRunti
     }
 
     if let Some(base_url) = options.get("--dsh-base-url") {
+        if options.contains_key("--dsh-root") || options.contains_key("--dsh-bin") {
+            return Err(
+                "--dsh-base-url cannot be combined with --dsh-root / --dsh-bin".into(),
+            );
+        }
         rt.dsh = Some(DshRuntimeConfig::new(base_url.clone()));
+    } else {
+        match (options.get("--dsh-root"), options.get("--dsh-bin")) {
+            (Some(root), Some(bin)) => {
+                rt.dsh = Some(DshRuntimeConfig::new_native(
+                    PathBuf::from(root),
+                    PathBuf::from(bin),
+                ));
+            }
+            (None, None) => {}
+            _ => {
+                return Err(
+                    "both --dsh-root and --dsh-bin are required for native deepseek-harness runtime"
+                        .into(),
+                )
+            }
+        }
     }
 
     match (options.get("--antigravity-root"), options.get("--agy-bin")) {
@@ -204,6 +225,8 @@ fn run_hosts(args: &[String]) -> Result<(), String> {
         "--cindy-root",
         "--gateway-socket",
         "--dsh-base-url",
+        "--dsh-root",
+        "--dsh-bin",
         "--antigravity-root",
         "--agy-bin",
     ];
@@ -278,6 +301,8 @@ fn run_relay(args: &[String]) -> Result<(), String> {
         "--cindy-root",
         "--gateway-socket",
         "--dsh-base-url",
+        "--dsh-root",
+        "--dsh-bin",
         "--antigravity-root",
         "--agy-bin",
     ];
