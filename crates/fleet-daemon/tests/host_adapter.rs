@@ -96,7 +96,7 @@ fn host_adapter_all_four_hosts_create_project_register_sidebar_and_deliver_turns
         assert_eq!(created.project_id, binding.project_id);
         assert_eq!(created.project_dir, binding.project_dir);
         assert_eq!(created.workspace_uris, binding.workspace_uris);
-        assert_eq!(created.tier, DeliveryTier::ThreadVisible);
+        assert_eq!(created.tier, DeliveryTier::Accepted);
 
         let followup_req = DeliverTurnRequest {
             delivery_id: format!("deliv-turn-{}", kind.as_str()),
@@ -111,7 +111,7 @@ fn host_adapter_all_four_hosts_create_project_register_sidebar_and_deliver_turns
         assert_eq!(followup.session_id, created.session_id);
         assert_eq!(followup.project_id, binding.project_id);
         assert_ne!(followup.turn_id, created.turn_id);
-        assert_eq!(followup.tier, DeliveryTier::ThreadVisible);
+        assert_eq!(followup.tier, DeliveryTier::Accepted);
         println!(
             "HOST={} project_id={} session_id={} turns=[{}, {}] dir={}",
             kind,

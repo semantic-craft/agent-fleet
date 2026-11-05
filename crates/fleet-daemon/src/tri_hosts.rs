@@ -48,6 +48,62 @@ impl OpenAiDotsRuntimeConfig {
     pub fn global_state_path(&self) -> PathBuf {
         self.codex_root.join(".codex-global-state.json")
     }
+
+    pub fn config_toml_path(&self) -> PathBuf {
+        self.codex_root.join("config.toml")
+    }
+}
+
+/// Resolved Codex model and reasoning effort from `~/.codex/config.toml` (Magpie gateway default:
+/// `model = "zcode/GLM-5.3-Flash"`, `model_reasoning_effort = "max"`).
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct CodexMagpieModelConfig {
+    pub model: String,
+    pub model_reasoning_effort: String,
+    pub openai_base_url: Option<String>,
+}
+
+impl Default for CodexMagpieModelConfig {
+    fn default() -> Self {
+        Self {
+            model: "zcode/GLM-5.3-Flash".to_string(),
+            model_reasoning_effort: "max".to_string(),
+            openai_base_url: Some("http://127.0.0.1:3425/backend-api/codex".to_string()),
+        }
+    }
+}
+
+/// Reads top-level `model`, `model_reasoning_effort`, and `openai_base_url` from `<codex_root>/config.toml`,
+/// falling back to the canonical Magpie defaults (`zcode/GLM-5.3-Flash` at `max` effort).
+pub fn read_codex_magpie_config(codex_root: &Path) -> CodexMagpieModelConfig {
+    let mut cfg = CodexMagpieModelConfig::default();
+    let Ok(raw) = fs::read_to_string(codex_root.join("config.toml")) else {
+        return cfg;
+    };
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            break;
+        }
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let Some((key, val)) = trimmed.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        let val = val.trim().trim_matches('"').trim_matches('\'');
+        if val.is_empty() {
+            continue;
+        }
+        match key {
+            "model" => cfg.model = val.to_string(),
+            "model_reasoning_effort" => cfg.model_reasoning_effort = val.to_string(),
+            "openai_base_url" => cfg.openai_base_url = Some(val.to_string()),
+            _ => {}
+        }
+    }
+    cfg
 }
 
 /// Verified project + root row from `state_5.sqlite` (`projects` JOIN `project_roots`).

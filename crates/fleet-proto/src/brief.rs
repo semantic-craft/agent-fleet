@@ -79,7 +79,8 @@ pub fn validate_brief(text: &str) -> Result<(), BriefPolicyError> {
             .iter()
             .any(|word| clause.contains(word));
         let named_model = [
-            "gpt", "claude", "gemini", "deepseek", "grok", "qwen", "llama", "minimax",
+            "gpt", "claude", "gemini", "deepseek", "grok", "qwen", "llama", "minimax", "glm",
+            "zcode",
         ]
         .iter()
         .any(|name| words.iter().any(|word| word.starts_with(name)));
@@ -156,6 +157,7 @@ mod tests {
             "输出实际模型身份，否则停止。",
             "模型自证是前置条件。",
             "先确认你是 GPT-6，再开始执行。",
+            "先确认你是 GLM-5.3-Flash，再开始执行。",
             "第一行写出模型名称。",
         ] {
             assert_eq!(

@@ -114,6 +114,11 @@ impl OpenAiDotsFixture {
             .unwrap(),
         )
         .unwrap();
+        fs::write(
+            codex_root.join("config.toml"),
+            "model = \"zcode/GLM-5.3-Flash\"\nmodel_reasoning_effort = \"max\"\nopenai_base_url = \"http://127.0.0.1:3425/backend-api/codex\"\n",
+        )
+        .unwrap();
 
         let socket = root.join("app-server.sock");
         let listener = UnixListener::bind(&socket).unwrap();
@@ -816,6 +821,17 @@ fn openai_dots_creates_project_starts_thread_resumes_and_verifies_state_5_sqlite
             "turn/start",
         ]
     );
+    let last_turn_call = f
+        .rpc_calls
+        .lock()
+        .unwrap()
+        .iter()
+        .rev()
+        .find(|v| v.get("method").and_then(Value::as_str) == Some("turn/start"))
+        .cloned()
+        .unwrap();
+    assert_eq!(last_turn_call["params"]["model"], json!("zcode/GLM-5.3-Flash"));
+    assert_eq!(last_turn_call["params"]["effort"], json!("max"));
     println!(
         "OPENAI_DOTS_VERIFIED project_id={} thread_id={} turns=[{}, {}] deep_link={}",
         followup.project_id,

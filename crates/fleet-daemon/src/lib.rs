@@ -10,10 +10,11 @@ pub use antigravity::{
 };
 mod tri_hosts;
 pub use tri_hosts::{
-    read_cindy_transcript, read_codex_project, read_codex_thread, verify_codex_project_binding,
-    verify_codex_thread_binding, CindyRuntimeConfig, CindySessionReceipt, CindySessionSnapshot,
-    CodexProjectRow, CodexThreadRow, DshRuntimeConfig, DshSessionReceipt, DshSessionSnapshot,
-    OpenAiDotsReceipt, OpenAiDotsRuntimeConfig,
+    read_cindy_transcript, read_codex_magpie_config, read_codex_project, read_codex_thread,
+    verify_codex_project_binding, verify_codex_thread_binding, CindyRuntimeConfig,
+    CindySessionReceipt, CindySessionSnapshot, CodexMagpieModelConfig, CodexProjectRow,
+    CodexThreadRow, DshRuntimeConfig, DshSessionReceipt, DshSessionSnapshot, OpenAiDotsReceipt,
+    OpenAiDotsRuntimeConfig,
 };
 mod host_adapter;
 pub use host_adapter::{

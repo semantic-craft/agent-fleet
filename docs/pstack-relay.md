@@ -1,14 +1,14 @@
 # Rust fleet engine 接力队列
 
-总目标：ANet-based Rust fleet engine absorbing agenvo + Reason delivery；兼容 `https://anet.sonori.dev`。Slice A–G 已按各自验收边界完成。G 沿用外循环代选 A，真实 Sonori Hub 同任务经当前 Codex CLI 恢复执行并回读签名收据。原生 Desktop 可见性、自动回复成功及 Rust Hub client 线上发送仍未获证。实现尚未提交、合并或部署；外循环收据见 `.scratch/pstack-relay/slice-g-receipt.md`。
+总目标：ANet-based Rust fleet engine absorbing agenvo + Reason delivery；兼容 `https://anet.sonori.dev`。Slice A–L 已按各自验收边界完成：A–G 完成引擎骨架、会话目录、Hub 客户端与收据层级（已合入 `main` PR #115）；H–L 完成 REA 桌面档案与四桌面宿主（OpenAI Dots、Cindy、DeepSeek Harness、Antigravity Desktop）受控建目录、侧栏挂载及 `/poteto-mode` 跨 Agent 投递适配器（经隔离夹具与本机只读状态库对勘验证，无 runtime 时仅返回 `accepted` 层级）。Codex (`openai-dots`) 通过 Magpie 本地网关默认使用 `zcode/GLM-5.3-Flash`（`model_reasoning_effort = "max"`）。原生 Codex Desktop 内嵌 stdio 通道直连、自动回复成功及 Rust Hub client 线上发送仍待实机放行。
 
 ## 工作源与约束
 
-- 基线为 main `33ebed6`；本任务在 `agent/slice-a-pstack-20261104` worktree。外循环接续前先检查工作区，不覆盖 PR #114 所在线与其他 agent 的改动。
-- 当前工作区：`~/Projects/.worktrees/agent-fleet/slice-a-pstack-20261104`。日志在 `~/Projects/_status/agent-fleet-rust-engine-20261104/`，账本在 `.scratch/pstack-relay/decisions.tsv`。
+- 基线为 `main`；H–L 扩展在 `agent/slice-h-rea-desktop-20261105` 分支完成。
+- 日志与历史收据备份在 `~/Projects/_status/agent-fleet-rust-engine-20261104/`，本工作区账本在 `.scratch/pstack-relay/decisions.tsv`。
 - Rust 是目标实现。vendor/anet 仅作协议参考；旧 agenvo 仅提供机制线索。现有线上路径保持到真实验收通过。
 - 不读 PRIVATE 或业务仓；不改 Hub 身份、Reason 配置或部署。禁止同活同时发 ANet task 和 Reason 进窗。
-- 模型由 dispatcher 配置。brief 禁止 model self-attest 和 MODEL_WRONG 回路，不以 agent 自报作为模型证据。
+- 模型由 dispatcher 配置（Codex 经 Magpie 默认指定 `zcode/GLM-5.3-Flash` 与 `max` 推理档位）。brief 禁止 model self-attest 和 MODEL_WRONG 回路，不以 agent 自报作为模型证据。
 - 技术分叉自行用隔离原型判断。不可逆外部操作停止交外循环。
 
 ## 现状 vs 目标差距与防冲突护栏

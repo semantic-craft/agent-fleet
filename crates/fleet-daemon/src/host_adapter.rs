@@ -379,6 +379,7 @@ impl HostLifecycleCore {
         session_id_override: Option<String>,
         turn_id_override: Option<String>,
         workspace_uris_override: Option<Vec<String>>,
+        tier: DeliveryTier,
     ) -> Result<HostSessionReceipt, HostAdapterError> {
         if !self
             .state
@@ -429,7 +430,7 @@ impl HostLifecycleCore {
             turn_id,
             project_dir: project.project_dir,
             workspace_uris,
-            tier: DeliveryTier::ThreadVisible,
+            tier,
         })
     }
 
@@ -496,6 +497,7 @@ impl HostLifecycleCore {
         project: SidebarProjectBinding,
         turn_id_override: Option<String>,
         workspace_uris_override: Option<Vec<String>>,
+        tier: DeliveryTier,
     ) -> Result<HostSessionReceipt, HostAdapterError> {
         if !self
             .state
@@ -529,7 +531,7 @@ impl HostLifecycleCore {
             turn_id,
             project_dir: project.project_dir,
             workspace_uris,
-            tier: DeliveryTier::ThreadVisible,
+            tier,
         })
     }
 
@@ -826,19 +828,28 @@ impl DesktopHostAdapter for OpenAiDotsAdapter {
     ) -> Result<HostSessionReceipt, HostAdapterError> {
         let project = self.core.validate_create_session(request)?;
         let Some(runtime) = self.runtime.clone() else {
-            return self
-                .core
-                .commit_created_session(request, project, None, None, None);
+            return self.core.commit_created_session(
+                request,
+                project,
+                None,
+                None,
+                None,
+                DeliveryTier::Accepted,
+            );
         };
+        let magpie_cfg = crate::tri_hosts::read_codex_magpie_config(&runtime.codex_root);
+        let resolved_model = request
+            .model
+            .clone()
+            .unwrap_or_else(|| magpie_cfg.model.clone());
         let mut client = crate::tri_hosts::AppServerClient::connect(&runtime)?;
-        let mut start_params = serde_json::json!({
+        let start_params = serde_json::json!({
             "projectId": project.project_id,
             "cwd": project.project_dir,
             "title": request.title,
+            "model": resolved_model,
+            "effort": magpie_cfg.model_reasoning_effort,
         });
-        if let Some(model) = &request.model {
-            start_params["model"] = serde_json::json!(model);
-        }
         let started = client.request("thread/start", start_params)?;
         let thread_id = started
             .pointer("/thread/id")
@@ -850,16 +861,15 @@ impl DesktopHostAdapter for OpenAiDotsAdapter {
                     "codex app-server thread/start omitted thread.id".into(),
                 )
             })?;
-        let mut turn_params = serde_json::json!({
+        let turn_params = serde_json::json!({
             "threadId": thread_id,
             "projectId": project.project_id,
             "cwd": project.project_dir,
             "clientUserMessageId": request.delivery_id,
+            "model": resolved_model,
+            "effort": magpie_cfg.model_reasoning_effort,
             "input": [{"type": "text", "text": request.prompt, "text_elements": []}],
         });
-        if let Some(model) = &request.model {
-            turn_params["model"] = serde_json::json!(model);
-        }
         let turn_resp = client.request("turn/start", turn_params)?;
         let turn_id = turn_resp
             .pointer("/turn/id")
@@ -892,6 +902,7 @@ impl DesktopHostAdapter for OpenAiDotsAdapter {
             Some(thread_id),
             Some(turn_id),
             None,
+            DeliveryTier::ThreadVisible,
         )
     }
 
@@ -901,10 +912,19 @@ impl DesktopHostAdapter for OpenAiDotsAdapter {
     ) -> Result<HostSessionReceipt, HostAdapterError> {
         let project = self.core.validate_deliver_turn(request)?;
         let Some(runtime) = self.runtime.clone() else {
-            return self
-                .core
-                .commit_delivered_turn(request, project, None, None);
+            return self.core.commit_delivered_turn(
+                request,
+                project,
+                None,
+                None,
+                DeliveryTier::Accepted,
+            );
         };
+        let magpie_cfg = crate::tri_hosts::read_codex_magpie_config(&runtime.codex_root);
+        let resolved_model = request
+            .model
+            .clone()
+            .unwrap_or_else(|| magpie_cfg.model.clone());
         let mut client = crate::tri_hosts::AppServerClient::connect(&runtime)?;
         let resumed = client.request(
             "thread/resume",
@@ -926,16 +946,15 @@ impl DesktopHostAdapter for OpenAiDotsAdapter {
                 )));
             }
         }
-        let mut turn_params = serde_json::json!({
+        let turn_params = serde_json::json!({
             "threadId": request.session_id,
             "projectId": project.project_id,
             "cwd": project.project_dir,
             "clientUserMessageId": request.delivery_id,
+            "model": resolved_model,
+            "effort": magpie_cfg.model_reasoning_effort,
             "input": [{"type": "text", "text": request.prompt, "text_elements": []}],
         });
-        if let Some(model) = &request.model {
-            turn_params["model"] = serde_json::json!(model);
-        }
         let turn_resp = client.request("turn/start", turn_params)?;
         let turn_id = turn_resp
             .pointer("/turn/id")
@@ -963,8 +982,13 @@ impl DesktopHostAdapter for OpenAiDotsAdapter {
             &project.project_id,
             &project.project_dir,
         )?;
-        self.core
-            .commit_delivered_turn(request, project, Some(turn_id), None)
+        self.core.commit_delivered_turn(
+            request,
+            project,
+            Some(turn_id),
+            None,
+            DeliveryTier::ThreadVisible,
+        )
     }
 }
 
@@ -1195,9 +1219,14 @@ impl DesktopHostAdapter for DeepSeekHarnessAdapter {
     ) -> Result<HostSessionReceipt, HostAdapterError> {
         let project = self.core.validate_create_session(request)?;
         let Some(runtime) = self.runtime.clone() else {
-            return self
-                .core
-                .commit_created_session(request, project, None, None, None);
+            return self.core.commit_created_session(
+                request,
+                project,
+                None,
+                None,
+                None,
+                DeliveryTier::Accepted,
+            );
         };
         let create_body = serde_json::json!({
             "project_id": project.project_id,
@@ -1276,6 +1305,7 @@ impl DesktopHostAdapter for DeepSeekHarnessAdapter {
             Some(session_id),
             Some(turn_id),
             None,
+            DeliveryTier::ThreadVisible,
         )
     }
 
@@ -1285,9 +1315,13 @@ impl DesktopHostAdapter for DeepSeekHarnessAdapter {
     ) -> Result<HostSessionReceipt, HostAdapterError> {
         let project = self.core.validate_deliver_turn(request)?;
         let Some(runtime) = self.runtime.clone() else {
-            return self
-                .core
-                .commit_delivered_turn(request, project, None, None);
+            return self.core.commit_delivered_turn(
+                request,
+                project,
+                None,
+                None,
+                DeliveryTier::Accepted,
+            );
         };
         let mut turn_body = serde_json::json!({
             "delivery_id": request.delivery_id,
@@ -1329,8 +1363,13 @@ impl DesktopHostAdapter for DeepSeekHarnessAdapter {
                 supplied_project_id: snap.project_id,
             });
         }
-        self.core
-            .commit_delivered_turn(request, project, Some(turn_id), None)
+        self.core.commit_delivered_turn(
+            request,
+            project,
+            Some(turn_id),
+            None,
+            DeliveryTier::ThreadVisible,
+        )
     }
 }
 
@@ -1601,9 +1640,14 @@ impl DesktopHostAdapter for CindyAdapter {
     ) -> Result<HostSessionReceipt, HostAdapterError> {
         let project = self.core.validate_create_session(request)?;
         let Some(runtime) = self.runtime.clone() else {
-            return self
-                .core
-                .commit_created_session(request, project, None, None, None);
+            return self.core.commit_created_session(
+                request,
+                project,
+                None,
+                None,
+                None,
+                DeliveryTier::Accepted,
+            );
         };
         let mut client = crate::tri_hosts::CindyGatewayClient::connect(&runtime)?;
         let created = client.request(
@@ -1667,6 +1711,7 @@ impl DesktopHostAdapter for CindyAdapter {
             Some(session_key),
             Some(turn_id),
             None,
+            DeliveryTier::ThreadVisible,
         )
     }
 
@@ -1676,9 +1721,13 @@ impl DesktopHostAdapter for CindyAdapter {
     ) -> Result<HostSessionReceipt, HostAdapterError> {
         let project = self.core.validate_deliver_turn(request)?;
         let Some(runtime) = self.runtime.clone() else {
-            return self
-                .core
-                .commit_delivered_turn(request, project, None, None);
+            return self.core.commit_delivered_turn(
+                request,
+                project,
+                None,
+                None,
+                DeliveryTier::Accepted,
+            );
         };
         let mut client = crate::tri_hosts::CindyGatewayClient::connect(&runtime)?;
         let mut send_params = serde_json::json!({
@@ -1717,8 +1766,13 @@ impl DesktopHostAdapter for CindyAdapter {
                 supplied_project_id: snap.project_id,
             });
         }
-        self.core
-            .commit_delivered_turn(request, project, Some(turn_id), None)
+        self.core.commit_delivered_turn(
+            request,
+            project,
+            Some(turn_id),
+            None,
+            DeliveryTier::ThreadVisible,
+        )
     }
 }
 
@@ -1822,9 +1876,14 @@ impl DesktopHostAdapter for AntigravityDesktopAdapter {
     ) -> Result<HostSessionReceipt, HostAdapterError> {
         let project = self.core.validate_create_session(request)?;
         let Some(runtime) = self.runtime.clone() else {
-            return self
-                .core
-                .commit_created_session(request, project, None, None, None);
+            return self.core.commit_created_session(
+                request,
+                project,
+                None,
+                None,
+                None,
+                DeliveryTier::Accepted,
+            );
         };
         let hubs = crate::antigravity::discover_antigravity_hubs(&runtime.daemon_dir())?;
         let mut args: Vec<std::ffi::OsString> = vec![
@@ -1888,6 +1947,7 @@ impl DesktopHostAdapter for AntigravityDesktopAdapter {
             Some(conversation_id),
             turn_id,
             Some(summary.workspace_uris),
+            DeliveryTier::ThreadVisible,
         )
     }
 
@@ -1897,9 +1957,13 @@ impl DesktopHostAdapter for AntigravityDesktopAdapter {
     ) -> Result<HostSessionReceipt, HostAdapterError> {
         let project = self.core.validate_deliver_turn(request)?;
         let Some(runtime) = self.runtime.clone() else {
-            return self
-                .core
-                .commit_delivered_turn(request, project, None, None);
+            return self.core.commit_delivered_turn(
+                request,
+                project,
+                None,
+                None,
+                DeliveryTier::Accepted,
+            );
         };
         let hubs = crate::antigravity::discover_antigravity_hubs(&runtime.daemon_dir())?;
         let mut args: Vec<std::ffi::OsString> = vec![
@@ -1966,6 +2030,7 @@ impl DesktopHostAdapter for AntigravityDesktopAdapter {
             project,
             turn_id,
             Some(summary.workspace_uris),
+            DeliveryTier::ThreadVisible,
         )
     }
 }
