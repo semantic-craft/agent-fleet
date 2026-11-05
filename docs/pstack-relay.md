@@ -1,14 +1,14 @@
 # Rust fleet engine 接力队列
 
-总目标：ANet-based Rust fleet engine absorbing agenvo + Reason delivery；兼容 `https://anet.sonori.dev`。Slice A–G 已按各自验收边界完成。G 沿用外循环代选 A，真实 Sonori Hub 同任务经当前 Codex CLI 恢复执行并回读签名收据。原生 Desktop 可见性、自动回复成功及 Rust Hub client 线上发送仍未获证。实现尚未提交、合并或部署；外循环收据见 `.scratch/pstack-relay/slice-g-receipt.md`。
+总目标：ANet-based Rust fleet engine absorbing agenvo + Reason delivery；兼容 `https://anet.sonori.dev`。Slice A–L 已按各自验收边界完成：A–G 完成引擎骨架、会话目录、Hub 客户端与收据层级（已合入 `main` PR #115）；H–L 完成 REA 桌面档案与四桌面宿主（OpenAI Dots、Cindy、DeepSeek Harness、Antigravity Desktop）受控建目录、侧栏挂载及 `/poteto-mode` 跨 Agent 投递适配器（经隔离夹具与本机只读状态库对勘验证，无 runtime 时仅返回 `accepted` 层级）。Codex (`openai-dots`) 通过 Magpie 本地网关默认使用 `zcode/GLM-5.3-Flash`（`model_reasoning_effort = "max"`）。原生 Codex Desktop 内嵌 stdio 通道直连、自动回复成功及 Rust Hub client 线上发送仍待实机放行。
 
 ## 工作源与约束
 
-- 基线为 main `33ebed6`；本任务在 `agent/slice-a-pstack-20261104` worktree。外循环接续前先检查工作区，不覆盖 PR #114 所在线与其他 agent 的改动。
-- 当前工作区：`~/Projects/.worktrees/agent-fleet/slice-a-pstack-20261104`。日志在 `~/Projects/_status/agent-fleet-rust-engine-20261104/`，账本在 `.scratch/pstack-relay/decisions.tsv`。
+- 基线为 `main`；H–L 扩展在 `agent/slice-h-rea-desktop-20261105` 分支完成。
+- 日志与历史收据备份在 `~/Projects/_status/agent-fleet-rust-engine-20261104/`，本工作区账本在 `.scratch/pstack-relay/decisions.tsv`。
 - Rust 是目标实现。vendor/anet 仅作协议参考；旧 agenvo 仅提供机制线索。现有线上路径保持到真实验收通过。
 - 不读 PRIVATE 或业务仓；不改 Hub 身份、Reason 配置或部署。禁止同活同时发 ANet task 和 Reason 进窗。
-- 模型由 dispatcher 配置。brief 禁止 model self-attest 和 MODEL_WRONG 回路，不以 agent 自报作为模型证据。
+- 模型由 dispatcher 配置（Codex 经 Magpie 默认指定 `zcode/GLM-5.3-Flash` 与 `max` 推理档位）。brief 禁止 model self-attest 和 MODEL_WRONG 回路，不以 agent 自报作为模型证据。
 - 技术分叉自行用隔离原型判断。不可逆外部操作停止交外循环。
 
 ## 现状 vs 目标差距与防冲突护栏
@@ -41,6 +41,11 @@ Slice B 已将 Cargo 编译与 session directory 隔离行为测试接入同一�
 | E | Inject opened Desktop/thread | 下方 Slice E 的 Done Predicate |
 | F | Delivery tier 与 brief 边界 | 下方 Slice F 的 Done Predicate |
 | G | 外循环验收与收口 | 下方 Slice G 的 Done Predicate |
+| H | REA 观察分析 Antigravity Desktop 与 Codex Desktop 项目/会话机制 | 下方 Slice H 的 Done Predicate |
+| I | 扩展 fleet-proto 与 fleet-daemon 的项目目录创建与四端会话生命周期契约 | 下方 Slice I 的 Done Predicate |
+| J | 落地 Antigravity Desktop 侧栏建项目与会话投递适配器 | 下方 Slice J 的 Done Predicate |
+| K | 打通 OpenAI Dots (Codex Desktop)、DSH、Cindy 三端侧栏建目录与会话投递 | 下方 Slice K 的 Done Predicate |
+| L | 四端 /poteto-mode (pstack-relay) 跨 Agent 自我开发闭环验收 | 下方 Slice L 的 Done Predicate |
 
 ### [x] Slice A: 盘点与接力入口
 - **Playbook**: `Investigation`
@@ -83,4 +88,35 @@ Slice B 已将 Cargo 编译与 session directory 隔离行为测试接入同一�
 - **Outcome**: 开发机 Desktop 可见完成一次 Rust 引擎任务；Hub 保持兼容；说明实现、合并、部署和人工验收各自状态。
 - **Done Predicate**: `cargo check --workspace`、`cargo test --workspace`、`scripts/check` 通过；真实 Sonori Hub 与 开发机 Desktop 同一任务收据闭环，独立审查后由外循环收口。
 - **Evidence**: .scratch/pstack-relay/slice-g-receipt.md;.scratch/pstack-relay/checks/20261104T144947.302679Z/receipt.json;.scratch/pstack-relay/slice-g-final-audit.md
+
+### [x] Slice H: REA 观察分析 Antigravity Desktop 与 Codex Desktop 项目/会话机制
+- **Playbook**: `Investigation`
+- **Outcome**: 使用 REA 对 Antigravity Desktop (`/Applications/Antigravity.app`、`~/.local/libexec/agy/agy`、`conversation_summaries.db`、Hub `LanguageServerService`) 与 Codex Desktop (`state_5.sqlite`、`queue_1.sqlite`、`.codex-global-state.json`、`codex app-server`) 进行静态与状态库取证，完成 `docs/desktop-rea-dossier.md` 并排定 Slice H–L 接力队列。
+- **Done Predicate**: `test -f docs/desktop-rea-dossier.md && scripts/check && python3 scripts/pstack-relay selftest` 通过；档案包含可复核 REA Evidence ID、SHA-256 摘要、SQLite/RPC 契约及四端统一 `DesktopHostAdapter` 映射。
+- **Evidence**: docs/desktop-rea-dossier.md;docs/pstack-relay.md;.scratch/pstack-relay/checks/20261105T010754.427650Z/receipt.json
+
+### [x] Slice I: 扩展 fleet-proto 与 fleet-daemon 的项目目录创建与四端会话生命周期契约
+- **Playbook**: `Feature`
+- **Outcome**: 在 `fleet-proto` 与 `fleet-daemon` 中新增统一的 `DesktopHostAdapter` 接口（覆盖 `openai-dots`、`cindy`、`deepseek-harness`、`antigravity-desktop` 四宿主），支持受控创建项目目录 (`ensure_project_dir`)、侧栏项目注册 (`ensure_sidebar_project`)、新建侧栏会话 (`create_session`) 与续接追问 (`deliver_turn`)，并拒绝路径穿越与越界目录创建。
+- **Done Predicate**: `cargo test --workspace` 与 `scripts/check` 通过；隔离测试覆盖四端适配器的项目目录创建、侧栏项目 ID 绑定、会话新建/续接及非法路径拒绝。
+- **Evidence**: crates/fleet-proto/src/host.rs;crates/fleet-daemon/src/host_adapter.rs;crates/fleet-daemon/tests/host_adapter.rs;.scratch/pstack-relay/checks/20261105T020255.186329Z/receipt.json
+
+### [x] Slice J: 落地 Antigravity Desktop 侧栏建项目与会话投递适配器
+- **Playbook**: `Feature`
+- **Outcome**: 基于 Slice H 的 REA 证据，在 `fleet-daemon` 中实现 Antigravity Desktop 适配器：支持发现 `~/.gemini/antigravity/daemon/hub_<port>.json` 或调用 `agy --new-project` / `--project <id>` / `--add-dir <dir>` / `--conversation <id>` 创建项目目录、挂载侧栏项目并投递或续接对话，回读 `conversation_summaries.db` 验证 `project_id` 与 `workspace_uris` 落盘。
+- **Done Predicate**: `cargo test -p fleet-daemon antigravity` 与 `scripts/check` 通过；测试验证新建目录与会话在 `conversation_summaries.db` 中绑定目标 `project_id` 而非落入无项目桶，且收据包含 `conversation_id` 与 `workspace_uris`。
+- **Evidence**: crates/fleet-daemon/src/antigravity.rs;crates/fleet-daemon/src/host_adapter.rs;crates/fleet-daemon/tests/antigravity.rs;.scratch/pstack-relay/checks/20261105T023057.001479Z/receipt.json
+
+### [x] Slice K: 打通 OpenAI Dots (Codex Desktop)、DSH、Cindy 三端侧栏建目录与会话投递
+- **Playbook**: `Feature`
+- **Outcome**: 在 `fleet-daemon` 中补齐 OpenAI Dots (`codex app-server` `project/create` + `thread/start` / `turn/start` 及 `state_5.sqlite` `projects`/`project_roots` 校验)、DSH (`POST /v1/sessions` 绑定新建目录 `cwd` + `POST /v1/sessions/<id>/turns`) 与 Cindy (`cindy_session_send` / Gateway session `cwd` 绑定) 的建目录与侧栏新会话/续接能力。
+- **Done Predicate**: `cargo test -p fleet-daemon` 与 `scripts/check` 通过；三端各自通过隔离夹具与本地协议测试证明新目录创建、侧栏项目挂载、会话可见性与同一线程续接。
+- **Evidence**: crates/fleet-daemon/src/tri_hosts.rs;crates/fleet-daemon/src/host_adapter.rs;crates/fleet-daemon/tests/tri_hosts.rs;.scratch/pstack-relay/checks/20261105T023924.621791Z/receipt.json
+
+### [x] Slice L: 四端 /poteto-mode (pstack-relay) 跨 Agent 自我开发闭环验收
+- **Playbook**: `Shipping`
+- **Outcome**: 通过 `fleet-cli` 向 OpenAI Dots、Cindy、DeepSeek Harness、Antigravity Desktop 四个桌面宿主执行跨 Agent `/poteto-mode` (`pstack-relay`) 自我开发投递验收，留存四端侧栏会话可见证据、目录创建证据与收据闭环。
+- **Done Predicate**: `cargo check --workspace`、`cargo test --workspace` 与 `scripts/check` 通过；四端收据与验证证据齐全并完成独立审查。
+- **Evidence**: crates/fleet-daemon/src/relay_self_dev.rs;crates/fleet-cli/src/main.rs;crates/fleet-cli/tests/poteto_relay_four_hosts.rs;.scratch/pstack-relay/slice-l-four-hosts/four-hosts-closure-bundle.json;.scratch/pstack-relay/slice-l-receipt.md;.scratch/pstack-relay/slice-l-final-audit.md;.scratch/pstack-relay/checks/20261105T025915.381857Z/receipt.json
+
 
