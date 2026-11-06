@@ -24,15 +24,22 @@ pub use tri_hosts::{
 };
 mod host_adapter;
 pub use host_adapter::{
-    build_host_adapter, inspect_host_state, wire_agent_configs, AgentWiringReport,
-    AntigravityDesktopAdapter, CindyAdapter, DeepSeekHarnessAdapter, DesktopHostAdapter,
-    ExternalAgentReceipt, ExternalAgentRegistry, FleetMailboxStore, HostAdapterError,
-    OpenAiDotsAdapter, PersistedSessionRecord, PersistedTurnRecord, ZcodeAdapter,
+    build_configured_host_adapter, build_host_adapter, detect_antigravity_runtime,
+    detect_cindy_runtime, detect_dsh_runtime, detect_openai_dots_runtime, detect_zcode_runtime,
+    inspect_host_state, wire_agent_configs, AgentWiringReport, AntigravityDesktopAdapter,
+    CindyAdapter, DeepSeekHarnessAdapter, DesktopHostAdapter, ExternalAgentReceipt,
+    ExternalAgentRegistry, FleetMailboxStore, HostAdapterError, OpenAiDotsAdapter,
+    PersistedSessionRecord, PersistedTurnRecord, ZcodeAdapter,
 };
 mod relay_self_dev;
 pub use relay_self_dev::{
     run_host_poteto_relay, HostRelayClosureReceipt, HostRuntimeOptions,
     HostStoreVerificationEvidence, PotetoRelayTask,
+};
+mod doctor;
+pub use doctor::{
+    check_columns_alignment, is_process_running, probe_external_agent_live_contract,
+    probe_host_live_contract, read_sqlite_table_columns,
 };
 
 use fleet_proto::{SessionId, SessionRecord, SessionSelector, SessionState};

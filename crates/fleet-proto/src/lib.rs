@@ -9,9 +9,10 @@ pub use brief::{validate_brief, BriefPolicyError};
 mod host;
 pub use host::{
     normalize_peer_id, resolve_project_dir_in_root, validate_nonempty_id, validate_project_slug,
-    CreateSessionRequest, DeliverTurnRequest, DesktopHostKind, ExternalAgentManifest,
-    HostSessionReceipt, InboxMessage, MessageAttachment, ProjectDirRecord, ProjectPathError,
-    SidebarProjectBinding, GROKBOT_APP_DISPLAY_NAME, GROKBOT_BUNDLE_ID,
+    validate_session_id, CreateSessionRequest, DeliverTurnRequest, DesktopHostKind,
+    ExternalAgentManifest, HostSessionReceipt, InboxMessage, MessageAttachment, PeerAddress,
+    ProjectDirRecord, ProjectPathError, SidebarProjectBinding, GROKBOT_APP_DISPLAY_NAME,
+    GROKBOT_BUNDLE_ID,
 };
 
 /// Native thread identity survives index file renames and daemon restarts.

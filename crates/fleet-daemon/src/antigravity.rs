@@ -139,6 +139,8 @@ pub struct AntigravityReceipt {
     pub step_count: i64,
     pub hub_http_port: Option<u16>,
     pub tier: DeliveryTier,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 impl From<AntigravityReceipt> for HostSessionReceipt {
@@ -152,6 +154,7 @@ impl From<AntigravityReceipt> for HostSessionReceipt {
             project_dir: r.project_dir,
             workspace_uris: r.workspace_uris,
             tier: r.tier,
+            model: r.model,
         }
     }
 }
@@ -858,8 +861,9 @@ pub(crate) fn run_agentapi_send_message(
     _project_dir: &Path,
     conversation_id: &str,
     prompt: &str,
+    model: Option<&str>,
 ) -> Result<String, HostAdapterError> {
-    let plan_model = resolve_antigravity_plan_model(hub, None);
+    let plan_model = resolve_antigravity_plan_model(hub, model);
     let _ = hub_rpc_request(
         hub,
         "SendUserCascadeMessage",
@@ -1018,6 +1022,7 @@ impl crate::AntigravityDesktopAdapter {
                 step_count: 1,
                 hub_http_port: None,
                 tier: receipt.tier,
+                model: request.model.clone(),
             });
         };
         let hubs = discover_antigravity_hubs(&runtime.daemon_dir())?;
@@ -1047,6 +1052,7 @@ impl crate::AntigravityDesktopAdapter {
             step_count: summary.step_count,
             hub_http_port: hubs.first().map(|h| h.http_port),
             tier: receipt.tier,
+            model: request.model.clone(),
         })
     }
 
@@ -1071,6 +1077,7 @@ impl crate::AntigravityDesktopAdapter {
                 step_count: 2,
                 hub_http_port: None,
                 tier: receipt.tier,
+                model: request.model.clone(),
             });
         };
         let hubs = discover_antigravity_hubs(&runtime.daemon_dir())?;
@@ -1100,6 +1107,7 @@ impl crate::AntigravityDesktopAdapter {
             step_count: summary.step_count,
             hub_http_port: hubs.first().map(|h| h.http_port),
             tier: receipt.tier,
+            model: request.model.clone(),
         })
     }
 

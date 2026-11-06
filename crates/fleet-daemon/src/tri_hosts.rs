@@ -143,6 +143,8 @@ pub struct OpenAiDotsReceipt {
     pub preview: String,
     pub deep_link: String,
     pub tier: DeliveryTier,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 impl From<OpenAiDotsReceipt> for HostSessionReceipt {
@@ -156,6 +158,7 @@ impl From<OpenAiDotsReceipt> for HostSessionReceipt {
             project_dir: r.project_dir,
             workspace_uris: r.workspace_uris,
             tier: r.tier,
+            model: r.model,
         }
     }
 }
@@ -486,6 +489,55 @@ impl DshRuntimeConfig {
                 .join("session.v4.jsonl.zstd")
         })
     }
+
+    pub fn is_gateway_active(&self) -> bool {
+        let Some(base_url) = &self.base_url else {
+            return false;
+        };
+        let Ok((host, port, _)) = parse_loopback_http_endpoint(base_url) else {
+            return false;
+        };
+        let addr = format!("{host}:{port}");
+        std::net::TcpStream::connect_timeout(
+            &addr.parse().unwrap_or_else(|_| std::net::SocketAddr::from(([127, 0, 0, 1], port))),
+            Duration::from_millis(200),
+        )
+        .is_ok()
+    }
+}
+
+pub(crate) fn current_time_iso() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let now = SystemTime::now();
+    let duration = now.duration_since(UNIX_EPOCH).unwrap_or_default();
+    let secs = duration.as_secs() as libc::time_t;
+    let millis = duration.subsec_millis();
+    let mut tm = libc::tm {
+        tm_sec: 0,
+        tm_min: 0,
+        tm_hour: 0,
+        tm_mday: 0,
+        tm_mon: 0,
+        tm_year: 0,
+        tm_wday: 0,
+        tm_yday: 0,
+        tm_isdst: 0,
+        tm_gmtoff: 0,
+        tm_zone: std::ptr::null_mut(),
+    };
+    unsafe {
+        libc::gmtime_r(&secs, &mut tm);
+    }
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+        tm.tm_year + 1900,
+        tm.tm_mon + 1,
+        tm.tm_mday,
+        tm.tm_hour,
+        tm.tm_min,
+        tm.tm_sec,
+        millis
+    )
 }
 
 pub fn dsh_cwd_bucket_slug(cwd: &Path) -> String {
@@ -577,7 +629,7 @@ pub fn ensure_dsh_native_workspace(
         return Err(HostAdapterError::ForbiddenProjectId(ws_id));
     }
 
-    let now_iso = "2026-11-05T04:00:00.000Z";
+    let now_iso = current_time_iso();
     if doc.get("tables").and_then(Value::as_object).is_none() {
         doc["tables"] = json!({ "workspaces": {} });
     }
@@ -599,6 +651,7 @@ pub fn ensure_dsh_native_workspace(
         Some(existing) => {
             existing["path"] = json!(dir_str);
             existing["title"] = json!(title);
+            existing["updatedAt"] = json!(now_iso);
             if existing.get("sessionIds").and_then(Value::as_array).is_none() {
                 existing["sessionIds"] = json!([]);
             }
@@ -705,7 +758,6 @@ pub fn sync_dsh_session_title_in_projcache(
     if !projcache_path.exists() {
         return Ok(());
     }
-    let _ = stop_running_dsh_desktop_app_if_matching_home(dsh_root);
     let mut doc: Value = serde_json::from_slice(&fs::read(&projcache_path)?).map_err(|e| {
         HostAdapterError::DshProtocol(format!(
             "invalid JSON in {}: {e}",
@@ -863,40 +915,6 @@ pub fn is_live_user_dsh_root(dsh_root: &Path, home_dir: Option<&Path>) -> bool {
     }
 }
 
-fn stop_running_dsh_desktop_app_if_matching_home(dsh_root: &Path) -> bool {
-    if !cfg!(target_os = "macos") {
-        return false;
-    }
-    let home = std::env::var_os("HOME").map(PathBuf::from);
-    if !is_live_user_dsh_root(dsh_root, home.as_deref()) {
-        return false;
-    }
-    let app_bin = "/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness";
-    if !Path::new(app_bin).exists() {
-        return false;
-    }
-    let Ok(out) = Command::new("/usr/bin/pgrep").arg("-f").arg(app_bin).output() else {
-        return false;
-    };
-    if !out.status.success() {
-        return false;
-    }
-    let pids: Vec<String> = String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
-        .collect();
-    if pids.is_empty() {
-        return false;
-    }
-    for pid in &pids {
-        let _ = Command::new("/bin/kill").arg("-9").arg(pid).status();
-    }
-    std::thread::sleep(Duration::from_millis(800));
-    true
-}
-
 fn refresh_running_dsh_desktop_app_if_matching_home(
     dsh_root: &Path,
     ws_bytes: &[u8],
@@ -909,21 +927,11 @@ fn refresh_running_dsh_desktop_app_if_matching_home(
     if !is_live_user_dsh_root(dsh_root, home.as_deref()) {
         return;
     }
-    let app_bin = "/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness";
-    if !Path::new(app_bin).exists() {
-        return;
-    }
-    let _ = stop_running_dsh_desktop_app_if_matching_home(dsh_root);
     let ws_path = dsh_root.join("storages").join("workspace.json");
     let _ = fs::write(&ws_path, ws_bytes);
     if let Some((pc_path, pc_bytes)) = projcache_override {
         let _ = fs::write(pc_path, pc_bytes);
     }
-    let _ = Command::new("/usr/bin/open")
-        .arg("-g")
-        .arg("-a")
-        .arg("/Applications/DeepSeek Harness.app")
-        .status();
 }
 
 /// Reads back a session snapshot from `<dsh_root>/storages/session_projcache/sessions/<session_id>.json`
@@ -1023,13 +1031,14 @@ pub fn read_dsh_native_session(
     })
 }
 
-/// Runs `dsh --profile headless [--session-id <id>] --json <prompt>` in `cwd` and returns `(session_id, turn_id)`.
+/// Runs `dsh --profile headless [--session-id <id>] [--model <model>] --json <prompt>` in `cwd` and returns `(session_id, turn_id)`.
 pub fn run_dsh_headless_command(
     dsh_root: &Path,
     dsh_bin: &Path,
     cwd: &Path,
     session_id: Option<&str>,
     prompt: &str,
+    model: Option<&str>,
 ) -> Result<(String, String), HostAdapterError> {
     if !dsh_bin.is_absolute() {
         return Err(HostAdapterError::DshProtocol(format!(
@@ -1037,21 +1046,42 @@ pub fn run_dsh_headless_command(
             dsh_bin.display()
         )));
     }
-    if session_id.is_some() {
-        let _ = stop_running_dsh_desktop_app_if_matching_home(dsh_root);
-    }
-    let mut cmd = Command::new(dsh_bin);
-    cmd.current_dir(cwd)
-        .env("DSH_HOME", dsh_root)
-        .env("DSH_PERMISSION_MODE", "danger-full-access")
-        .arg("--profile")
-        .arg("headless");
-    if let Some(sid) = session_id {
-        cmd.arg("--session-id").arg(sid);
-    }
-    cmd.arg("--json").arg(prompt);
+    eprintln!(
+        "[dsh-headless] running dsh headless (bin={}) session_id={session_id:?} model={model:?} cwd={}",
+        dsh_bin.display(),
+        cwd.display()
+    );
 
-    let output = cmd.output()?;
+    let build_cmd = |include_model_arg: bool| {
+        let mut cmd = Command::new(dsh_bin);
+        cmd.current_dir(cwd)
+            .env("DSH_HOME", dsh_root)
+            .env("DSH_PERMISSION_MODE", "danger-full-access");
+        if let Some(m) = model {
+            cmd.env("DSH_MODEL", m);
+            cmd.env("MODEL", m);
+        }
+        cmd.arg("--profile").arg("headless");
+        if include_model_arg {
+            if let Some(m) = model {
+                cmd.arg("--model").arg(m);
+            }
+        }
+        if let Some(sid) = session_id {
+            cmd.arg("--session-id").arg(sid);
+        }
+        cmd.arg("--json").arg(prompt);
+        cmd
+    };
+
+    let mut output = build_cmd(model.is_some()).output()?;
+    if !output.status.success() && model.is_some() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if stderr.contains("unknown option '--model'") || stdout.contains("unknown option '--model'") {
+            output = build_cmd(false).output()?;
+        }
+    }
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -1124,6 +1154,8 @@ pub struct DshSessionReceipt {
     pub turn_count: usize,
     pub status: String,
     pub tier: DeliveryTier,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 impl From<DshSessionReceipt> for HostSessionReceipt {
@@ -1137,6 +1169,7 @@ impl From<DshSessionReceipt> for HostSessionReceipt {
             project_dir: r.project_dir,
             workspace_uris: r.workspace_uris,
             tier: r.tier,
+            model: r.model,
         }
     }
 }
@@ -1313,6 +1346,8 @@ pub struct CindySessionReceipt {
     pub transcript_path: PathBuf,
     pub turn_count: usize,
     pub tier: DeliveryTier,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 impl From<CindySessionReceipt> for HostSessionReceipt {
@@ -1326,6 +1361,7 @@ impl From<CindySessionReceipt> for HostSessionReceipt {
             project_dir: r.project_dir,
             workspace_uris: r.workspace_uris,
             tier: r.tier,
+            model: r.model,
         }
     }
 }
@@ -1510,74 +1546,63 @@ const ZCODE_TASKS_INDEX_DDL: &str = "\
 CREATE TABLE IF NOT EXISTS hosts (\
     host_id TEXT PRIMARY KEY,\
     kind TEXT NOT NULL,\
-    label TEXT NOT NULL,\
-    ssh_host TEXT,\
-    ssh_port INTEGER,\
-    ssh_user TEXT,\
-    identity_file TEXT,\
-    default_root TEXT,\
+    target_json TEXT,\
+    membership_id TEXT,\
     position INTEGER NOT NULL DEFAULT 0,\
-    deleted INTEGER NOT NULL DEFAULT 0,\
-    created_at INTEGER NOT NULL,\
-    updated_at INTEGER NOT NULL\
+    last_connection_status TEXT,\
+    last_connection_error TEXT,\
+    last_opened_at INTEGER\
 );\
 CREATE TABLE IF NOT EXISTS projects (\
     project_id TEXT PRIMARY KEY,\
-    host_id TEXT NOT NULL,\
+    host_id TEXT NOT NULL REFERENCES hosts(host_id),\
     name TEXT NOT NULL,\
+    name_overridden INTEGER NOT NULL DEFAULT 0,\
     position INTEGER NOT NULL DEFAULT 0,\
+    pinned INTEGER NOT NULL DEFAULT 0,\
+    pinned_at INTEGER,\
     deleted INTEGER NOT NULL DEFAULT 0,\
+    deleted_at INTEGER,\
     created_at INTEGER NOT NULL,\
     updated_at INTEGER NOT NULL\
 );\
+CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_host_name ON projects(host_id, name) WHERE deleted = 0;\
 CREATE TABLE IF NOT EXISTS project_roots (\
-    project_id TEXT NOT NULL,\
+    project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,\
     root_path TEXT NOT NULL,\
     position INTEGER NOT NULL DEFAULT 0,\
     is_primary INTEGER NOT NULL DEFAULT 0,\
     PRIMARY KEY (project_id, root_path)\
 );\
 CREATE TABLE IF NOT EXISTS tasks (\
-    workspace_key TEXT PRIMARY KEY,\
+    workspace_key TEXT NOT NULL,\
     workspace_path TEXT NOT NULL,\
+    workspace_identity TEXT,\
     task_id TEXT NOT NULL,\
-    title TEXT NOT NULL,\
+    title TEXT NOT NULL DEFAULT '',\
     task_status TEXT NOT NULL DEFAULT 'normal',\
+    provider TEXT,\
+    mode TEXT NOT NULL DEFAULT 'build',\
+    model TEXT,\
+    created_at INTEGER NOT NULL,\
+    updated_at INTEGER NOT NULL,\
+    unread_at INTEGER,\
+    last_unread_at INTEGER NOT NULL DEFAULT 0,\
+    pinned INTEGER NOT NULL DEFAULT 0,\
+    archived INTEGER NOT NULL DEFAULT 0,\
+    deleted INTEGER NOT NULL DEFAULT 0,\
     host_id TEXT NOT NULL DEFAULT 'local',\
     root_path TEXT,\
     project_id TEXT,\
-    base_branch TEXT,\
-    branch_name TEXT,\
-    worktree_path TEXT,\
-    is_worktree INTEGER NOT NULL DEFAULT 0,\
-    git_additions INTEGER,\
-    git_deletions INTEGER,\
-    git_files INTEGER,\
-    git_status_updated_at INTEGER,\
     cli_title TEXT,\
     cli_created_at INTEGER,\
     cli_updated_at INTEGER,\
-    created_at INTEGER NOT NULL,\
-    updated_at INTEGER NOT NULL,\
-    deleted INTEGER NOT NULL DEFAULT 0,\
-    archived INTEGER NOT NULL DEFAULT 0\
+    PRIMARY KEY (workspace_key, task_id)\
 );\
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_host_task ON tasks(host_id, task_id);\
 ";
 
 const ZCODE_CLI_DB_DDL: &str = "\
-CREATE TABLE IF NOT EXISTS project (\
-    id TEXT PRIMARY KEY,\
-    worktree TEXT NOT NULL,\
-    vcs TEXT,\
-    name TEXT,\
-    icon_url TEXT,\
-    icon_color TEXT,\
-    time_created INTEGER NOT NULL,\
-    time_updated INTEGER NOT NULL,\
-    time_initialized INTEGER,\
-    sandboxes TEXT NOT NULL DEFAULT '[]',\
-    commands TEXT\
-);\
 CREATE TABLE IF NOT EXISTS session (\
     id TEXT PRIMARY KEY,\
     project_id TEXT NOT NULL,\
@@ -1676,6 +1701,8 @@ pub struct ZcodeSessionReceipt {
     pub workspace_key: String,
     pub message_count: usize,
     pub tier: DeliveryTier,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 impl From<ZcodeSessionReceipt> for HostSessionReceipt {
@@ -1689,6 +1716,7 @@ impl From<ZcodeSessionReceipt> for HostSessionReceipt {
             project_dir: r.project_dir,
             workspace_uris: r.workspace_uris,
             tier: r.tier,
+            model: r.model,
         }
     }
 }
@@ -1705,20 +1733,28 @@ pub fn deterministic_zcode_project_uuid(project_dir: &Path) -> String {
     format!("{p1:08x}-{p2:04x}-{p3:04x}-{p4:04x}-{p5:012x}")
 }
 
+fn current_epoch_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
 pub fn zcode_cli_project_slug(project_dir: &Path) -> String {
-    let raw = project_dir.to_string_lossy();
-    let trimmed = raw.trim_matches('/');
-    let replaced: String = trimmed
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    format!("proj_{replaced}")
+    let raw = project_dir.to_string_lossy().to_ascii_lowercase();
+    let trimmed = raw.trim_matches(|c: char| !c.is_ascii_alphanumeric());
+    let mut slug = String::from("proj_");
+    let mut last_was_dash = false;
+    for c in trimmed.chars() {
+        if c.is_ascii_alphanumeric() {
+            slug.push(c);
+            last_was_dash = false;
+        } else if !last_was_dash {
+            slug.push('-');
+            last_was_dash = true;
+        }
+    }
+    slug.trim_end_matches('-').to_string()
 }
 
 fn escape_sql_literal(value: &str) -> String {
@@ -1772,13 +1808,16 @@ pub fn ensure_zcode_sidebar_project(
     let root_str = project_dir.to_string_lossy().into_owned();
     let escaped_root = escape_sql_literal(&root_str);
     let escaped_title = escape_sql_literal(title);
-    let now_ms: i64 = 1_762_329_600_000;
+    let now_ms = current_epoch_ms();
 
     let find_sql = format!(
         "SELECT p.project_id AS project_id \
-         FROM projects p JOIN project_roots r ON p.project_id = r.project_id \
-         WHERE r.root_path = '{escaped_root}' AND p.deleted = 0 \
-         ORDER BY r.position ASC LIMIT 1;"
+         FROM projects p \
+         LEFT JOIN project_roots r ON p.project_id = r.project_id \
+         WHERE (r.root_path = '{escaped_root}' OR (p.name = '{escaped_title}' AND p.host_id = 'local')) \
+           AND p.deleted = 0 \
+         ORDER BY CASE WHEN r.root_path = '{escaped_root}' THEN 0 ELSE 1 END, p.position ASC \
+         LIMIT 1;"
     );
     let existing = run_sqlite_json(
         sqlite3_bin,
@@ -1796,11 +1835,14 @@ pub fn ensure_zcode_sidebar_project(
 
     let escaped_pid = escape_sql_literal(&project_id);
     let upsert_sql = format!(
-        "INSERT OR IGNORE INTO hosts (host_id, kind, label, position, deleted, created_at, updated_at) \
-         VALUES ('local', 'local', 'Local', 0, 0, {now_ms}, {now_ms}); \
+        "INSERT OR IGNORE INTO hosts (host_id, kind, position) \
+         VALUES ('local', 'local', 0); \
          INSERT INTO projects (project_id, host_id, name, position, deleted, created_at, updated_at) \
          VALUES ('{escaped_pid}', 'local', '{escaped_title}', 0, 0, {now_ms}, {now_ms}) \
-         ON CONFLICT(project_id) DO UPDATE SET name = excluded.name, deleted = 0, updated_at = excluded.updated_at; \
+         ON CONFLICT(project_id) DO UPDATE SET \
+            name = excluded.name, \
+            deleted = 0, \
+            updated_at = excluded.updated_at; \
          INSERT INTO project_roots (project_id, root_path, position, is_primary) \
          VALUES ('{escaped_pid}', '{escaped_root}', 0, 1) \
          ON CONFLICT(project_id, root_path) DO UPDATE SET is_primary = 1;"
@@ -1900,7 +1942,7 @@ pub fn verify_zcode_project_binding(
 }
 
 /// Synchronizes a ZCode session and message turn into both `<zcode_root>/v2/tasks-index.sqlite` (`tasks` table)
-/// and `<zcode_root>/cli/db/db.sqlite` (`project`, `session`, and `message` tables) so the session is visible
+/// and `<zcode_root>/cli/db/db.sqlite` (`session` and `message` tables) so the session is visible
 /// under the left sidebar project in ZCode Desktop.
 #[allow(clippy::too_many_arguments)]
 pub fn attach_zcode_session_to_tasks_index(
@@ -1928,9 +1970,9 @@ pub fn attach_zcode_session_to_tasks_index(
     )?;
 
     let root_str = project_dir.to_string_lossy().into_owned();
-    let workspace_key = format!("local::{root_str}::{session_id}");
+    let workspace_key = root_str.clone();
     let cli_proj_id = zcode_cli_project_slug(project_dir);
-    let now_ms: i64 = 1_762_329_600_000;
+    let now_ms = current_epoch_ms();
 
     let esc_wk = escape_sql_literal(&workspace_key);
     let esc_root = escape_sql_literal(&root_str);
@@ -1947,7 +1989,7 @@ pub fn attach_zcode_session_to_tasks_index(
             '{esc_wk}', '{esc_root}', '{esc_sid}', '{esc_title}', 'normal', 'local', \
             '{esc_root}', '{esc_pid}', '{esc_title}', {now_ms}, {now_ms}, \
             {now_ms}, {now_ms}, 0, 0\
-         ) ON CONFLICT(workspace_key) DO UPDATE SET \
+         ) ON CONFLICT(workspace_key, task_id) DO UPDATE SET \
             project_id = excluded.project_id, \
             root_path = excluded.root_path, \
             workspace_path = excluded.workspace_path, \
@@ -1974,9 +2016,7 @@ pub fn attach_zcode_session_to_tasks_index(
     let esc_msg_json = escape_sql_literal(&msg_json);
 
     let cli_sql = format!(
-        "INSERT OR IGNORE INTO project (id, worktree, name, time_created, time_updated, sandboxes) \
-         VALUES ('{esc_cli_pid}', '{esc_root}', '{esc_title}', {now_ms}, {now_ms}, '[]'); \
-         INSERT INTO session (\
+        "INSERT INTO session (\
             id, project_id, slug, directory, path, title, version, time_created, time_updated\
          ) VALUES (\
             '{esc_sid}', '{esc_cli_pid}', '{esc_sid}', '{esc_root}', '{esc_root}', '{esc_title}', '0.17.1', {now_ms}, {now_ms}\
@@ -1987,7 +2027,7 @@ pub fn attach_zcode_session_to_tasks_index(
             id, session_id, time_created, time_updated, data, sequence\
          ) VALUES (\
             '{esc_tid}', '{esc_sid}', {now_ms}, {now_ms}, '{esc_msg_json}', \
-            COALESCE((SELECT MAX(sequence) + 1 FROM message WHERE session_id = '{esc_sid}'), 1)\
+            COALESCE((SELECT MAX(sequence) + 1 FROM message WHERE session_id = '{esc_sid}'), 0)\
          );"
     );
     exec_sqlite_write(

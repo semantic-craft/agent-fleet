@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     fmt,
     path::{Component, Path, PathBuf},
+    str::FromStr,
 };
 
 /// Canonical five desktop hosts supported by the fleet engine.
@@ -257,6 +258,8 @@ pub struct HostSessionReceipt {
     pub project_dir: PathBuf,
     pub workspace_uris: Vec<String>,
     pub tier: DeliveryTier,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 impl HostSessionReceipt {
@@ -312,17 +315,114 @@ impl ExternalAgentManifest {
 pub const GROKBOT_BUNDLE_ID: &str = "com.anysphere.sand";
 pub const GROKBOT_APP_DISPLAY_NAME: &str = "Grok Bot";
 
-/// Normalizes a peer or caller identifier (`grokbot`, `grok`, `grok-bot`, `grok-cli`, or a canonical desktop host).
-pub fn normalize_peer_id(raw: &str) -> Result<String, ProjectPathError> {
-    let trimmed = raw.trim();
-    validate_nonempty_id("peer_id", trimmed)?;
-    if let Some((agent_part, slug_part)) = trimmed.split_once('/') {
-        let norm_agent = normalize_single_agent_id(agent_part)?;
-        let norm_slug = validate_project_slug(slug_part.trim())?;
-        Ok(format!("{norm_agent}/{norm_slug}"))
-    } else {
-        normalize_single_agent_id(trimmed)
+/// Validates a session or conversation fragment (`#<session_id>`) in a peer address.
+pub fn validate_session_id(session_id: &str) -> Result<&str, ProjectPathError> {
+    if session_id.is_empty()
+        || session_id.len() > 256
+        || session_id.trim() != session_id
+        || session_id.chars().any(char::is_control)
+        || session_id.chars().any(char::is_whitespace)
+        || session_id.contains('/')
+        || session_id.contains('\\')
+        || session_id.contains('#')
+    {
+        return Err(ProjectPathError::InvalidIdentifier(format!(
+            "session_id must be nonempty, trimmed, <= 256 chars, and free of whitespace, '/', '\\', or '#': {session_id}"
+        )));
     }
+    Ok(session_id)
+}
+
+/// Canonical peer address supporting `<agent>`, `<agent>/<slug>`, `<agent>#<session_id>`,
+/// and `<agent>/<slug>#<session_id>`.
+#[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PeerAddress {
+    pub agent: String,
+    pub slug: Option<String>,
+    pub session_id: Option<String>,
+}
+
+impl PeerAddress {
+    pub fn parse(raw: &str) -> Result<Self, ProjectPathError> {
+        let trimmed = raw.trim();
+        validate_nonempty_id("peer_id", trimmed)?;
+        let (target_part, session_opt) = match trimmed.split_once('#') {
+            Some((left, right)) => {
+                let sid = validate_session_id(right.trim())?.to_string();
+                (left.trim(), Some(sid))
+            }
+            None => (trimmed, None),
+        };
+        let (agent, slug) = if let Some((agent_part, slug_part)) = target_part.split_once('/') {
+            let norm_agent = normalize_single_agent_id(agent_part)?;
+            let norm_slug = validate_project_slug(slug_part.trim())?.to_string();
+            (norm_agent, Some(norm_slug))
+        } else {
+            let norm_agent = normalize_single_agent_id(target_part)?;
+            (norm_agent, None)
+        };
+        Ok(Self {
+            agent,
+            slug,
+            session_id: session_opt,
+        })
+    }
+
+    pub fn is_session_scoped(&self) -> bool {
+        self.session_id.is_some()
+    }
+
+    pub fn with_slug(mut self, slug: impl Into<String>) -> Result<Self, ProjectPathError> {
+        let s = slug.into();
+        let validated = validate_project_slug(s.trim())?.to_string();
+        self.slug = Some(validated);
+        Ok(self)
+    }
+
+    pub fn with_session_id(
+        mut self,
+        session_id: impl Into<String>,
+    ) -> Result<Self, ProjectPathError> {
+        let s = session_id.into();
+        let validated = validate_session_id(s.trim())?.to_string();
+        self.session_id = Some(validated);
+        Ok(self)
+    }
+
+    pub fn without_session(&self) -> Self {
+        Self {
+            agent: self.agent.clone(),
+            slug: self.slug.clone(),
+            session_id: None,
+        }
+    }
+}
+
+impl FromStr for PeerAddress {
+    type Err = ProjectPathError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::parse(s)
+    }
+}
+
+impl fmt::Display for PeerAddress {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.agent)?;
+        if let Some(slug) = &self.slug {
+            write!(f, "/{slug}")?;
+        }
+        if let Some(sid) = &self.session_id {
+            write!(f, "#{sid}")?;
+        }
+        Ok(())
+    }
+}
+
+/// Normalizes a peer or caller identifier (`<agent>`, `<agent>/<slug>`, or `<agent>/<slug>#<session_id>`).
+pub fn normalize_peer_id(raw: &str) -> Result<String, ProjectPathError> {
+    PeerAddress::parse(raw).map(|a| a.to_string())
 }
 
 fn normalize_single_agent_id(raw: &str) -> Result<String, ProjectPathError> {
@@ -375,6 +475,63 @@ fn default_true() -> bool {
 }
 
 impl InboxMessage {
+    pub fn sender_address(&self) -> Result<PeerAddress, ProjectPathError> {
+        PeerAddress::parse(&self.from)
+    }
+
+    pub fn recipient_address(&self) -> Result<PeerAddress, ProjectPathError> {
+        PeerAddress::parse(&self.to)
+    }
+
+    pub fn target_session_id(&self) -> Option<String> {
+        self.recipient_address()
+            .ok()
+            .and_then(|a| a.session_id)
+            .or_else(|| self.session_id.clone())
+    }
+
+    pub fn matches_recipient(&self, query: &PeerAddress) -> bool {
+        let Ok(msg_to) = PeerAddress::parse(&self.to) else {
+            return false;
+        };
+        if msg_to.agent != query.agent {
+            return false;
+        }
+        if let Some(q_slug) = query.slug.as_deref() {
+            let effective_slug = msg_to.slug.as_deref().or(self.project_slug.as_deref());
+            if effective_slug != Some(q_slug) {
+                return false;
+            }
+        }
+        if let Some(target_sid) = msg_to.session_id.as_deref() {
+            query.session_id.as_deref() == Some(target_sid)
+        } else {
+            match query.session_id.as_deref() {
+                None => true,
+                Some(q_sid) => self.session_id.as_deref() == Some(q_sid),
+            }
+        }
+    }
+
+    pub fn matches_sender(&self, query: &PeerAddress) -> bool {
+        let Ok(msg_from) = PeerAddress::parse(&self.from) else {
+            return false;
+        };
+        if msg_from.agent != query.agent {
+            return false;
+        }
+        if let Some(q_slug) = query.slug.as_deref() {
+            let effective_slug = msg_from.slug.as_deref().or(self.project_slug.as_deref());
+            if effective_slug != Some(q_slug) {
+                return false;
+            }
+        }
+        match query.session_id.as_deref() {
+            Some(q_sid) => msg_from.session_id.as_deref() == Some(q_sid),
+            None => msg_from.session_id.is_none(),
+        }
+    }
+
     /// Renders the message as a structured peer input block (`<fleet-message ...>`) so the receiving
     /// desktop agent or GrokBot knows the sender identity, project repo, message ID, and how to reply.
     pub fn format_peer_frame(&self) -> String {
@@ -515,5 +672,113 @@ mod tests {
         assert!(resolve_project_dir_in_root(Path::new("/tmp/../escape"), "alpha").is_err());
         assert!(resolve_project_dir_in_root(Path::new("/tmp/.cache/projects"), "alpha").is_err());
         assert!(resolve_project_dir_in_root(root, "../outside").is_err());
+    }
+
+    #[test]
+    fn peer_address_parses_normalizes_and_validates_session_fragments() {
+        let a1 = PeerAddress::parse("agy/agent-fleet#conv-123").unwrap();
+        assert_eq!(a1.agent, "antigravity-desktop");
+        assert_eq!(a1.slug.as_deref(), Some("agent-fleet"));
+        assert_eq!(a1.session_id.as_deref(), Some("conv-123"));
+        assert!(a1.is_session_scoped());
+        assert_eq!(a1.to_string(), "antigravity-desktop/agent-fleet#conv-123");
+        assert_eq!(
+            a1.without_session().to_string(),
+            "antigravity-desktop/agent-fleet"
+        );
+        assert_eq!(
+            normalize_peer_id("agy/agent-fleet#conv-123").unwrap(),
+            "antigravity-desktop/agent-fleet#conv-123"
+        );
+
+        let a2 = PeerAddress::parse("dsh#sess-99").unwrap();
+        assert_eq!(a2.agent, "deepseek-harness");
+        assert_eq!(a2.slug, None);
+        assert_eq!(a2.session_id.as_deref(), Some("sess-99"));
+        assert_eq!(a2.to_string(), "deepseek-harness#sess-99");
+
+        for invalid in [
+            "agy/agent-fleet#",
+            "agy/agent-fleet#bad/slash",
+            "agy/agent-fleet#bad#hash",
+            "agy/agent-fleet#bad space",
+            "agy/agent-fleet#bad\nctrl",
+        ] {
+            assert!(
+                PeerAddress::parse(invalid).is_err(),
+                "expected invalid PeerAddress for {invalid:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn inbox_message_format_and_session_isolation_matching() {
+        let msg = InboxMessage {
+            id: "msg-1".into(),
+            from: "antigravity-desktop/agent-fleet#conv-123".into(),
+            to: "deepseek-harness/agent-fleet".into(),
+            project_slug: Some("agent-fleet".into()),
+            session_id: Some("dsh-sess-1".into()),
+            reply_to: None,
+            body: "Inspect Slice X.".into(),
+            files: Vec::new(),
+            wake: true,
+            notify: false,
+            created_at_unix: 1000,
+            delivered: false,
+        };
+        let framed = msg.format_peer_frame();
+        assert!(framed.contains(
+            "<fleet-message from=\"antigravity-desktop/agent-fleet#conv-123\" to=\"deepseek-harness/agent-fleet\" id=\"msg-1\" repo=\"agent-fleet\">"
+        ));
+        assert!(framed.contains(
+            "Reply with the agent-fleet send_message tool to \"antigravity-desktop/agent-fleet#conv-123\" with reply_to=\"msg-1\"."
+        ));
+
+        assert!(msg.matches_recipient(&PeerAddress::parse("deepseek-harness").unwrap()));
+        assert!(
+            msg.matches_recipient(&PeerAddress::parse("deepseek-harness/agent-fleet").unwrap())
+        );
+        assert!(msg.matches_recipient(
+            &PeerAddress::parse("deepseek-harness/agent-fleet#dsh-sess-1").unwrap()
+        ));
+        assert!(!msg.matches_recipient(
+            &PeerAddress::parse("deepseek-harness/agent-fleet#dsh-sess-2").unwrap()
+        ));
+
+        let reply = InboxMessage {
+            id: "msg-2".into(),
+            from: "deepseek-harness/agent-fleet#dsh-sess-1".into(),
+            to: "antigravity-desktop/agent-fleet#conv-123".into(),
+            project_slug: Some("agent-fleet".into()),
+            session_id: Some("conv-123".into()),
+            reply_to: Some("msg-1".into()),
+            body: "Slice X complete.".into(),
+            files: Vec::new(),
+            wake: true,
+            notify: false,
+            created_at_unix: 1001,
+            delivered: false,
+        };
+        assert!(!reply.matches_recipient(&PeerAddress::parse("antigravity-desktop").unwrap()));
+        assert!(!reply.matches_recipient(
+            &PeerAddress::parse("antigravity-desktop/agent-fleet").unwrap()
+        ));
+        assert!(!reply.matches_recipient(
+            &PeerAddress::parse("antigravity-desktop/agent-fleet#conv-other").unwrap()
+        ));
+        assert!(reply.matches_recipient(
+            &PeerAddress::parse("antigravity-desktop/agent-fleet#conv-123").unwrap()
+        ));
+
+        assert!(reply.matches_sender(
+            &PeerAddress::parse("deepseek-harness/agent-fleet#dsh-sess-1").unwrap()
+        ));
+        assert!(!reply.matches_sender(
+            &PeerAddress::parse("deepseek-harness/agent-fleet").unwrap()
+        ));
+        assert!(!reply.matches_sender(
+            &PeerAddress::parse("deepseek-harness/agent-fleet#dsh-sess-2").unwrap()
+        ));
     }
 }

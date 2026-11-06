@@ -1,8 +1,8 @@
 use fleet_proto::{
-    normalize_peer_id, resolve_project_dir_in_root, validate_brief, validate_nonempty_id,
+    resolve_project_dir_in_root, validate_brief, validate_nonempty_id, validate_session_id,
     BriefPolicyError, CreateSessionRequest, DeliverTurnRequest, DeliveryTier, DesktopHostKind,
-    ExternalAgentManifest, HostSessionReceipt, InboxMessage, ProjectDirRecord, ProjectPathError,
-    SidebarProjectBinding,
+    ExternalAgentManifest, HostSessionReceipt, InboxMessage, PeerAddress, ProjectDirRecord,
+    ProjectPathError, SidebarProjectBinding,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -38,6 +38,7 @@ pub enum HostAdapterError {
     DuplicateDelivery(String),
     InvalidModel(String),
     ForbiddenProjectId(String),
+    RuntimeNotConfigured(DesktopHostKind),
     AntigravityProtocol(String),
     OpenAiDotsProtocol(String),
     DshProtocol(String),
@@ -82,6 +83,10 @@ impl fmt::Display for HostAdapterError {
             Self::ForbiddenProjectId(id) => write!(
                 f,
                 "unscoped CLI/default bucket project_id rejected for sidebar visibility: {id}"
+            ),
+            Self::RuntimeNotConfigured(host) => write!(
+                f,
+                "no active local runtime or socket detected for {host}; refusing silent accepted fallback"
             ),
             Self::AntigravityProtocol(reason) => {
                 write!(f, "antigravity desktop adapter error: {reason}")
@@ -441,6 +446,7 @@ impl HostLifecycleCore {
             project_dir: project.project_dir,
             workspace_uris,
             tier,
+            model: request.model.clone(),
         })
     }
 
@@ -542,6 +548,7 @@ impl HostLifecycleCore {
             project_dir: project.project_dir,
             workspace_uris,
             tier,
+            model: request.model.clone(),
         })
     }
 
@@ -551,6 +558,35 @@ impl HostLifecycleCore {
 
     fn project(&self, project_id: &str) -> Option<&SidebarProjectBinding> {
         self.state.projects.get(project_id)
+    }
+
+    fn adopt_runtime_session(
+        &mut self,
+        project_id: &str,
+        session_id: &str,
+        title: &str,
+        project_dir: &Path,
+        workspace_uris: Vec<String>,
+    ) -> Result<(), HostAdapterError> {
+        if self.state.sessions.contains_key(session_id) {
+            return Ok(());
+        }
+        let resolved_title = if title.trim().is_empty() {
+            session_id.to_string()
+        } else {
+            title.trim().to_string()
+        };
+        let record = PersistedSessionRecord {
+            host: self.host,
+            project_id: project_id.to_string(),
+            session_id: session_id.to_string(),
+            title: resolved_title,
+            project_dir: project_dir.to_path_buf(),
+            workspace_uris,
+            turns: Vec::new(),
+        };
+        self.state.sessions.insert(session_id.to_string(), record);
+        self.persist()
     }
 }
 
@@ -674,6 +710,7 @@ impl OpenAiDotsAdapter {
                 preview: request.prompt.clone(),
                 deep_link: format!("codex://threads/{}", receipt.session_id),
                 tier: receipt.tier,
+                model: request.model.clone(),
             });
         };
         let row = crate::tri_hosts::read_codex_thread(
@@ -704,6 +741,7 @@ impl OpenAiDotsAdapter {
             preview: row.preview,
             deep_link: format!("codex://threads/{}", row.thread_id),
             tier: receipt.tier,
+            model: request.model.clone(),
         })
     }
 
@@ -725,6 +763,7 @@ impl OpenAiDotsAdapter {
                 preview: request.prompt.clone(),
                 deep_link: format!("codex://threads/{}", receipt.session_id),
                 tier: receipt.tier,
+                model: request.model.clone(),
             });
         };
         let row = crate::tri_hosts::read_codex_thread(
@@ -755,6 +794,7 @@ impl OpenAiDotsAdapter {
             preview: row.preview,
             deep_link: format!("codex://threads/{}", row.thread_id),
             tier: receipt.tier,
+            model: request.model.clone(),
         })
     }
 }
@@ -1070,8 +1110,12 @@ impl DeepSeekHarnessAdapter {
                 "DshRuntimeConfig is not configured on this adapter".into(),
             ));
         };
-        if let Some(dsh_root) = &runtime.dsh_root {
-            return crate::tri_hosts::read_dsh_native_session(dsh_root, session_id);
+        let use_gateway = runtime.base_url.is_some()
+            && (runtime.dsh_root.is_none() || runtime.is_gateway_active());
+        if !use_gateway {
+            if let Some(dsh_root) = &runtime.dsh_root {
+                return crate::tri_hosts::read_dsh_native_session(dsh_root, session_id);
+            }
         }
         let val = crate::tri_hosts::dsh_http_request(
             runtime,
@@ -1146,6 +1190,7 @@ impl DeepSeekHarnessAdapter {
                 turn_count: 1,
                 status: "active".into(),
                 tier: receipt.tier,
+                model: request.model.clone(),
             });
         };
         let snap = self.read_dsh_session(&receipt.session_id)?;
@@ -1173,6 +1218,7 @@ impl DeepSeekHarnessAdapter {
             turn_count: snap.turn_count,
             status: snap.status,
             tier: receipt.tier,
+            model: request.model.clone(),
         })
     }
 
@@ -1193,6 +1239,7 @@ impl DeepSeekHarnessAdapter {
                 turn_count: 2,
                 status: "active".into(),
                 tier: receipt.tier,
+                model: request.model.clone(),
             });
         };
         let snap = self.read_dsh_session(&receipt.session_id)?;
@@ -1220,6 +1267,7 @@ impl DeepSeekHarnessAdapter {
             turn_count: snap.turn_count,
             status: snap.status,
             tier: receipt.tier,
+            model: request.model.clone(),
         })
     }
 }
@@ -1280,53 +1328,61 @@ impl DesktopHostAdapter for DeepSeekHarnessAdapter {
                 DeliveryTier::Accepted,
             );
         };
-        if let (Some(dsh_root), Some(dsh_bin)) = (&runtime.dsh_root, &runtime.dsh_bin) {
-            let (session_id, turn_id) = crate::tri_hosts::run_dsh_headless_command(
-                dsh_root,
-                dsh_bin,
-                &project.project_dir,
-                None,
-                &request.prompt,
-            )?;
-            crate::tri_hosts::sync_dsh_session_title_in_projcache(
-                dsh_root,
-                &session_id,
-                &request.title,
-            )?;
-            crate::tri_hosts::attach_dsh_session_to_workspace(
-                dsh_root,
-                &project.project_id,
-                &session_id,
-            )?;
-            let snap = self.read_dsh_session(&session_id)?;
-            if snap.cwd != project.project_dir {
-                return Err(HostAdapterError::ProjectDirMismatch {
-                    expected: project.project_dir,
-                    supplied: snap.cwd,
-                });
+        let use_gateway = runtime.base_url.is_some()
+            && (runtime.dsh_bin.is_none() || runtime.is_gateway_active());
+        if !use_gateway {
+            if let (Some(dsh_root), Some(dsh_bin)) = (&runtime.dsh_root, &runtime.dsh_bin) {
+                let (session_id, turn_id) = crate::tri_hosts::run_dsh_headless_command(
+                    dsh_root,
+                    dsh_bin,
+                    &project.project_dir,
+                    None,
+                    &request.prompt,
+                    request.model.as_deref(),
+                )?;
+                crate::tri_hosts::sync_dsh_session_title_in_projcache(
+                    dsh_root,
+                    &session_id,
+                    &request.title,
+                )?;
+                crate::tri_hosts::attach_dsh_session_to_workspace(
+                    dsh_root,
+                    &project.project_id,
+                    &session_id,
+                )?;
+                let snap = self.read_dsh_session(&session_id)?;
+                if snap.cwd != project.project_dir {
+                    return Err(HostAdapterError::ProjectDirMismatch {
+                        expected: project.project_dir,
+                        supplied: snap.cwd,
+                    });
+                }
+                if !snap.project_id.is_empty() && snap.project_id != project.project_id {
+                    return Err(HostAdapterError::SessionProjectMismatch {
+                        session_id,
+                        expected_project_id: project.project_id,
+                        supplied_project_id: snap.project_id,
+                    });
+                }
+                return self.core.commit_created_session(
+                    request,
+                    project,
+                    Some(session_id),
+                    Some(turn_id),
+                    None,
+                    DeliveryTier::ThreadVisible,
+                );
             }
-            if !snap.project_id.is_empty() && snap.project_id != project.project_id {
-                return Err(HostAdapterError::SessionProjectMismatch {
-                    session_id,
-                    expected_project_id: project.project_id,
-                    supplied_project_id: snap.project_id,
-                });
-            }
-            return self.core.commit_created_session(
-                request,
-                project,
-                Some(session_id),
-                Some(turn_id),
-                None,
-                DeliveryTier::ThreadVisible,
-            );
         }
-        let create_body = serde_json::json!({
+        let mut create_body = serde_json::json!({
             "project_id": project.project_id,
             "cwd": project.project_dir,
             "title": request.title,
             "delivery_id": request.delivery_id,
         });
+        if let Some(model) = &request.model {
+            create_body["model"] = serde_json::json!(model);
+        }
         let create_resp = crate::tri_hosts::dsh_http_request(
             &runtime,
             "POST",
@@ -1378,6 +1434,18 @@ impl DesktopHostAdapter for DeepSeekHarnessAdapter {
                     "DSH POST /v1/sessions/<id>/turns response omitted turn id".into(),
                 )
             })?;
+        if let Some(dsh_root) = &runtime.dsh_root {
+            let _ = crate::tri_hosts::attach_dsh_session_to_workspace(
+                dsh_root,
+                &project.project_id,
+                &session_id,
+            );
+            let _ = crate::tri_hosts::sync_dsh_session_title_in_projcache(
+                dsh_root,
+                &session_id,
+                &request.title,
+            );
+        }
         let snap = self.read_dsh_session(&session_id)?;
         if snap.cwd != project.project_dir {
             return Err(HostAdapterError::ProjectDirMismatch {
@@ -1406,6 +1474,26 @@ impl DesktopHostAdapter for DeepSeekHarnessAdapter {
         &mut self,
         request: &DeliverTurnRequest,
     ) -> Result<HostSessionReceipt, HostAdapterError> {
+        if !self.core.state.sessions.contains_key(&request.session_id) {
+            if self.runtime.is_some() {
+                if let Ok(canonical_dir) =
+                    self.core.verify_existing_dir_inside_root(&request.project_dir)
+                {
+                    if let Ok(snap) = self.read_dsh_session(&request.session_id) {
+                        if !snap.session_id.is_empty() && snap.cwd == canonical_dir {
+                            let ws_uri = format!("file://{}", canonical_dir.display());
+                            let _ = self.core.adopt_runtime_session(
+                                &request.project_id,
+                                &request.session_id,
+                                &snap.title,
+                                &canonical_dir,
+                                vec![ws_uri],
+                            );
+                        }
+                    }
+                }
+            }
+        }
         let project = self.core.validate_deliver_turn(request)?;
         let Some(runtime) = self.runtime.clone() else {
             return self.core.commit_delivered_turn(
@@ -1416,56 +1504,61 @@ impl DesktopHostAdapter for DeepSeekHarnessAdapter {
                 DeliveryTier::Accepted,
             );
         };
-        if let (Some(dsh_root), Some(dsh_bin)) = (&runtime.dsh_root, &runtime.dsh_bin) {
-            let existing_title = self
-                .core
-                .session(&request.session_id)
-                .map(|s| s.title.clone())
-                .unwrap_or_default();
-            let (returned_sid, turn_id) = crate::tri_hosts::run_dsh_headless_command(
-                dsh_root,
-                dsh_bin,
-                &project.project_dir,
-                Some(&request.session_id),
-                &request.prompt,
-            )?;
-            if returned_sid != request.session_id {
-                return Err(HostAdapterError::DshProtocol(format!(
-                    "dsh --session-id {} returned mismatched session_id {returned_sid}",
-                    request.session_id
-                )));
+        let use_gateway = runtime.base_url.is_some()
+            && (runtime.dsh_bin.is_none() || runtime.is_gateway_active());
+        if !use_gateway {
+            if let (Some(dsh_root), Some(dsh_bin)) = (&runtime.dsh_root, &runtime.dsh_bin) {
+                let existing_title = self
+                    .core
+                    .session(&request.session_id)
+                    .map(|s| s.title.clone())
+                    .unwrap_or_default();
+                let (returned_sid, turn_id) = crate::tri_hosts::run_dsh_headless_command(
+                    dsh_root,
+                    dsh_bin,
+                    &project.project_dir,
+                    Some(&request.session_id),
+                    &request.prompt,
+                    request.model.as_deref(),
+                )?;
+                if returned_sid != request.session_id {
+                    return Err(HostAdapterError::DshProtocol(format!(
+                        "dsh --session-id {} returned mismatched session_id {returned_sid}",
+                        request.session_id
+                    )));
+                }
+                crate::tri_hosts::sync_dsh_session_title_in_projcache(
+                    dsh_root,
+                    &request.session_id,
+                    &existing_title,
+                )?;
+                crate::tri_hosts::attach_dsh_session_to_workspace(
+                    dsh_root,
+                    &project.project_id,
+                    &request.session_id,
+                )?;
+                let snap = self.read_dsh_session(&request.session_id)?;
+                if snap.cwd != project.project_dir {
+                    return Err(HostAdapterError::ProjectDirMismatch {
+                        expected: project.project_dir,
+                        supplied: snap.cwd,
+                    });
+                }
+                if !snap.project_id.is_empty() && snap.project_id != project.project_id {
+                    return Err(HostAdapterError::SessionProjectMismatch {
+                        session_id: request.session_id.clone(),
+                        expected_project_id: project.project_id,
+                        supplied_project_id: snap.project_id,
+                    });
+                }
+                return self.core.commit_delivered_turn(
+                    request,
+                    project,
+                    Some(turn_id),
+                    None,
+                    DeliveryTier::ThreadVisible,
+                );
             }
-            crate::tri_hosts::sync_dsh_session_title_in_projcache(
-                dsh_root,
-                &request.session_id,
-                &existing_title,
-            )?;
-            crate::tri_hosts::attach_dsh_session_to_workspace(
-                dsh_root,
-                &project.project_id,
-                &request.session_id,
-            )?;
-            let snap = self.read_dsh_session(&request.session_id)?;
-            if snap.cwd != project.project_dir {
-                return Err(HostAdapterError::ProjectDirMismatch {
-                    expected: project.project_dir,
-                    supplied: snap.cwd,
-                });
-            }
-            if !snap.project_id.is_empty() && snap.project_id != project.project_id {
-                return Err(HostAdapterError::SessionProjectMismatch {
-                    session_id: request.session_id.clone(),
-                    expected_project_id: project.project_id,
-                    supplied_project_id: snap.project_id,
-                });
-            }
-            return self.core.commit_delivered_turn(
-                request,
-                project,
-                Some(turn_id),
-                None,
-                DeliveryTier::ThreadVisible,
-            );
         }
         let mut turn_body = serde_json::json!({
             "delivery_id": request.delivery_id,
@@ -1493,6 +1586,13 @@ impl DesktopHostAdapter for DeepSeekHarnessAdapter {
                     "DSH POST /v1/sessions/<id>/turns follow-up omitted turn id".into(),
                 )
             })?;
+        if let Some(dsh_root) = &runtime.dsh_root {
+            let _ = crate::tri_hosts::attach_dsh_session_to_workspace(
+                dsh_root,
+                &project.project_id,
+                &request.session_id,
+            );
+        }
         let snap = self.read_dsh_session(&request.session_id)?;
         if snap.cwd != project.project_dir {
             return Err(HostAdapterError::ProjectDirMismatch {
@@ -1651,6 +1751,7 @@ impl CindyAdapter {
                 transcript_path: receipt.project_dir.join(format!("{}.jsonl", receipt.session_id)),
                 turn_count: 1,
                 tier: receipt.tier,
+                model: request.model.clone(),
             });
         };
         let snap = self.read_cindy_session(&receipt.session_id)?;
@@ -1673,6 +1774,7 @@ impl CindyAdapter {
             transcript_path: snap.transcript_path,
             turn_count: snap.turn_count,
             tier: receipt.tier,
+            model: request.model.clone(),
         })
     }
 
@@ -1694,6 +1796,7 @@ impl CindyAdapter {
                 transcript_path: receipt.project_dir.join(format!("{}.jsonl", receipt.session_id)),
                 turn_count: 2,
                 tier: receipt.tier,
+                model: request.model.clone(),
             });
         };
         let snap = self.read_cindy_session(&receipt.session_id)?;
@@ -1716,6 +1819,7 @@ impl CindyAdapter {
             transcript_path: snap.transcript_path,
             turn_count: snap.turn_count,
             tier: receipt.tier,
+            model: request.model.clone(),
         })
     }
 }
@@ -2129,6 +2233,39 @@ impl DesktopHostAdapter for AntigravityDesktopAdapter {
         &mut self,
         request: &DeliverTurnRequest,
     ) -> Result<HostSessionReceipt, HostAdapterError> {
+        if !self.core.state.sessions.contains_key(&request.session_id) {
+            if let Some(runtime) = &self.runtime {
+                if let Ok(canonical_dir) =
+                    self.core.verify_existing_dir_inside_root(&request.project_dir)
+                {
+                    if let Ok(Some(summary)) = crate::antigravity::read_conversation_summary(
+                        &runtime.sqlite3_bin,
+                        &runtime.summaries_db_path(),
+                        &request.session_id,
+                    ) {
+                        let expected_uri = format!("file://{}", canonical_dir.display());
+                        let uri_matches = summary
+                            .workspace_uris
+                            .iter()
+                            .any(|u| u.trim_end_matches('/') == expected_uri.trim_end_matches('/'));
+                        if uri_matches || summary.project_id == request.project_id {
+                            let uris = if summary.workspace_uris.is_empty() {
+                                vec![expected_uri]
+                            } else {
+                                summary.workspace_uris.clone()
+                            };
+                            self.core.adopt_runtime_session(
+                                &request.project_id,
+                                &request.session_id,
+                                &summary.title,
+                                &canonical_dir,
+                                uris,
+                            )?;
+                        }
+                    }
+                }
+            }
+        }
         let project = self.core.validate_deliver_turn(request)?;
         let Some(runtime) = self.runtime.clone() else {
             return self.core.commit_delivered_turn(
@@ -2151,6 +2288,7 @@ impl DesktopHostAdapter for AntigravityDesktopAdapter {
                 &project.project_dir,
                 &request.session_id,
                 &request.prompt,
+                request.model.as_deref(),
             )?;
             Some(tid)
         } else {
@@ -2221,6 +2359,237 @@ impl DesktopHostAdapter for AntigravityDesktopAdapter {
             Some(summary.workspace_uris),
             DeliveryTier::ThreadVisible,
         )
+    }
+}
+
+/// Auto-detects the local OpenAI Dots (`openai-dots` / Codex Desktop) runtime from `home` and environment variables.
+pub fn detect_openai_dots_runtime(
+    home: &Path,
+) -> Option<crate::tri_hosts::OpenAiDotsRuntimeConfig> {
+    let default_root = std::env::var("CODEX_HOME")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".codex"));
+    if !default_root.is_dir() {
+        return None;
+    }
+    let mut candidate_sockets = Vec::new();
+    if let Ok(sock) = std::env::var("CODEX_APP_SERVER_SOCKET") {
+        if !sock.trim().is_empty() {
+            candidate_sockets.push(PathBuf::from(sock));
+        }
+    }
+    candidate_sockets.push(default_root.join("app-server.sock"));
+    candidate_sockets.push(
+        default_root
+            .join("app-server-control")
+            .join("app-server-control.sock"),
+    );
+    candidate_sockets.push(default_root.join("ipc").join("ipc.sock"));
+    candidate_sockets.push(
+        default_root
+            .join("app-server-daemon")
+            .join("daemon-updater.sock"),
+    );
+    let sock = candidate_sockets
+        .into_iter()
+        .find(|p| fs::metadata(p).is_ok())?;
+    let resolved_sock = fs::canonicalize(&sock).unwrap_or(sock);
+    Some(crate::tri_hosts::OpenAiDotsRuntimeConfig::new(
+        default_root,
+        resolved_sock,
+    ))
+}
+
+/// Auto-detects the local Cindy (`cindy`) runtime from `home` and environment variables.
+pub fn detect_cindy_runtime(home: &Path) -> Option<crate::tri_hosts::CindyRuntimeConfig> {
+    let default_root = std::env::var("CINDY_HOME")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".cindy"));
+    if !default_root.is_dir() {
+        return None;
+    }
+    let mut candidate_sockets = Vec::new();
+    if let Ok(sock) = std::env::var("CINDY_GATEWAY_SOCKET") {
+        if !sock.trim().is_empty() {
+            candidate_sockets.push(PathBuf::from(sock));
+        }
+    }
+    candidate_sockets.push(default_root.join("cindy-gateway.sock"));
+    candidate_sockets.push(default_root.join("gateway.sock"));
+    candidate_sockets.push(home.join("Library/Application Support/Cindy/gateway.sock"));
+    candidate_sockets.push(home.join("Library/Application Support/CindyGlobal/gateway.sock"));
+    let sock = candidate_sockets
+        .into_iter()
+        .find(|p| fs::metadata(p).is_ok())?;
+    let resolved_sock = fs::canonicalize(&sock).unwrap_or(sock);
+    Some(crate::tri_hosts::CindyRuntimeConfig::new(
+        default_root,
+        resolved_sock,
+    ))
+}
+
+/// Auto-detects the local DeepSeek Harness (`deepseek-harness`) runtime from `home` and environment variables.
+pub fn detect_dsh_runtime(home: &Path) -> Option<crate::tri_hosts::DshRuntimeConfig> {
+    let base_url = std::env::var("DSH_BASE_URL")
+        .ok()
+        .filter(|s| !s.trim().is_empty());
+    let default_root = std::env::var("DSH_HOME")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".dsh"));
+    let mut candidate_bins = Vec::new();
+    if let Ok(bin) = std::env::var("DSH_BIN") {
+        if !bin.trim().is_empty() {
+            candidate_bins.push(PathBuf::from(bin));
+        }
+    }
+    candidate_bins.push(home.join(".local").join("bin").join("dsh"));
+    candidate_bins.push(home.join("bin").join("dsh"));
+    candidate_bins.push(PathBuf::from(
+        "/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh",
+    ));
+    let bin_opt = candidate_bins.into_iter().find(|p| p.is_file());
+
+    if default_root.is_dir() && bin_opt.is_some() {
+        let mut cfg = crate::tri_hosts::DshRuntimeConfig::new_native(
+            default_root,
+            bin_opt.unwrap(),
+        );
+        if let Some(url) = base_url {
+            cfg.base_url = Some(url);
+        }
+        Some(cfg)
+    } else if let Some(url) = base_url {
+        Some(crate::tri_hosts::DshRuntimeConfig::new(url))
+    } else {
+        None
+    }
+}
+
+/// Auto-detects the local Antigravity Desktop (`antigravity-desktop`) runtime from `home` and environment variables.
+pub fn detect_antigravity_runtime(
+    home: &Path,
+) -> Option<crate::antigravity::AntigravityRuntimeConfig> {
+    let default_root = std::env::var("ANTIGRAVITY_DATA_DIR")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".gemini").join("antigravity"));
+    if !default_root.join("conversation_summaries.db").is_file() {
+        return None;
+    }
+    let mut candidate_bins = Vec::new();
+    if let Ok(bin) = std::env::var("AGY_BIN") {
+        if !bin.trim().is_empty() {
+            candidate_bins.push(PathBuf::from(bin));
+        }
+    }
+    candidate_bins.push(home.join(".local").join("bin").join("agy"));
+    candidate_bins.push(PathBuf::from(
+        "/Applications/Antigravity.app/Contents/Resources/app/bin/agy",
+    ));
+    candidate_bins.push(home.join(".local").join("libexec").join("agy").join("agy"));
+    let bin = candidate_bins.into_iter().find(|p| p.is_file())?;
+    Some(crate::antigravity::AntigravityRuntimeConfig::new(
+        default_root,
+        bin,
+    ))
+}
+
+/// Auto-detects the local ZCode (`zcode`) runtime from `home` and environment variables.
+pub fn detect_zcode_runtime(home: &Path) -> Option<crate::tri_hosts::ZcodeRuntimeConfig> {
+    let default_root = std::env::var("ZCODE_HOME")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".zcode"));
+    if !default_root.is_dir() {
+        return None;
+    }
+    let mut candidate_bins = Vec::new();
+    if let Ok(bin) = std::env::var("ZCODE_BIN") {
+        if !bin.trim().is_empty() {
+            candidate_bins.push(PathBuf::from(bin));
+        }
+    }
+    candidate_bins.push(home.join("bin").join("zcode"));
+    candidate_bins.push(home.join(".local").join("bin").join("zcode"));
+    candidate_bins.push(PathBuf::from(
+        "/Applications/ZCode.app/Contents/Resources/cli/zcode",
+    ));
+    let bin = candidate_bins.into_iter().find(|p| p.is_file())?;
+    Some(crate::tri_hosts::ZcodeRuntimeConfig::new(default_root, bin))
+}
+
+/// Factory constructing a runtime-backed `DesktopHostAdapter` for production dispatch and MCP.
+/// Strictly refuses to fall back to `<state_root>/<host>-state.json` `tier: accepted` when no runtime is configured.
+pub fn build_configured_host_adapter(
+    host: DesktopHostKind,
+    projects_root: PathBuf,
+    state_root: PathBuf,
+    runtimes: &crate::relay_self_dev::HostRuntimeOptions,
+) -> Result<Box<dyn DesktopHostAdapter>, HostAdapterError> {
+    match host {
+        DesktopHostKind::OpenaiDots => {
+            let cfg = runtimes
+                .openai_dots
+                .clone()
+                .ok_or(HostAdapterError::RuntimeNotConfigured(host))?;
+            Ok(Box::new(OpenAiDotsAdapter::with_runtime(
+                projects_root,
+                state_root,
+                cfg,
+            )?))
+        }
+        DesktopHostKind::Cindy => {
+            let cfg = runtimes
+                .cindy
+                .clone()
+                .ok_or(HostAdapterError::RuntimeNotConfigured(host))?;
+            Ok(Box::new(CindyAdapter::with_runtime(
+                projects_root,
+                state_root,
+                cfg,
+            )?))
+        }
+        DesktopHostKind::DeepseekHarness => {
+            let cfg = runtimes
+                .dsh
+                .clone()
+                .ok_or(HostAdapterError::RuntimeNotConfigured(host))?;
+            Ok(Box::new(DeepSeekHarnessAdapter::with_runtime(
+                projects_root,
+                state_root,
+                cfg,
+            )?))
+        }
+        DesktopHostKind::AntigravityDesktop => {
+            let cfg = runtimes
+                .antigravity
+                .clone()
+                .ok_or(HostAdapterError::RuntimeNotConfigured(host))?;
+            Ok(Box::new(AntigravityDesktopAdapter::with_runtime(
+                projects_root,
+                state_root,
+                cfg,
+            )?))
+        }
+        DesktopHostKind::Zcode => {
+            let cfg = runtimes
+                .zcode
+                .clone()
+                .ok_or(HostAdapterError::RuntimeNotConfigured(host))?;
+            Ok(Box::new(ZcodeAdapter::with_runtime(
+                projects_root,
+                state_root,
+                cfg,
+            )?))
+        }
     }
 }
 
@@ -2362,13 +2731,10 @@ impl ZcodeAdapter {
                 turn_id: receipt.turn_id,
                 project_dir: receipt.project_dir.clone(),
                 workspace_uris: receipt.workspace_uris,
-                workspace_key: format!(
-                    "local::{}::{}",
-                    receipt.project_dir.display(),
-                    receipt.session_id
-                ),
+                workspace_key: receipt.project_dir.display().to_string(),
                 message_count: 1,
                 tier: receipt.tier,
+                model: request.model.clone(),
             });
         };
         let snap = self
@@ -2395,6 +2761,7 @@ impl ZcodeAdapter {
             workspace_key: snap.workspace_key,
             message_count: snap.message_count,
             tier: receipt.tier,
+            model: request.model.clone(),
         })
     }
 
@@ -2412,13 +2779,10 @@ impl ZcodeAdapter {
                 turn_id: receipt.turn_id,
                 project_dir: receipt.project_dir.clone(),
                 workspace_uris: receipt.workspace_uris,
-                workspace_key: format!(
-                    "local::{}::{}",
-                    receipt.project_dir.display(),
-                    receipt.session_id
-                ),
+                workspace_key: receipt.project_dir.display().to_string(),
                 message_count: 2,
                 tier: receipt.tier,
+                model: request.model.clone(),
             });
         };
         let snap = self
@@ -2445,6 +2809,7 @@ impl ZcodeAdapter {
             workspace_key: snap.workspace_key,
             message_count: snap.message_count,
             tier: receipt.tier,
+            model: request.model.clone(),
         })
     }
 }
@@ -2551,6 +2916,26 @@ impl DesktopHostAdapter for ZcodeAdapter {
         &mut self,
         request: &DeliverTurnRequest,
     ) -> Result<HostSessionReceipt, HostAdapterError> {
+        if !self.core.state.sessions.contains_key(&request.session_id) {
+            if self.runtime.is_some() {
+                if let Ok(canonical_dir) =
+                    self.core.verify_existing_dir_inside_root(&request.project_dir)
+                {
+                    if let Ok(Some(snap)) = self.read_zcode_session(&request.session_id) {
+                        if snap.cwd == canonical_dir {
+                            let ws_uri = format!("file://{}", canonical_dir.display());
+                            self.core.adopt_runtime_session(
+                                &request.project_id,
+                                &request.session_id,
+                                &snap.title,
+                                &canonical_dir,
+                                vec![ws_uri],
+                            )?;
+                        }
+                    }
+                }
+            }
+        }
         let project = self.core.validate_deliver_turn(request)?;
         let Some(runtime) = self.runtime.clone() else {
             return self.core.commit_delivered_turn(
@@ -2854,8 +3239,19 @@ impl FleetMailboxStore {
     /// Enqueues a peer message idempotently by `message.id`.
     pub fn enqueue(&self, mut message: InboxMessage) -> Result<InboxMessage, HostAdapterError> {
         validate_nonempty_id("message.id", &message.id)?;
-        message.from = normalize_peer_id(&message.from)?;
-        message.to = normalize_peer_id(&message.to)?;
+        let from_addr = PeerAddress::parse(&message.from)?;
+        let to_addr = PeerAddress::parse(&message.to)?;
+        message.from = from_addr.to_string();
+        message.to = to_addr.to_string();
+        if message.project_slug.is_none() {
+            message.project_slug = to_addr.slug.clone().or_else(|| from_addr.slug.clone());
+        }
+        if message.session_id.is_none() {
+            message.session_id = to_addr.session_id.clone();
+        }
+        if let Some(ref sid) = message.session_id {
+            validate_session_id(sid)?;
+        }
         validate_brief(&message.body)?;
         let mut state = self.load()?;
         if let Some(existing) = state.messages.iter().find(|m| m.id == message.id) {
@@ -2872,21 +3268,19 @@ impl FleetMailboxStore {
         Ok(message)
     }
 
-    /// Reads unread messages for `recipient` (matching either `<agent>` or `<agent>/<slug>`),
-    /// optionally marking them delivered so hooks and `check_inbox` do not re-deliver them.
+    /// Reads unread messages for `recipient` (supporting `<agent>`, `<agent>/<slug>`, or `<agent>[/<slug>]#<session_id>`),
+    /// isolating session-scoped messages from sibling sessions and unscoped pulls.
     pub fn check_inbox(
         &self,
         recipient: &str,
         mark_delivered: bool,
     ) -> Result<Vec<InboxMessage>, HostAdapterError> {
-        let norm = normalize_peer_id(recipient)?;
-        let prefix = format!("{norm}/");
+        let query = PeerAddress::parse(recipient)?;
         let mut state = self.load()?;
         let mut matched = Vec::new();
         let mut changed = false;
         for msg in &mut state.messages {
-            let is_match = msg.to == norm || msg.to.starts_with(&prefix);
-            if is_match && !msg.delivered {
+            if !msg.delivered && msg.matches_recipient(&query) {
                 matched.push(msg.clone());
                 if mark_delivered {
                     msg.delivered = true;
@@ -2898,6 +3292,71 @@ impl FleetMailboxStore {
             self.save(&state)?;
         }
         Ok(matched)
+    }
+
+    /// Reads outbound messages matching `sender` (`<agent>`, `<agent>/<slug>`, or `<agent>[/<slug>]#<session_id>`).
+    pub fn check_outbox(&self, sender: &str) -> Result<Vec<InboxMessage>, HostAdapterError> {
+        let query = PeerAddress::parse(sender)?;
+        let state = self.load()?;
+        Ok(state
+            .messages
+            .into_iter()
+            .filter(|m| m.matches_sender(&query))
+            .collect())
+    }
+
+    /// Lists all messages associated with `session_id` (either as sender `#session_id`, recipient `#session_id`, or `message.session_id`).
+    pub fn list_by_session(&self, session_id: &str) -> Result<Vec<InboxMessage>, HostAdapterError> {
+        let sid = validate_session_id(session_id.trim())?;
+        let state = self.load()?;
+        Ok(state
+            .messages
+            .into_iter()
+            .filter(|m| {
+                m.session_id.as_deref() == Some(sid)
+                    || m.sender_address()
+                        .ok()
+                        .and_then(|a| a.session_id)
+                        .as_deref()
+                        == Some(sid)
+                    || m.recipient_address()
+                        .ok()
+                        .and_then(|a| a.session_id)
+                        .as_deref()
+                        == Some(sid)
+            })
+            .collect())
+    }
+
+    /// Resolves the reply route (`PeerAddress` including original `session_id`) for a given `reply_to_id`.
+    pub fn resolve_reply_route(
+        &self,
+        reply_to_id: &str,
+        target_agent_hint: Option<&str>,
+    ) -> Result<Option<PeerAddress>, HostAdapterError> {
+        let Some(orig) = self.get_message(reply_to_id)? else {
+            return Ok(None);
+        };
+        let orig_from = PeerAddress::parse(&orig.from)?;
+        let orig_to = PeerAddress::parse(&orig.to)?;
+        let hint_agent = target_agent_hint
+            .map(|h| PeerAddress::parse(h).map(|p| p.agent))
+            .transpose()?;
+        if hint_agent.is_none() || hint_agent.as_deref() == Some(orig_from.agent.as_str()) {
+            Ok(Some(PeerAddress {
+                agent: orig_from.agent,
+                slug: orig_from.slug.or(orig.project_slug),
+                session_id: orig_from.session_id,
+            }))
+        } else if hint_agent.as_deref() == Some(orig_to.agent.as_str()) {
+            Ok(Some(PeerAddress {
+                agent: orig_to.agent,
+                slug: orig_to.slug.or(orig.project_slug),
+                session_id: orig_to.session_id.or(orig.session_id),
+            }))
+        } else {
+            Ok(None)
+        }
     }
 
     pub fn get_message(&self, id: &str) -> Result<Option<InboxMessage>, HostAdapterError> {

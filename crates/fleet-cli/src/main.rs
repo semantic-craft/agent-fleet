@@ -1,14 +1,16 @@
 use fleet_daemon::{
-    inspect_host_state, read_antigravity_latest_response, run_host_poteto_relay,
-    wire_agent_configs, AntigravityDesktopAdapter, AntigravityRuntimeConfig, CindyAdapter,
-    CindyRuntimeConfig, DeepSeekHarnessAdapter, DesktopHostAdapter, DshRuntimeConfig,
-    ExternalAgentRegistry, FleetMailboxStore, HostRuntimeOptions, OpenAiDotsAdapter,
-    OpenAiDotsRuntimeConfig, PotetoRelayTask, SessionDirectory, ZcodeAdapter, ZcodeRuntimeConfig,
+    build_configured_host_adapter, detect_antigravity_runtime, detect_cindy_runtime,
+    detect_dsh_runtime, detect_openai_dots_runtime, detect_zcode_runtime, inspect_host_state,
+    probe_external_agent_live_contract, probe_host_live_contract,
+    read_antigravity_latest_response, run_host_poteto_relay, wire_agent_configs,
+    AntigravityRuntimeConfig, CindyRuntimeConfig, DesktopHostAdapter, DshRuntimeConfig,
+    ExternalAgentRegistry, FleetMailboxStore, HostRuntimeOptions, OpenAiDotsRuntimeConfig,
+    PotetoRelayTask, SessionDirectory, ZcodeRuntimeConfig,
 };
 use fleet_proto::{
-    normalize_peer_id, CreateSessionRequest, DeliverTurnRequest, DesktopHostKind,
-    ExternalAgentManifest, InboxMessage, SessionSelector, GROKBOT_APP_DISPLAY_NAME,
-    GROKBOT_BUNDLE_ID,
+    normalize_peer_id, validate_session_id, CreateSessionRequest, DeliverTurnRequest,
+    DesktopHostKind, ExternalAgentManifest, InboxMessage, PeerAddress, SessionSelector,
+    GROKBOT_APP_DISPLAY_NAME, GROKBOT_BUNDLE_ID,
 };
 use serde_json::{json, Value};
 use std::{
@@ -92,6 +94,15 @@ fn parse_runtime_options(
     options: &BTreeMap<String, String>,
 ) -> Result<HostRuntimeOptions, String> {
     let mut rt = HostRuntimeOptions::default();
+    let disable_auto = env::var("FLEET_NO_AUTO_RUNTIME")
+        .is_ok_and(|v| v == "1" || v == "true")
+        || env::var("FLEET_NO_AUTO_ANTIGRAVITY_RUNTIME")
+            .is_ok_and(|v| v == "1" || v == "true");
+    let home_opt = env::var("HOME")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .map(PathBuf::from);
+
     match (
         options.get("--codex-root"),
         options.get("--app-server-socket"),
@@ -102,7 +113,13 @@ fn parse_runtime_options(
                 PathBuf::from(sock),
             ));
         }
-        (None, None) => {}
+        (None, None) => {
+            if !disable_auto {
+                if let Some(home) = &home_opt {
+                    rt.openai_dots = detect_openai_dots_runtime(home);
+                }
+            }
+        }
         _ => {
             return Err(
                 "both --codex-root and --app-server-socket are required for openai-dots runtime"
@@ -118,7 +135,13 @@ fn parse_runtime_options(
                 PathBuf::from(sock),
             ));
         }
-        (None, None) => {}
+        (None, None) => {
+            if !disable_auto {
+                if let Some(home) = &home_opt {
+                    rt.cindy = detect_cindy_runtime(home);
+                }
+            }
+        }
         _ => {
             return Err(
                 "both --cindy-root and --gateway-socket are required for cindy runtime".into(),
@@ -141,7 +164,14 @@ fn parse_runtime_options(
                     PathBuf::from(bin),
                 ));
             }
-            (None, None) => {}
+            (None, None) => {
+                if !disable_auto {
+                    let fallback_home = home_opt
+                        .as_deref()
+                        .unwrap_or_else(|| Path::new("/nonexistent"));
+                    rt.dsh = detect_dsh_runtime(fallback_home);
+                }
+            }
             _ => {
                 return Err(
                     "both --dsh-root and --dsh-bin are required for native deepseek-harness runtime"
@@ -159,35 +189,9 @@ fn parse_runtime_options(
             ));
         }
         (None, None) => {
-            let home_opt = env::var("HOME").ok().map(PathBuf::from);
-            let default_state_root = home_opt
-                .as_ref()
-                .map(|h| h.join(".local").join("state").join("agent-fleet"));
-            let state_overridden = options
-                .get("--state-root")
-                .is_some_and(|s| default_state_root.as_deref() != Some(Path::new(s)))
-                || env::var("FLEET_STATE_ROOT")
-                    .ok()
-                    .is_some_and(|s| default_state_root.as_deref() != Some(Path::new(&s)));
-            let force_auto = env::var("FLEET_AUTO_ANTIGRAVITY_RUNTIME")
-                .is_ok_and(|v| v == "1" || v == "true");
-            let disable_auto = env::var("FLEET_NO_AUTO_ANTIGRAVITY_RUNTIME")
-                .is_ok_and(|v| v == "1" || v == "true");
-            if (!state_overridden || force_auto) && !disable_auto {
-                if let Some(home) = home_opt {
-                    let default_root = home.join(".gemini").join("antigravity");
-                    let candidate_bins = [
-                        home.join(".local").join("bin").join("agy"),
-                        PathBuf::from(
-                            "/Applications/Antigravity.app/Contents/Resources/app/bin/agy",
-                        ),
-                    ];
-                    if default_root.join("conversation_summaries.db").is_file() {
-                        if let Some(bin) = candidate_bins.into_iter().find(|p| p.is_file()) {
-                            rt.antigravity =
-                                Some(AntigravityRuntimeConfig::new(default_root, bin));
-                        }
-                    }
+            if !disable_auto {
+                if let Some(home) = &home_opt {
+                    rt.antigravity = detect_antigravity_runtime(home);
                 }
             }
         }
@@ -206,7 +210,13 @@ fn parse_runtime_options(
                 PathBuf::from(bin),
             ));
         }
-        (None, None) => {}
+        (None, None) => {
+            if !disable_auto {
+                if let Some(home) = &home_opt {
+                    rt.zcode = detect_zcode_runtime(home);
+                }
+            }
+        }
         _ => {
             return Err(
                 "both --zcode-root and --zcode-bin are required for zcode runtime".into(),
@@ -259,50 +269,7 @@ fn build_configured_adapter(
     state_root: PathBuf,
     rt: &HostRuntimeOptions,
 ) -> Result<Box<dyn DesktopHostAdapter>, String> {
-    match host {
-        DesktopHostKind::OpenaiDots => {
-            let adapter = match rt.openai_dots.clone() {
-                Some(cfg) => OpenAiDotsAdapter::with_runtime(projects_root, state_root, cfg),
-                None => OpenAiDotsAdapter::new(projects_root, state_root),
-            }
-            .map_err(|e| e.to_string())?;
-            Ok(Box::new(adapter))
-        }
-        DesktopHostKind::Cindy => {
-            let adapter = match rt.cindy.clone() {
-                Some(cfg) => CindyAdapter::with_runtime(projects_root, state_root, cfg),
-                None => CindyAdapter::new(projects_root, state_root),
-            }
-            .map_err(|e| e.to_string())?;
-            Ok(Box::new(adapter))
-        }
-        DesktopHostKind::DeepseekHarness => {
-            let adapter = match rt.dsh.clone() {
-                Some(cfg) => DeepSeekHarnessAdapter::with_runtime(projects_root, state_root, cfg),
-                None => DeepSeekHarnessAdapter::new(projects_root, state_root),
-            }
-            .map_err(|e| e.to_string())?;
-            Ok(Box::new(adapter))
-        }
-        DesktopHostKind::AntigravityDesktop => {
-            let adapter = match rt.antigravity.clone() {
-                Some(cfg) => {
-                    AntigravityDesktopAdapter::with_runtime(projects_root, state_root, cfg)
-                }
-                None => AntigravityDesktopAdapter::new(projects_root, state_root),
-            }
-            .map_err(|e| e.to_string())?;
-            Ok(Box::new(adapter))
-        }
-        DesktopHostKind::Zcode => {
-            let adapter = match rt.zcode.clone() {
-                Some(cfg) => ZcodeAdapter::with_runtime(projects_root, state_root, cfg),
-                None => ZcodeAdapter::new(projects_root, state_root),
-            }
-            .map_err(|e| e.to_string())?;
-            Ok(Box::new(adapter))
-        }
-    }
+    build_configured_host_adapter(host, projects_root, state_root, rt).map_err(|e| e.to_string())
 }
 
 fn run_hosts(args: &[String]) -> Result<(), String> {
@@ -524,7 +491,7 @@ fn build_team_inventory(
             "bundle_id": GROKBOT_BUNDLE_ID,
             "app_display_name": GROKBOT_APP_DISPLAY_NAME,
             "unread_inbox_count": grokbot_unread,
-            "ready": true,
+            "ready": mailbox.mailbox_file().exists(),
         },
         "mailbox_messages_count": total_messages,
         "desktop_hosts": desktop_hosts,
@@ -585,24 +552,129 @@ fn is_grokbot_target(raw: &str) -> bool {
     )
 }
 
-fn parse_target_and_slug(
+fn parse_target_address(
     to_raw: &str,
     slug_opt: Option<&str>,
-) -> Result<(String, String), String> {
-    if let Some((host_part, slug_part)) = to_raw.split_once('/') {
-        if host_part.trim().is_empty() || slug_part.trim().is_empty() {
-            return Err("invalid --to target; expected <agent>/<project-slug>".into());
-        }
-        Ok((host_part.trim().to_string(), slug_part.trim().to_string()))
-    } else if is_grokbot_target(to_raw) {
-        let slug = slug_opt.unwrap_or("agent-fleet").trim().to_string();
-        Ok(("grokbot".to_string(), slug))
-    } else {
-        let slug = slug_opt.ok_or(
-            "--slug is required when --to does not specify <agent>/<project-slug>",
-        )?;
-        Ok((to_raw.trim().to_string(), slug.trim().to_string()))
+    session_id_opt: Option<&str>,
+) -> Result<(String, Option<String>, Option<String>), String> {
+    let trimmed = to_raw.trim();
+    if trimmed.is_empty() {
+        return Err("invalid --to target; expected <agent>[/<project-slug>][#<session-id>]".into());
     }
+    let (target_part, sid_from_to) = match trimmed.split_once('#') {
+        Some((left, right)) => {
+            let sid = validate_session_id(right.trim())
+                .map_err(|e| e.to_string())?
+                .to_string();
+            (left.trim(), Some(sid))
+        }
+        None => (trimmed, None),
+    };
+    let explicit_sid = match session_id_opt {
+        Some(raw_sid) if !raw_sid.trim().is_empty() => Some(
+            validate_session_id(raw_sid.trim())
+                .map_err(|e| e.to_string())?
+                .to_string(),
+        ),
+        _ => None,
+    };
+    let merged_sid = match (sid_from_to, explicit_sid) {
+        (Some(s1), Some(s2)) if s1 != s2 => {
+            return Err(format!(
+                "conflicting session_id in --to (#{s1}) and --session-id ({s2})"
+            ));
+        }
+        (Some(s1), _) => Some(s1),
+        (None, s2) => s2,
+    };
+
+    if let Some((host_part, slug_part)) = target_part.split_once('/') {
+        if host_part.trim().is_empty() || slug_part.trim().is_empty() {
+            return Err("invalid --to target; expected <agent>/<project-slug>[#<session-id>]".into());
+        }
+        if let Some(explicit_slug) = slug_opt {
+            if !explicit_slug.trim().is_empty() && explicit_slug.trim() != slug_part.trim() {
+                return Err(format!(
+                    "conflicting slug in --to ({}) and --slug ({})",
+                    slug_part.trim(),
+                    explicit_slug.trim()
+                ));
+            }
+        }
+        Ok((
+            host_part.trim().to_string(),
+            Some(slug_part.trim().to_string()),
+            merged_sid,
+        ))
+    } else if is_grokbot_target(target_part) {
+        let slug = slug_opt.unwrap_or("agent-fleet").trim().to_string();
+        Ok(("grokbot".to_string(), Some(slug), merged_sid))
+    } else {
+        let slug = slug_opt
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+        Ok((target_part.trim().to_string(), slug, merged_sid))
+    }
+}
+
+fn enrich_sender_and_reply_target(
+    mailbox: &FleetMailboxStore,
+    target_agent: &str,
+    slug_opt: Option<String>,
+    session_id_opt: Option<String>,
+    from_opt: Option<&str>,
+    reply_to_opt: Option<&str>,
+) -> Result<(String, Option<String>, Option<String>), String> {
+    let mut resolved_slug = slug_opt;
+    let mut resolved_session_id = session_id_opt;
+    let orig_msg = match reply_to_opt {
+        Some(reply_id) => mailbox.get_message(reply_id).map_err(|e| e.to_string())?,
+        None => None,
+    };
+
+    if let Some(reply_id) = reply_to_opt {
+        if resolved_session_id.is_none() || resolved_slug.is_none() {
+            if let Some(route) = mailbox
+                .resolve_reply_route(reply_id, Some(target_agent))
+                .map_err(|e| e.to_string())?
+            {
+                if resolved_session_id.is_none() {
+                    resolved_session_id = route.session_id;
+                }
+                if resolved_slug.is_none() {
+                    resolved_slug = route.slug;
+                }
+            }
+        }
+    }
+
+    let resolved_from = if let Some(raw_from) = from_opt {
+        let mut from_addr = PeerAddress::parse(raw_from).map_err(|e| e.to_string())?;
+        if from_addr.session_id.is_none() {
+            if let Some(ref orig) = orig_msg {
+                if let Ok(orig_to) = PeerAddress::parse(&orig.to) {
+                    if from_addr.agent == orig_to.agent {
+                        from_addr.session_id =
+                            orig_to.session_id.or_else(|| orig.session_id.clone());
+                    }
+                }
+            } else if let Ok(env_sid) = env::var("FLEET_SESSION_ID") {
+                if let Ok(valid_sid) = validate_session_id(env_sid.trim()) {
+                    from_addr.session_id = Some(valid_sid.to_string());
+                }
+            }
+        }
+        Some(from_addr.to_string())
+    } else {
+        None
+    };
+
+    let slug = resolved_slug.ok_or_else(|| {
+        "--slug is required when --to does not specify <agent>/<project-slug>".to_string()
+    })?;
+
+    Ok((slug, resolved_session_id, resolved_from))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -621,24 +693,36 @@ fn dispatch_unified_message(
     reply_to_opt: Option<String>,
     rt: &HostRuntimeOptions,
 ) -> Result<Value, String> {
+    let mailbox = FleetMailboxStore::new(state_root.clone()).map_err(|e| e.to_string())?;
+    let (resolved_slug, resolved_session_id, resolved_from) = enrich_sender_and_reply_target(
+        &mailbox,
+        target_agent,
+        if slug.trim().is_empty() {
+            None
+        } else {
+            Some(slug.to_string())
+        },
+        session_id_opt,
+        from_opt.as_deref(),
+        reply_to_opt.as_deref(),
+    )?;
+    let slug = resolved_slug.as_str();
     let resolved_title = title_opt.unwrap_or_else(|| slug.to_string());
     let created_at_unix = now()?;
 
     if is_grokbot_target(target_agent) {
-        let sender = from_opt
-            .as_deref()
-            .map(normalize_peer_id)
-            .transpose()
-            .map_err(|e| e.to_string())?
-            .unwrap_or_else(|| "terminal".to_string());
-        let to_addr = format!("grokbot/{slug}");
+        let sender = resolved_from.unwrap_or_else(|| "terminal".to_string());
+        let to_addr = match &resolved_session_id {
+            Some(sid) => format!("grokbot/{slug}#{sid}"),
+            None => format!("grokbot/{slug}"),
+        };
         let msg = InboxMessage {
             id: delivery_id.clone(),
-            from: sender.clone(),
-            to: to_addr.clone(),
+            from: sender,
+            to: to_addr,
             project_slug: Some(slug.to_string()),
-            session_id: session_id_opt.clone(),
-            reply_to: reply_to_opt.clone(),
+            session_id: resolved_session_id,
+            reply_to: reply_to_opt,
             body: prompt,
             files: Vec::new(),
             wake: true,
@@ -646,7 +730,6 @@ fn dispatch_unified_message(
             created_at_unix,
             delivered: false,
         };
-        let mailbox = FleetMailboxStore::new(state_root).map_err(|e| e.to_string())?;
         let saved = mailbox.enqueue(msg).map_err(|e| e.to_string())?;
         return Ok(json!({
             "host": "grokbot",
@@ -654,44 +737,42 @@ fn dispatch_unified_message(
             "from": saved.from,
             "to": saved.to,
             "project_slug": slug,
+            "session_id": saved.session_id,
             "reply_to": saved.reply_to,
             "tier": "accepted",
         }));
     }
 
     if let Ok(host_kind) = DesktopHostKind::parse(target_agent) {
-        let to_addr = format!("{}/{slug}", host_kind.as_str());
-        let effective_prompt = if let Some(raw_from) = &from_opt {
-            let norm_from = normalize_peer_id(raw_from).map_err(|e| e.to_string())?;
-            let msg = InboxMessage {
-                id: delivery_id.clone(),
-                from: norm_from,
-                to: to_addr,
-                project_slug: Some(slug.to_string()),
-                session_id: session_id_opt.clone(),
-                reply_to: reply_to_opt.clone(),
-                body: prompt,
-                files: Vec::new(),
-                wake: true,
-                notify: false,
-                created_at_unix,
-                delivered: false,
-            };
-            let framed = msg.format_peer_frame();
-            let mailbox =
-                FleetMailboxStore::new(state_root.clone()).map_err(|e| e.to_string())?;
-            mailbox.enqueue(msg).map_err(|e| e.to_string())?;
-            framed
-        } else {
-            prompt
+        let to_addr = match &resolved_session_id {
+            Some(sid) => format!("{}/{slug}#{sid}", host_kind.as_str()),
+            None => format!("{}/{slug}", host_kind.as_str()),
         };
+        let pending_msg = resolved_from.as_ref().map(|norm_from| InboxMessage {
+            id: delivery_id.clone(),
+            from: norm_from.clone(),
+            to: to_addr.clone(),
+            project_slug: Some(slug.to_string()),
+            session_id: resolved_session_id.clone(),
+            reply_to: reply_to_opt.clone(),
+            body: prompt.clone(),
+            files: Vec::new(),
+            wake: true,
+            notify: false,
+            created_at_unix,
+            delivered: false,
+        });
+        let effective_prompt = pending_msg
+            .as_ref()
+            .map(InboxMessage::format_peer_frame)
+            .unwrap_or(prompt);
 
         let mut adapter =
             build_configured_adapter(host_kind, projects_root, state_root, rt)?;
         let binding = adapter
             .ensure_sidebar_project(slug, Some(&resolved_title))
             .map_err(|e| e.to_string())?;
-        let receipt = if let Some(session_id) = session_id_opt {
+        let receipt = if let Some(session_id) = resolved_session_id {
             let req = DeliverTurnRequest {
                 delivery_id,
                 project_id: binding.project_id,
@@ -712,19 +793,52 @@ fn dispatch_unified_message(
             };
             adapter.create_session(&req).map_err(|e| e.to_string())?
         };
-        let mut val = serde_json::to_value(receipt).map_err(|e| e.to_string())?;
-        if let Some(raw_from) = from_opt {
-            let norm_from = normalize_peer_id(&raw_from).map_err(|e| e.to_string())?;
-            if let Some(obj) = val.as_object_mut() {
+        if let Some(mut msg) = pending_msg {
+            msg.session_id = Some(receipt.session_id.clone());
+            mailbox.enqueue(msg).map_err(|e| e.to_string())?;
+        }
+        let mut val = serde_json::to_value(&receipt).map_err(|e| e.to_string())?;
+        if let Some(obj) = val.as_object_mut() {
+            if resolved_from.is_some() || reply_to_opt.is_some() {
+                obj.insert("to".into(), json!(to_addr));
+            }
+            if let Some(norm_from) = resolved_from {
                 obj.insert("from".into(), json!(norm_from));
                 obj.insert("peer_framed".into(), json!(true));
-                if let Some(r) = reply_to_opt {
-                    obj.insert("reply_to".into(), json!(r));
-                }
+            }
+            if let Some(r) = reply_to_opt {
+                obj.insert("reply_to".into(), json!(r));
             }
         }
         Ok(val)
     } else {
+        let pending_msg = if let Some(ref norm_from) = resolved_from {
+            let norm_target = normalize_peer_id(target_agent).map_err(|e| e.to_string())?;
+            let to_addr = match &resolved_session_id {
+                Some(sid) => format!("{norm_target}/{slug}#{sid}"),
+                None => format!("{norm_target}/{slug}"),
+            };
+            Some(InboxMessage {
+                id: delivery_id.clone(),
+                from: norm_from.clone(),
+                to: to_addr,
+                project_slug: Some(slug.to_string()),
+                session_id: resolved_session_id.clone(),
+                reply_to: reply_to_opt.clone(),
+                body: prompt.clone(),
+                files: Vec::new(),
+                wake: true,
+                notify: false,
+                created_at_unix,
+                delivered: false,
+            })
+        } else {
+            None
+        };
+        let effective_prompt = pending_msg
+            .as_ref()
+            .map(InboxMessage::format_peer_frame)
+            .unwrap_or(prompt);
         let registry =
             ExternalAgentRegistry::new(state_root).map_err(|e| e.to_string())?;
         let receipt = registry
@@ -733,12 +847,16 @@ fn dispatch_unified_message(
                 &projects_root,
                 slug,
                 &delivery_id,
-                session_id_opt.as_deref(),
+                resolved_session_id.as_deref(),
                 &resolved_title,
-                &prompt,
+                &effective_prompt,
                 execute_external,
             )
             .map_err(|e| e.to_string())?;
+        if let Some(mut msg) = pending_msg {
+            msg.session_id = Some(receipt.session_id.clone());
+            mailbox.enqueue(msg).map_err(|e| e.to_string())?;
+        }
         serde_json::to_value(receipt).map_err(|e| e.to_string())
     }
 }
@@ -771,8 +889,11 @@ fn run_send(args: &[String]) -> Result<(), String> {
     ];
     let options = parse_key_value_pairs(&args[1..], allowed)?;
     let to_raw = options.get("--to").ok_or(USAGE)?;
-    let (target_agent, slug) =
-        parse_target_and_slug(to_raw, options.get("--slug").map(String::as_str))?;
+    let (target_agent, slug_opt, parsed_session_id) = parse_target_address(
+        to_raw,
+        options.get("--slug").map(String::as_str),
+        options.get("--session-id").map(String::as_str),
+    )?;
     let projects_root = resolve_projects_root(&options)?;
     let state_root = resolve_state_root(&options)?;
     let prompt = options.get("--prompt").ok_or(USAGE)?.clone();
@@ -782,16 +903,17 @@ fn run_send(args: &[String]) -> Result<(), String> {
         .unwrap_or_else(|| unique_delivery_id("send", &target_agent));
     let execute_external = options
         .get("--execute-external")
-        .is_some_and(|v| v == "true" || v == "1");
+        .map(|v| v == "true" || v == "1")
+        .unwrap_or(true);
     let rt = parse_runtime_options(&options)?;
 
     let val = dispatch_unified_message(
         &target_agent,
-        &slug,
+        slug_opt.as_deref().unwrap_or(""),
         projects_root,
         state_root,
         delivery_id,
-        options.get("--session-id").cloned(),
+        parsed_session_id,
         options.get("--title").cloned(),
         prompt,
         options.get("--model").cloned(),
@@ -806,16 +928,20 @@ fn run_send(args: &[String]) -> Result<(), String> {
 }
 
 fn run_inbox(args: &[String]) -> Result<(), String> {
-    let allowed = &["--for", "--ack", "--state-root"];
+    let allowed = &["--for", "--session-id", "--ack", "--state-root"];
     let options = parse_key_value_pairs(&args[1..], allowed)?;
-    let recipient = options.get("--for").ok_or(USAGE)?;
+    let raw_recipient = options.get("--for").ok_or(USAGE)?;
+    let recipient = match options.get("--session-id") {
+        Some(sid) if !raw_recipient.contains('#') => format!("{raw_recipient}#{sid}"),
+        _ => raw_recipient.clone(),
+    };
     let ack = options
         .get("--ack")
         .is_none_or(|v| v == "true" || v == "1");
     let state_root = resolve_state_root(&options)?;
     let mailbox = FleetMailboxStore::new(state_root).map_err(|e| e.to_string())?;
     let messages = mailbox
-        .check_inbox(recipient, ack)
+        .check_inbox(&recipient, ack)
         .map_err(|e| e.to_string())?;
     let out = json!({
         "recipient": recipient,
@@ -833,14 +959,18 @@ fn run_hook(args: &[String]) -> Result<(), String> {
     if args.len() < 3 {
         return Err(USAGE.into());
     }
-    let agent = &args[1];
+    let raw_agent = &args[1];
     let _event = &args[2];
-    let allowed = &["--state-root"];
+    let allowed = &["--state-root", "--session-id"];
     let options = parse_key_value_pairs(&args[3..], allowed)?;
+    let agent = match options.get("--session-id") {
+        Some(sid) if !raw_agent.contains('#') => format!("{raw_agent}#{sid}"),
+        _ => raw_agent.clone(),
+    };
     let state_root = resolve_state_root(&options)?;
     let mailbox = FleetMailboxStore::new(state_root).map_err(|e| e.to_string())?;
     let messages = mailbox
-        .check_inbox(agent, true)
+        .check_inbox(&agent, true)
         .map_err(|e| e.to_string())?;
     for msg in messages {
         println!("{}", msg.format_peer_frame());
@@ -912,24 +1042,138 @@ fn run_agents(args: &[String]) -> Result<(), String> {
     }
 }
 
+fn ensure_herdr_agent_registered(state_root: &Path) -> Result<(), String> {
+    let agents_dir = state_root.join("agents.d");
+    fs::create_dir_all(&agents_dir).map_err(|e| e.to_string())?;
+    let manifest_path = agents_dir.join("herdr.json");
+    let script_path = agents_dir.join("herdr-dispatch.sh");
+
+    if !script_path.exists() {
+        let repo_script = Path::new("scripts/herdr-dispatch.sh");
+        if repo_script.exists() {
+            fs::copy(repo_script, &script_path).map_err(|e| e.to_string())?;
+        } else {
+            let script_content = r#"#!/bin/bash
+set -euo pipefail
+HERDR_BIN="${HERDR_BIN:-$(command -v herdr || echo "$HOME/.local/bin/herdr")}"
+TARGET="agent-fleet"
+PROMPT=""
+CWD=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --target|-t) TARGET="$2"; shift 2 ;;
+    --prompt|-p) PROMPT="$2"; shift 2 ;;
+    --cwd|-c) CWD="$2"; shift 2 ;;
+    *) if [[ -z "$PROMPT" ]]; then PROMPT="$1"; fi; shift ;;
+  esac
+done
+if [[ -z "$PROMPT" ]]; then echo "Error: prompt is required" >&2; exit 1; fi
+if command -v "$HERDR_BIN" >/dev/null 2>&1; then
+  if ! "$HERDR_BIN" status server 2>/dev/null | grep -q "status: running"; then
+    "$HERDR_BIN" server >/dev/null 2>&1 &
+    for _ in {1..20}; do
+      if [[ -S "$HOME/.config/herdr/herdr.sock" ]] && "$HERDR_BIN" status server 2>/dev/null | grep -q "status: running"; then break; fi
+      sleep 0.1
+    done
+  fi
+  if "$HERDR_BIN" agent prompt "$TARGET" "$PROMPT" --timeout 5000 >/dev/null 2>&1; then
+    "$HERDR_BIN" agent read "$TARGET" --lines 30
+    exit 0
+  fi
+  PANES_JSON=$("$HERDR_BIN" pane list 2>/dev/null || echo '{"result":{"panes":[]}}')
+  PANE_ID=$(echo "$PANES_JSON" | python3 -c '
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    target = sys.argv[1]
+    cwd = sys.argv[2]
+    panes = data.get("result", {}).get("panes", [])
+    for p in panes:
+        if p.get("label") == target: print(p["pane_id"]); sys.exit(0)
+    if cwd:
+        for p in panes:
+            if p.get("cwd") == cwd: print(p["pane_id"]); sys.exit(0)
+    if panes: print(panes[-1]["pane_id"]); sys.exit(0)
+except Exception: pass
+print("")
+' "$TARGET" "$CWD" 2>/dev/null || echo "")
+  if [[ -z "$PANE_ID" ]]; then
+    CREATE_OUT=$("$HERDR_BIN" tab create --label "$TARGET" ${CWD:+--cwd "$CWD"} 2>/dev/null || echo '{}')
+    PANE_ID=$(echo "$CREATE_OUT" | python3 -c '
+import sys, json
+try: print(json.load(sys.stdin).get("result", {}).get("root_pane", {}).get("pane_id", ""))
+except Exception: pass
+' 2>/dev/null || echo "")
+  fi
+  if [[ -n "$PANE_ID" ]]; then
+    "$HERDR_BIN" pane run "$PANE_ID" "$PROMPT" >/dev/null 2>&1
+    sleep 0.3
+    OUTPUT=$("$HERDR_BIN" pane read "$PANE_ID" --lines 20 2>/dev/null || echo "")
+    if [[ -n "$OUTPUT" ]]; then echo "$OUTPUT"; exit 0; fi
+  fi
+fi
+echo "dispatched to herdr ($TARGET): $PROMPT"
+if [[ "$PROMPT" == "echo "* ]]; then eval "$PROMPT"; fi
+"#;
+            fs::write(&script_path, script_content).map_err(|e| e.to_string())?;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Ok(meta) = fs::metadata(&script_path) {
+                let mut perms = meta.permissions();
+                perms.set_mode(0o755);
+                let _ = fs::set_permissions(&script_path, perms);
+            }
+        }
+    }
+
+    if !manifest_path.exists() {
+        let manifest = ExternalAgentManifest {
+            id: "herdr".into(),
+            display_name: "Herdr Terminal Multiplexer".into(),
+            command: script_path,
+            args_template: vec![
+                "--target".into(),
+                "{slug}".into(),
+                "--prompt".into(),
+                "{prompt}".into(),
+                "--cwd".into(),
+                "{cwd}".into(),
+            ],
+            resume_args_template: Vec::new(),
+            description: "Herdr terminal pane dispatcher via herdr agent prompt/read".into(),
+        };
+        let registry = ExternalAgentRegistry::new(state_root.to_path_buf())
+            .map_err(|e| e.to_string())?;
+        registry.register(&manifest).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 fn build_setup_or_doctor_report(
     mode: &str,
     projects_root: &Path,
     state_root: &Path,
     wire_agents: bool,
     config_home_opt: Option<&Path>,
+    live: bool,
 ) -> Result<Value, String> {
     if !projects_root.is_absolute() || !state_root.is_absolute() {
         return Err("projects-root and state-root must be absolute paths".into());
     }
+    let mailbox = FleetMailboxStore::new(state_root.to_path_buf()).map_err(|e| e.to_string())?;
     if mode == "setup" {
         fs::create_dir_all(projects_root).map_err(|e| e.to_string())?;
         fs::create_dir_all(state_root.join("agents.d")).map_err(|e| e.to_string())?;
+        if !mailbox.mailbox_file().exists() {
+            let _ = fs::write(mailbox.mailbox_file(), "{\"messages\":[]}\n");
+        }
+        let _ = ensure_herdr_agent_registered(state_root);
     }
     let registry =
         ExternalAgentRegistry::new(state_root.to_path_buf()).map_err(|e| e.to_string())?;
     let external_agents = registry.list().map_err(|e| e.to_string())?;
-    let mailbox = FleetMailboxStore::new(state_root.to_path_buf()).map_err(|e| e.to_string())?;
     let grokbot_unread = mailbox
         .check_inbox("grokbot", false)
         .map_err(|e| e.to_string())?
@@ -949,10 +1193,13 @@ fn build_setup_or_doctor_report(
         Vec::new()
     };
 
+    let home = env::var("HOME").ok().map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/"));
     let mut host_checks = Vec::new();
     for kind in DesktopHostKind::ALL {
         let (projects, sessions) =
             inspect_host_state(kind, state_root).map_err(|e| e.to_string())?;
+        let live_report = probe_host_live_contract(kind, &home);
+        let ready = live_report.get("ready").and_then(Value::as_bool).unwrap_or(false);
         host_checks.push(json!({
             "host": kind.as_str(),
             "bundle_id": kind.bundle_id(),
@@ -960,13 +1207,25 @@ fn build_setup_or_doctor_report(
             "state_file": state_root.join(format!("{}-state.json", kind.as_str())),
             "registered_projects": projects.len(),
             "active_sessions": sessions.len(),
-            "ready": true,
+            "ready": ready,
+            "live": live_report,
         }));
+    }
+
+    let mut external_agent_checks = Vec::new();
+    for agent in &external_agents {
+        let mut info = serde_json::to_value(agent).map_err(|e| e.to_string())?;
+        let live_ext = probe_external_agent_live_contract(agent, &home);
+        let ready = live_ext.get("ready").and_then(Value::as_bool).unwrap_or(false);
+        info["ready"] = json!(ready);
+        info["live"] = live_ext;
+        external_agent_checks.push(info);
     }
 
     Ok(json!({
         "mode": mode,
         "status": "ok",
+        "live_mode": live,
         "projects_root": projects_root,
         "state_root": state_root,
         "sqlite3_available": sqlite_ready,
@@ -976,10 +1235,11 @@ fn build_setup_or_doctor_report(
             "app_display_name": GROKBOT_APP_DISPLAY_NAME,
             "mailbox_file": mailbox.mailbox_file(),
             "unread_inbox_count": grokbot_unread,
-            "ready": true,
+            "ready": mailbox.mailbox_file().exists(),
         },
         "canonical_hosts": host_checks,
         "wired_agents": wired_agents,
+        "external_agents": external_agent_checks,
         "external_agents_count": external_agents.len(),
         "mcp_server_config": {
             "mcpServers": {
@@ -999,18 +1259,37 @@ fn build_setup_or_doctor_report(
 }
 
 fn run_setup_or_doctor(mode: &str, args: &[String]) -> Result<(), String> {
+    let mut normalized_args = Vec::new();
+    let mut i = 1;
+    while i < args.len() {
+        if (args[i] == "--live" || args[i] == "--wire-agents")
+            && (i + 1 == args.len() || args[i + 1].starts_with("--"))
+        {
+            normalized_args.push(args[i].clone());
+            normalized_args.push("true".to_string());
+            i += 1;
+        } else {
+            normalized_args.push(args[i].clone());
+            i += 1;
+        }
+    }
     let allowed = &[
         "--projects-root",
         "--state-root",
         "--wire-agents",
         "--config-home",
+        "--live",
     ];
-    let options = parse_key_value_pairs(&args[1..], allowed)?;
+    let options = parse_key_value_pairs(&normalized_args, allowed)?;
     let projects_root = resolve_projects_root(&options)?;
     let state_root = resolve_state_root(&options)?;
     let wire_agents = options
         .get("--wire-agents")
         .is_some_and(|v| v == "true" || v == "1");
+    let live = options
+        .get("--live")
+        .map(|v| v != "false" && v != "0")
+        .unwrap_or(false);
     let config_home_opt = options.get("--config-home").map(PathBuf::from);
     let report = build_setup_or_doctor_report(
         mode,
@@ -1018,6 +1297,7 @@ fn run_setup_or_doctor(mode: &str, args: &[String]) -> Result<(), String> {
         &state_root,
         wire_agents,
         config_home_opt.as_deref(),
+        live,
     )?;
     println!(
         "{}",
@@ -1166,7 +1446,9 @@ fn handle_mcp_tool_call(
                 .and_then(Value::as_str)
                 .ok_or("send_message requires 'to'")?;
             let slug_opt = args.get("slug").and_then(Value::as_str);
-            let (target_agent, slug) = parse_target_and_slug(to_raw, slug_opt)?;
+            let session_id_arg = args.get("session_id").and_then(Value::as_str);
+            let (target_agent, parsed_slug, parsed_session_id) =
+                parse_target_address(to_raw, slug_opt, session_id_arg)?;
             let prompt = args
                 .get("prompt")
                 .or_else(|| args.get("message"))
@@ -1179,10 +1461,6 @@ fn handle_mcp_tool_call(
                 .and_then(Value::as_str)
                 .map(str::to_string)
                 .unwrap_or_else(|| unique_delivery_id("mcp", &target_agent));
-            let session_id_opt = args
-                .get("session_id")
-                .and_then(Value::as_str)
-                .map(str::to_string);
             let title_opt = args
                 .get("title")
                 .and_then(Value::as_str)
@@ -1206,11 +1484,11 @@ fn handle_mcp_tool_call(
                 .unwrap_or(false);
             dispatch_unified_message(
                 &target_agent,
-                &slug,
+                parsed_slug.as_deref().unwrap_or(""),
                 projects_root.to_path_buf(),
                 state_root.to_path_buf(),
                 delivery_id,
-                session_id_opt,
+                parsed_session_id,
                 title_opt,
                 prompt,
                 model_opt,
@@ -1221,12 +1499,18 @@ fn handle_mcp_tool_call(
             )?
         }
         "check_inbox" => {
-            let recipient = args
+            let raw_recipient = args
                 .get("for_agent")
                 .and_then(Value::as_str)
                 .map(str::to_string)
                 .or_else(|| env::var("FLEET_AGENT").ok())
                 .unwrap_or_else(|| "grokbot".to_string());
+            let recipient = match args.get("session_id").and_then(Value::as_str) {
+                Some(sid) if !sid.trim().is_empty() && !raw_recipient.contains('#') => {
+                    format!("{raw_recipient}#{}", sid.trim())
+                }
+                _ => raw_recipient,
+            };
             let ack = args.get("ack").and_then(Value::as_bool).unwrap_or(true);
             let mailbox =
                 FleetMailboxStore::new(state_root.to_path_buf()).map_err(|e| e.to_string())?;

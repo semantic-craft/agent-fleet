@@ -156,6 +156,7 @@ impl FourHostClusterFixture {
             codex_sessions_dir,
             stop.clone(),
         ));
+        std::os::unix::fs::symlink(&codex_socket, codex_root.join("app-server.sock")).unwrap();
 
         // 2. Cindy (`cindy-gateway.sock` + `.cindy/transcripts`)
         let cindy_root = root.join(".cindy");
@@ -167,6 +168,7 @@ impl FourHostClusterFixture {
             cindy_transcripts,
             stop.clone(),
         ));
+        std::os::unix::fs::symlink(&cindy_socket, cindy_root.join("cindy-gateway.sock")).unwrap();
 
         // 3. DeepSeek Harness (`/v1/sessions` + `/v1/sessions/<id>/turns`)
         let (dsh_base_url, dsh_worker) = spawn_dsh_gateway(stop.clone());
@@ -192,6 +194,16 @@ impl FourHostClusterFixture {
         .unwrap();
         let agy_bin = root.join("mock_agy_slice_l.py");
         write_mock_agy_binary(&agy_bin);
+        let local_bin_dir = root.join(".local/bin");
+        fs::create_dir_all(&local_bin_dir).unwrap();
+        write_mock_agy_binary(&local_bin_dir.join("agy"));
+
+        // 5. ZCode (`~/.zcode` + `~/bin/zcode`)
+        let zcode_root = root.join(".zcode");
+        fs::create_dir_all(&zcode_root).unwrap();
+        let home_bin_dir = root.join("bin");
+        fs::create_dir_all(&home_bin_dir).unwrap();
+        write_mock_zcode_binary(&home_bin_dir.join("zcode"));
 
         Self {
             root,
@@ -215,6 +227,8 @@ impl FourHostClusterFixture {
 
     fn run_cli(&self, args: &[&str]) -> Output {
         Command::new(env!("CARGO_BIN_EXE_fleet-cli"))
+            .env("HOME", &self.root)
+            .env("DSH_BASE_URL", &self.dsh_base_url)
             .args(args)
             .output()
             .unwrap()
@@ -738,6 +752,37 @@ else:
     fs::set_permissions(script_path, perms).unwrap();
 }
 
+fn write_mock_zcode_binary(script_path: &Path) {
+    let script = r#"#!/usr/bin/env python3
+import hashlib
+import json
+import os
+import sys
+
+args = sys.argv[1:]
+resume_id = None
+for i, a in enumerate(args):
+    if a == "--resume" and i + 1 < len(args):
+        resume_id = args[i + 1]
+
+cwd = os.getcwd()
+digest = hashlib.sha256(f"{cwd}:{args}".encode()).hexdigest()[:12]
+
+if resume_id:
+    turn_id = "msg_zcode_followup_2" if cwd.endswith("self-dev-zcode") else f"msg_zcode_followup_{digest}"
+    print(json.dumps({"session_id": resume_id, "turn_id": turn_id, "status": "completed"}))
+else:
+    if cwd.endswith("self-dev-zcode"):
+        print(json.dumps({"session_id": "sess_zcode_relay_1", "turn_id": "msg_zcode_initial_1", "status": "completed"}))
+    else:
+        print(json.dumps({"session_id": f"sess_zcode_{digest}", "turn_id": f"msg_zcode_initial_{digest}", "status": "completed"}))
+"#;
+    fs::write(script_path, script).unwrap();
+    let mut perms = fs::metadata(script_path).unwrap().permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(script_path, perms).unwrap();
+}
+
 #[test]
 fn poteto_relay_four_hosts_closes_all_hosts_with_sidebar_visibility_and_receipts() {
     let f = FourHostClusterFixture::new();
@@ -1216,26 +1261,7 @@ fn five_hosts_and_open_engine_cli_mcp_interoperability() {
 
     let f = FourHostClusterFixture::new();
     let zcode_root = f.root.join(".zcode");
-    fs::create_dir_all(&zcode_root).unwrap();
-    let zcode_bin = f.root.join("mock_zcode_cli.py");
-    let zcode_script = r#"#!/usr/bin/env python3
-import json, sys
-
-args = sys.argv[1:]
-resume_id = None
-for i, a in enumerate(args):
-    if a == "--resume" and i + 1 < len(args):
-        resume_id = args[i + 1]
-
-if resume_id:
-    print(json.dumps({"session_id": resume_id, "turn_id": "msg_zcode_followup_2", "status": "completed"}))
-else:
-    print(json.dumps({"session_id": "sess_zcode_relay_1", "turn_id": "msg_zcode_initial_1", "status": "completed"}))
-"#;
-    fs::write(&zcode_bin, zcode_script).unwrap();
-    let mut perms = fs::metadata(&zcode_bin).unwrap().permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&zcode_bin, perms).unwrap();
+    let zcode_bin = f.root.join("bin/zcode");
 
     // 1. Verify 5th host (`zcode`) full /poteto-mode self-dev relay with SQLite verification
     let zcode_receipt_file = f.receipts_dir.join("zcode-receipt.json");
@@ -1302,7 +1328,7 @@ else:
         other => panic!("expected Zcode store evidence, got {other:?}"),
     }
 
-    // 2. Verify `fleet-cli send` across all 5 canonical desktop hosts
+    // 2. Verify `fleet-cli send` across all 5 canonical desktop hosts (auto-detecting local runtimes from HOME)
     for host in DesktopHostKind::ALL {
         let target = format!("{}/mutual-mesh", host.as_str());
         let send_out = f.run_cli(&[
@@ -1327,6 +1353,8 @@ else:
         let receipt: HostSessionReceipt = serde_json::from_slice(&send_out.stdout).unwrap();
         assert_eq!(receipt.host, host);
         assert_eq!(receipt.project_dir, f.projects_root.join("mutual-mesh"));
+        assert_eq!(receipt.tier, DeliveryTier::ThreadVisible);
+        assert_ne!(receipt.session_id, format!("{}-session-1", host.as_str()));
 
         // Follow up on the same session
         let followup_out = f.run_cli(&[
@@ -1342,10 +1370,16 @@ else:
             "--prompt",
             "Continue the same sidebar session on this host.",
         ]);
-        assert!(followup_out.status.success());
+        assert!(
+            followup_out.status.success(),
+            "followup failed for {}: {}",
+            host,
+            String::from_utf8_lossy(&followup_out.stderr)
+        );
         let cont: HostSessionReceipt = serde_json::from_slice(&followup_out.stdout).unwrap();
         assert_eq!(cont.session_id, receipt.session_id);
         assert_ne!(cont.turn_id, receipt.turn_id);
+        assert_eq!(cont.tier, DeliveryTier::ThreadVisible);
     }
 
     // 3. Register an external open-source agent via `fleet-cli agents register` and dispatch via `fleet-cli send`
@@ -1385,6 +1419,45 @@ else:
     assert_eq!(ext_val["agent_id"], "open-coder");
     assert_eq!(ext_val["tier"], "completed");
 
+    // Register herdr external agent and test default execute_external dispatch
+    let herdr_reg = f.run_cli(&[
+        "agents",
+        "register",
+        "--state-root",
+        &f.state_root.display().to_string(),
+        "--id",
+        "herdr",
+        "--name",
+        "Herdr Terminal Multiplexer",
+        "--command",
+        "/bin/echo",
+        "--args",
+        "dispatched-to-herdr,{slug},{prompt}",
+        "--description",
+        "Herdr terminal pane dispatcher",
+    ]);
+    assert!(herdr_reg.status.success());
+
+    let herdr_send = f.run_cli(&[
+        "send",
+        "--to",
+        "herdr/agent-fleet",
+        "--projects-root",
+        &f.projects_root.display().to_string(),
+        "--state-root",
+        &f.state_root.display().to_string(),
+        "--prompt",
+        "echo 1",
+    ]);
+    assert!(herdr_send.status.success());
+    let herdr_val: Value = serde_json::from_slice(&herdr_send.stdout).unwrap();
+    assert_eq!(herdr_val["agent_id"], "herdr");
+    assert_eq!(herdr_val["tier"], "completed");
+    assert!(herdr_val["stdout_preview"]
+        .as_str()
+        .unwrap()
+        .contains("dispatched-to-herdr"));
+
     // 4. Verify `fleet-cli who`, `fleet-cli setup`, and `fleet-cli doctor`
     let who_out = f.run_cli(&[
         "who",
@@ -1397,7 +1470,7 @@ else:
         who_val["canonical_desktop_hosts"].as_array().unwrap().len(),
         5
     );
-    assert_eq!(who_val["external_agents"].as_array().unwrap().len(), 1);
+    assert_eq!(who_val["external_agents"].as_array().unwrap().len(), 2);
 
     let doctor_out = f.run_cli(&[
         "doctor",
@@ -1410,6 +1483,20 @@ else:
     let doctor_val: Value = serde_json::from_slice(&doctor_out.stdout).unwrap();
     assert_eq!(doctor_val["status"], "ok");
     assert_eq!(doctor_val["canonical_hosts"].as_array().unwrap().len(), 5);
+
+    let doctor_live_out = f.run_cli(&[
+        "doctor",
+        "--live",
+        "--projects-root",
+        &f.projects_root.display().to_string(),
+        "--state-root",
+        &f.state_root.display().to_string(),
+    ]);
+    assert!(doctor_live_out.status.success());
+    let doc_live_val: Value = serde_json::from_slice(&doctor_live_out.stdout).unwrap();
+    assert_eq!(doc_live_val["status"], "ok");
+    assert_eq!(doc_live_val["live_mode"], true);
+    assert_eq!(doc_live_val["canonical_hosts"].as_array().unwrap().len(), 5);
 
     // 5. Verify `fleet-cli mcp` JSON-RPC 2.0 stdio server (`initialize`, `tools/list`, `tools/call`)
     let mut mcp_child = Command::new(env!("CARGO_BIN_EXE_fleet-cli"))
@@ -1424,6 +1511,9 @@ else:
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .env_clear()
+        .env("HOME", &f.root)
+        .env("DSH_BASE_URL", &f.dsh_base_url)
+        .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
         .spawn()
         .unwrap();
 
@@ -1477,6 +1567,14 @@ else:
     assert_eq!(
         lines[2]["result"]["structuredContent"]["host"],
         "zcode"
+    );
+    assert_eq!(
+        lines[2]["result"]["structuredContent"]["tier"],
+        "thread-visible"
+    );
+    assert_ne!(
+        lines[2]["result"]["structuredContent"]["session_id"],
+        "zcode-session-1"
     );
     assert_eq!(lines[3]["id"], 4);
     assert_eq!(lines[3]["result"]["isError"], false);
@@ -1572,6 +1670,8 @@ fn grokbot_bidirectional_interoperability_with_all_five_desktop_hosts_and_agent_
         assert_eq!(val["from"], "grokbot");
         assert_eq!(val["peer_framed"], true);
         assert_eq!(val["host"], host);
+        assert_eq!(val["tier"], "thread-visible");
+        assert_ne!(val["session_id"], format!("{host}-session-1"));
         assert_eq!(
             val["project_dir"],
             f.projects_root.join(slug).display().to_string()
@@ -1722,5 +1822,330 @@ fn grokbot_bidirectional_interoperability_with_all_five_desktop_hosts_and_agent_
     assert_eq!(
         lines[1]["result"]["structuredContent"]["count"],
         0
+    );
+}
+
+#[test]
+fn auto_detects_local_runtimes_and_rejects_silent_accepted_fallback_in_send_and_mcp() {
+    use std::process::Stdio;
+
+    let f = FourHostClusterFixture::new();
+    let empty_home = f.root.join("empty-home");
+    let isolated_state = f.root.join("isolated-state");
+    fs::create_dir_all(&empty_home).unwrap();
+    fs::create_dir_all(&isolated_state).unwrap();
+
+    // 1. When HOME has no host runtimes and no explicit flags are passed, `fleet-cli send` MUST fail
+    // for all 5 desktop hosts and NEVER write `<state_root>/<host>-state.json` or fake `<host>-session-1`.
+    for host in DesktopHostKind::ALL {
+        let out = Command::new(env!("CARGO_BIN_EXE_fleet-cli"))
+            .env_clear()
+            .env("HOME", &empty_home)
+            .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+            .args([
+                "send",
+                "--to",
+                &format!("{}/no-runtime-slug", host.as_str()),
+                "--projects-root",
+                &f.projects_root.display().to_string(),
+                "--state-root",
+                &isolated_state.display().to_string(),
+                "--prompt",
+                "Must fail without silent accepted fallback.",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            !out.status.success(),
+            "expected send to {} without runtime to fail, but succeeded: {}",
+            host,
+            String::from_utf8_lossy(&out.stdout)
+        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains("refusing silent accepted fallback"),
+            "unexpected stderr for {host}: {stderr}"
+        );
+        assert!(
+            !isolated_state
+                .join(format!("{}-state.json", host.as_str()))
+                .exists(),
+            "{}-state.json must not be created when runtime is missing",
+            host.as_str()
+        );
+    }
+
+    // 2. Similarly, `fleet-cli mcp` `send_message` with an empty HOME must return `isError: true`
+    // and never fabricate `zcode-session-1` or `tier: accepted`.
+    let mut mcp_child = Command::new(env!("CARGO_BIN_EXE_fleet-cli"))
+        .args([
+            "mcp",
+            "--projects-root",
+            &f.projects_root.display().to_string(),
+            "--state-root",
+            &isolated_state.display().to_string(),
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .env_clear()
+        .env("HOME", &empty_home)
+        .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+        .spawn()
+        .unwrap();
+    {
+        let stdin = mcp_child.stdin.as_mut().unwrap();
+        let call = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "send_message",
+                "arguments": {
+                    "to": "zcode/agent-fleet",
+                    "prompt": "Must fail when zcode runtime is absent."
+                }
+            }
+        });
+        writeln!(stdin, "{call}").unwrap();
+    }
+    let mcp_out = mcp_child.wait_with_output().unwrap();
+    assert!(mcp_out.status.success());
+    let resp: Value =
+        serde_json::from_str(String::from_utf8_lossy(&mcp_out.stdout).trim()).unwrap();
+    assert_eq!(resp["result"]["isError"], true);
+    assert!(resp["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap_or("")
+        .contains("refusing silent accepted fallback"));
+    assert!(!isolated_state.join("zcode-state.json").exists());
+}
+
+#[test]
+fn slice_x_session_scoped_peer_addressing_and_bidirectional_no_orphan_delivery() {
+    use fleet_daemon::{inspect_host_state, FleetMailboxStore};
+
+    let f = FourHostClusterFixture::new();
+
+    let agy_init_out = f.run_cli(&[
+        "send",
+        "--to",
+        "antigravity-desktop/agent-fleet",
+        "--title",
+        "Antigravity Slice X Origin Session",
+        "--prompt",
+        "Coordinate Slice X across DSH and ZCode from this Antigravity session.",
+        "--delivery-id",
+        "agy-origin-seed-1",
+        "--projects-root",
+        &f.projects_root.display().to_string(),
+        "--state-root",
+        &f.state_root.display().to_string(),
+        "--antigravity-root",
+        &f.antigravity_root.display().to_string(),
+        "--agy-bin",
+        &f.agy_bin.display().to_string(),
+    ]);
+    assert!(
+        agy_init_out.status.success(),
+        "agy seed failed: {}",
+        String::from_utf8_lossy(&agy_init_out.stderr)
+    );
+    let agy_seed_receipt: HostSessionReceipt =
+        serde_json::from_slice(&agy_init_out.stdout).unwrap();
+    let agy_conv_id = agy_seed_receipt.session_id.clone();
+
+    let (_, agy_sessions_t1) =
+        inspect_host_state(DesktopHostKind::AntigravityDesktop, &f.state_root).unwrap();
+    assert_eq!(agy_sessions_t1.len(), 1);
+    assert_eq!(agy_sessions_t1[0].session_id, agy_conv_id);
+    assert_eq!(agy_sessions_t1[0].turns.len(), 1);
+
+    let sender_with_session = format!("antigravity-desktop/agent-fleet#{agy_conv_id}");
+    let dsh_dispatch_out = f.run_cli(&[
+        "send",
+        "--from",
+        &sender_with_session,
+        "--to",
+        "deepseek-harness/agent-fleet",
+        "--delivery-id",
+        "msg-agy-to-dsh-1",
+        "--title",
+        "DSH Slice X Worker",
+        "--prompt",
+        "Run DSH verification and reply back to Antigravity session.",
+        "--projects-root",
+        &f.projects_root.display().to_string(),
+        "--state-root",
+        &f.state_root.display().to_string(),
+        "--dsh-base-url",
+        &f.dsh_base_url,
+    ]);
+    assert!(
+        dsh_dispatch_out.status.success(),
+        "agy -> dsh dispatch failed: {}",
+        String::from_utf8_lossy(&dsh_dispatch_out.stderr)
+    );
+    let dsh_dispatch_val: Value = serde_json::from_slice(&dsh_dispatch_out.stdout).unwrap();
+    let dsh_session_id = dsh_dispatch_val["session_id"].as_str().unwrap().to_string();
+    assert_eq!(dsh_dispatch_val["from"], sender_with_session);
+    assert_eq!(dsh_dispatch_val["to"], "deepseek-harness/agent-fleet");
+
+    let mailbox = FleetMailboxStore::new(f.state_root.clone()).unwrap();
+    let persisted_msg = mailbox.get_message("msg-agy-to-dsh-1").unwrap().unwrap();
+    assert_eq!(persisted_msg.from, sender_with_session);
+    assert_eq!(persisted_msg.to, "deepseek-harness/agent-fleet");
+    assert_eq!(
+        persisted_msg.session_id.as_deref(),
+        Some(dsh_session_id.as_str())
+    );
+    let rendered_frame = persisted_msg.format_peer_frame();
+    assert!(rendered_frame.contains(&format!(
+        "<fleet-message from=\"{sender_with_session}\" to=\"deepseek-harness/agent-fleet\" id=\"msg-agy-to-dsh-1\" repo=\"agent-fleet\">"
+    )));
+    assert!(rendered_frame.contains(&format!(
+        "Reply with the agent-fleet send_message tool to \"{sender_with_session}\" with reply_to=\"msg-agy-to-dsh-1\"."
+    )));
+
+    let dsh_reply_out = f.run_cli(&[
+        "send",
+        "--from",
+        "deepseek-harness/agent-fleet",
+        "--to",
+        "antigravity-desktop/agent-fleet",
+        "--reply-to",
+        "msg-agy-to-dsh-1",
+        "--delivery-id",
+        "msg-dsh-reply-1",
+        "--prompt",
+        "DSH completed Slice X verification.",
+        "--projects-root",
+        &f.projects_root.display().to_string(),
+        "--state-root",
+        &f.state_root.display().to_string(),
+        "--antigravity-root",
+        &f.antigravity_root.display().to_string(),
+        "--agy-bin",
+        &f.agy_bin.display().to_string(),
+    ]);
+    assert!(
+        dsh_reply_out.status.success(),
+        "dsh -> agy reply failed: {}",
+        String::from_utf8_lossy(&dsh_reply_out.stderr)
+    );
+    let dsh_reply_val: Value = serde_json::from_slice(&dsh_reply_out.stdout).unwrap();
+    assert_eq!(dsh_reply_val["session_id"], agy_conv_id);
+    assert_eq!(dsh_reply_val["to"], sender_with_session);
+    assert_eq!(
+        dsh_reply_val["from"],
+        format!("deepseek-harness/agent-fleet#{dsh_session_id}")
+    );
+    assert_eq!(dsh_reply_val["reply_to"], "msg-agy-to-dsh-1");
+
+    let (_, agy_sessions_t2) =
+        inspect_host_state(DesktopHostKind::AntigravityDesktop, &f.state_root).unwrap();
+    assert_eq!(
+        agy_sessions_t2.len(),
+        1,
+        "reply must not create an orphan Antigravity session"
+    );
+    assert_eq!(agy_sessions_t2[0].session_id, agy_conv_id);
+    assert_eq!(agy_sessions_t2[0].turns.len(), 2);
+
+    let zcode_reply_out = f.run_cli(&[
+        "send",
+        "--from",
+        "zcode/agent-fleet#zcode-sess-77",
+        "--to",
+        &sender_with_session,
+        "--delivery-id",
+        "msg-zcode-reply-2",
+        "--prompt",
+        "ZCode also verified Slice X on the same Antigravity thread.",
+        "--projects-root",
+        &f.projects_root.display().to_string(),
+        "--state-root",
+        &f.state_root.display().to_string(),
+        "--antigravity-root",
+        &f.antigravity_root.display().to_string(),
+        "--agy-bin",
+        &f.agy_bin.display().to_string(),
+    ]);
+    assert!(
+        zcode_reply_out.status.success(),
+        "zcode -> agy#session reply failed: {}",
+        String::from_utf8_lossy(&zcode_reply_out.stderr)
+    );
+    let zcode_reply_val: Value = serde_json::from_slice(&zcode_reply_out.stdout).unwrap();
+    assert_eq!(zcode_reply_val["session_id"], agy_conv_id);
+    assert_eq!(zcode_reply_val["to"], sender_with_session);
+
+    let (_, agy_sessions_t3) =
+        inspect_host_state(DesktopHostKind::AntigravityDesktop, &f.state_root).unwrap();
+    assert_eq!(
+        agy_sessions_t3.len(),
+        1,
+        "direct #session_id delivery must not create an orphan Antigravity session"
+    );
+    assert_eq!(agy_sessions_t3[0].session_id, agy_conv_id);
+    assert_eq!(agy_sessions_t3[0].turns.len(), 3);
+
+    let unscoped_pull = mailbox
+        .check_inbox("antigravity-desktop/agent-fleet", true)
+        .unwrap();
+    assert!(
+        unscoped_pull.is_empty(),
+        "unscoped inbox poll must not steal session-addressed replies"
+    );
+
+    let sibling_pull = mailbox
+        .check_inbox("antigravity-desktop/agent-fleet#conv-other", true)
+        .unwrap();
+    assert!(
+        sibling_pull.is_empty(),
+        "sibling session poll must not steal another session's replies"
+    );
+
+    let exact_pull = mailbox.check_inbox(&sender_with_session, true).unwrap();
+    assert_eq!(exact_pull.len(), 2);
+    assert_eq!(exact_pull[0].id, "msg-dsh-reply-1");
+    assert_eq!(exact_pull[1].id, "msg-zcode-reply-2");
+
+    let agy_outbox = mailbox.check_outbox(&sender_with_session).unwrap();
+    assert_eq!(agy_outbox.len(), 1);
+    assert_eq!(agy_outbox[0].id, "msg-agy-to-dsh-1");
+
+    let by_session = mailbox.list_by_session(&agy_conv_id).unwrap();
+    assert_eq!(by_session.len(), 3);
+
+    let failed_send = f.run_cli(&[
+        "send",
+        "--from",
+        "deepseek-harness/agent-fleet",
+        "--to",
+        "antigravity-desktop/agent-fleet#nonexistent-conv-999",
+        "--delivery-id",
+        "msg-should-not-persist",
+        "--prompt",
+        "Attempting delivery to nonexistent session must fail before mailbox.enqueue.",
+        "--projects-root",
+        &f.projects_root.display().to_string(),
+        "--state-root",
+        &f.state_root.display().to_string(),
+        "--antigravity-root",
+        &f.antigravity_root.display().to_string(),
+        "--agy-bin",
+        &f.agy_bin.display().to_string(),
+    ]);
+    assert!(
+        !failed_send.status.success(),
+        "delivery to nonexistent session must fail"
+    );
+    assert!(
+        mailbox
+            .get_message("msg-should-not-persist")
+            .unwrap()
+            .is_none(),
+        "failed adapter delivery must not leave a phantom message in mailboxes.json"
     );
 }

@@ -1025,6 +1025,9 @@ while [ $# -gt 0 ]; do
       TURN=2
       shift 2
       ;;
+    --model)
+      shift 2
+      ;;
     *)
       shift
       ;;
