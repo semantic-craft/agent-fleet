@@ -1767,13 +1767,13 @@ CREATE TABLE IF NOT EXISTS tasks (\
     workspace_path TEXT NOT NULL,\
     workspace_identity TEXT,\
     task_id TEXT NOT NULL,\
-    trace_id TEXT,\
     title TEXT NOT NULL DEFAULT '',\
-    title_overridden INTEGER NOT NULL DEFAULT 0,\
     task_status TEXT NOT NULL DEFAULT 'normal',\
     provider TEXT,\
-    mode TEXT NOT NULL DEFAULT 'default',\
+    mode TEXT NOT NULL DEFAULT 'build',\
     model TEXT,\
+    migration_source TEXT,\
+    forked_from_task_id TEXT,\
     created_at INTEGER NOT NULL,\
     updated_at INTEGER NOT NULL,\
     unread_at INTEGER,\
@@ -1781,23 +1781,23 @@ CREATE TABLE IF NOT EXISTS tasks (\
     pinned INTEGER NOT NULL DEFAULT 0,\
     archived INTEGER NOT NULL DEFAULT 0,\
     deleted INTEGER NOT NULL DEFAULT 0,\
-    deleted_at INTEGER,\
-    meta_json TEXT,\
-    meta_mtime_ms INTEGER,\
-    cli_session_present INTEGER NOT NULL DEFAULT 0,\
-    cli_deleted INTEGER NOT NULL DEFAULT 0,\
-    cli_deleted_at INTEGER,\
-    cli_title TEXT,\
-    cli_title_source TEXT,\
-    cli_created_at INTEGER,\
-    cli_updated_at INTEGER,\
-    cli_last_turn_id TEXT,\
-    cli_last_outcome TEXT,\
-    cli_last_error TEXT,\
-    cli_summary_mtime_ms INTEGER,\
+    title_overridden INTEGER NOT NULL DEFAULT 0,\
+    meta_json TEXT NOT NULL DEFAULT '{}',\
+    searchable_text TEXT NOT NULL DEFAULT '',\
+    cron_automation_id TEXT,\
+    off_peak_task_id TEXT,\
     host_id TEXT NOT NULL DEFAULT 'local',\
     root_path TEXT,\
     project_id TEXT,\
+    execution_directories TEXT,\
+    sort_order INTEGER,\
+    cli_title TEXT,\
+    handoff_pending INTEGER NOT NULL DEFAULT 0,\
+    cli_title_source TEXT,\
+    cli_created_at INTEGER,\
+    cli_updated_at INTEGER,\
+    cli_last_outcome TEXT,\
+    cli_deleted INTEGER NOT NULL DEFAULT 0,\
     PRIMARY KEY (workspace_key, task_id)\
 );\
 CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_host_task ON tasks(host_id, task_id);\
@@ -2208,18 +2208,18 @@ pub fn attach_zcode_session_to_tasks_index(
 
     let tasks_sql = format!(
         "INSERT INTO tasks (\
-            workspace_key, workspace_path, task_id, trace_id, title, title_overridden, \
+            workspace_key, workspace_path, task_id, title, title_overridden, \
             task_status, provider, mode, host_id, root_path, project_id, \
-            meta_json, meta_mtime_ms, cli_session_present, cli_deleted, \
+            meta_json, cli_deleted, \
             cli_title, cli_title_source, cli_created_at, cli_updated_at, \
-            cli_last_turn_id, cli_last_outcome, \
+            cli_last_outcome, \
             created_at, updated_at, deleted, archived\
          ) VALUES (\
-            '{esc_wk}', '{esc_root}', '{esc_sid}', '{esc_sid}', '{esc_title}', 1, \
+            '{esc_wk}', '{esc_root}', '{esc_sid}', '{esc_title}', 1, \
             'normal', 'glm', 'default', 'local', '{esc_root}', '{esc_pid}', \
-            '{esc_meta_json}', {now_ms}, 1, 0, \
+            '{esc_meta_json}', 0, \
             '{esc_title}', 'custom', {now_ms}, {now_ms}, \
-            '{esc_tid}', 'completed', \
+            'completed', \
             {now_ms}, {now_ms}, 0, 0\
          ) ON CONFLICT(workspace_key, task_id) DO UPDATE SET \
             project_id = excluded.project_id, \
@@ -2230,14 +2230,11 @@ pub fn attach_zcode_session_to_tasks_index(
             title = CASE WHEN tasks.title = '' THEN excluded.title ELSE tasks.title END, \
             title_overridden = 1, \
             cli_title = CASE WHEN COALESCE(tasks.cli_title, '') = '' THEN excluded.cli_title ELSE tasks.cli_title END, \
-            cli_session_present = 1, \
             cli_deleted = 0, \
             cli_created_at = COALESCE(tasks.cli_created_at, excluded.cli_created_at), \
             cli_updated_at = excluded.cli_updated_at, \
-            cli_last_turn_id = excluded.cli_last_turn_id, \
             cli_last_outcome = COALESCE(tasks.cli_last_outcome, 'completed'), \
-            meta_json = COALESCE(tasks.meta_json, excluded.meta_json), \
-            meta_mtime_ms = excluded.meta_mtime_ms, \
+            meta_json = CASE WHEN COALESCE(tasks.meta_json, '') IN ('', '{{}}') THEN excluded.meta_json ELSE tasks.meta_json END, \
             deleted = 0, \
             archived = 0, \
             updated_at = excluded.updated_at; \
@@ -2245,7 +2242,6 @@ pub fn attach_zcode_session_to_tasks_index(
             provider = 'glm', \
             mode = COALESCE(NULLIF(mode, ''), 'default'), \
             title_overridden = 1, \
-            cli_session_present = 1, \
             cli_deleted = 0, \
             cli_last_outcome = COALESCE(cli_last_outcome, 'completed') \
          WHERE provider IS NULL AND project_id IS NOT NULL;"

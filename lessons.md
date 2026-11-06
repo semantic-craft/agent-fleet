@@ -83,5 +83,5 @@
 **ZCode Desktop 侧栏按 `provider = 'glm'` 过滤 `v2/tasks-index.sqlite` 且从 `cli/db/db.sqlite` 的 `part` 表渲染消息；DSH Desktop 的 `SingleJsonUnit` 在启动时把 `workspace.json` 读入内存且不监听磁盘文件变化，必须经由 `127.0.0.1:9230` Inspector CDP 同步宿主内存态并广播 `api-session/added`。**
 
 - 起因与后果：`attach_zcode_session_to_tasks_index` 此前未写 `provider` 列（留空为 `NULL`），且在真实 `zcode` CLI 已写入完整消息与 `part` 行后又额外插入无 `part` 行的 `message` 记录，导致会话在 ZCode Desktop 侧栏被 `WHERE provider='glm'` 完全过滤，点开时还会多出空白消息气泡；DSH Desktop 则因 `SingleJsonUnit` 只认内存态，仅改磁盘 `workspace.json` 不会刷新已打开的桌面侧栏。
-- 正确做法：`crates/fleet-daemon/src/tri_hosts.rs` 写入 ZCode `tasks` 表时固定填齐 `provider = 'glm'`、`title_overridden = 1`、`cli_session_present = 1` 与 `meta_json`，仅在无真实 CLI `part` 行时才补写 fallback `message` + `part`；写入 DSH 实机 `~/.dsh` 时通过 `127.0.0.1:9230` 调用 `ctx.workspaceRegistry` 与 `ctx.emit('api-session/added', item)`。
+- 正确做法：`crates/fleet-daemon/src/tri_hosts.rs` 写入 ZCode `tasks` 表时固定填齐 `provider = 'glm'`、`title_overridden = 1`、`cli_deleted = 0` 与 `meta_json`（并将写入列全部纳入 `doctor.rs` 的 `schema_expectations`），仅在无真实 CLI `part` 行时才补写 fallback `message` + `part`；写入 DSH 实机 `~/.dsh` 时通过 `127.0.0.1:9230` 调用 `ctx.workspaceRegistry` 与 `ctx.emit('api-session/added', item)`；`scripts/herdr-dispatch.sh` 在 `set -o pipefail` 下用变量捕获 `herdr status server` 输出再做字符串匹配，禁止管道接 `grep -q` 触发 SIGPIPE 误判服务未运行。
 - 复发记录：Seen 1x (2026-11-07)。

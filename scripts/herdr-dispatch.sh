@@ -62,16 +62,25 @@ fi
 
 # 1. Ensure the herdr server is running (it must already host an active agent; we never
 #    start agent processes ourselves — see the no-fallback contract above).
-if ! "$HERDR_BIN" status server 2>/dev/null | grep -q "status: running"; then
-  "$HERDR_BIN" server >/dev/null 2>&1 &
-  for _ in {1..20}; do
-    if [[ -S "$HOME/.config/herdr/herdr.sock" ]] && "$HERDR_BIN" status server 2>/dev/null | grep -q "status: running"; then
+#    Avoid piping `herdr status server` directly into `grep -q` under `set -o pipefail`:
+#    `grep -q` closes its stdin on line 1 (`status: running`), causing `herdr` to receive
+#    SIGPIPE/EPIPE on subsequent lines and fail the pipeline.
+herdr_server_is_running() {
+  local status_out
+  status_out=$("$HERDR_BIN" status server 2>/dev/null || true)
+  [[ "$status_out" == *"status: running"* ]]
+}
+
+if ! herdr_server_is_running; then
+  nohup "$HERDR_BIN" server </dev/null >/dev/null 2>&1 &
+  for _ in {1..30}; do
+    if [[ -S "$HOME/.config/herdr/herdr.sock" ]] && herdr_server_is_running; then
       break
     fi
     sleep 0.1
   done
 fi
-if ! "$HERDR_BIN" status server 2>/dev/null | grep -q "status: running"; then
+if ! herdr_server_is_running; then
   echo "herdr-dispatch: herdr server not running and could not be started" >&2
   exit 3
 fi
@@ -94,7 +103,7 @@ if [[ -n "$EXPECT_MARKER" ]]; then
   DEADLINE=$(( $(date +%s) * 1000 + ${HERDR_WAIT_TIMEOUT_MS:-90000} ))
   while [[ "$(date +%s)" -lt $(( DEADLINE / 1000 )) ]]; do
     if OUT=$("$HERDR_BIN" agent read "$TARGET" --lines 80 2>/dev/null); then
-      if printf '%s' "$OUT" | grep -qF -- "$EXPECT_MARKER"; then
+      if [[ "$OUT" == *"$EXPECT_MARKER"* ]]; then
         TIER="completed"
         break
       fi
