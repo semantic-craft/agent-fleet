@@ -10,7 +10,7 @@ use std::{
         Arc, Mutex,
     },
     thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tungstenite::Message;
 
@@ -18,6 +18,9 @@ use tungstenite::Message;
 struct Behavior {
     missing: bool,
     bad_cwd: bool,
+    /// Overrides the fixture server's bounded-accept budget (ms); None = 60s.
+    /// Used by the never-connecting regression test to keep its runtime short.
+    accept_budget_ms: Option<u64>,
     disconnect_send: bool,
     wrong_response: bool,
     paginate: bool,
@@ -74,9 +77,32 @@ impl Fixture {
         let cwd = record.project_cwd.clone();
         let record_path = root.join("sessions/target.json");
         let server = thread::spawn(move || {
-            let (stream, _) = listener.accept().unwrap();
+            // Bounded accept: if the client never reaches the WebSocket handshake (early
+            // failure under load), a blocking accept() would hang Fixture::drop's join
+            // forever — observed as multi-minute zombie test processes under parallel
+            // suite runs. Poll nonblocking with a hard deadline instead.
+            listener.set_nonblocking(true).unwrap();
+            let accept_deadline = Instant::now()
+                + Duration::from_millis(behavior.accept_budget_ms.unwrap_or(60_000));
+            let stream = loop {
+                match listener.accept() {
+                    Ok((stream, _)) => break stream,
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        if Instant::now() >= accept_deadline {
+                            return;
+                        }
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(_) => return,
+                }
+            };
+            listener.set_nonblocking(false).unwrap();
+            stream.set_nonblocking(false).unwrap();
             stream
-                .set_read_timeout(Some(Duration::from_secs(3)))
+                .set_read_timeout(Some(Duration::from_secs(30)))
+                .unwrap();
+            stream
+                .set_write_timeout(Some(Duration::from_secs(30)))
                 .unwrap();
             let mut ws = tungstenite::accept(stream).unwrap();
             let mut turn_count = 0;
@@ -208,7 +234,10 @@ impl Fixture {
                 ..Default::default()
             },
             vec![],
-            Duration::from_secs(2),
+            // Generous deadline: this suite asserts disconnect/poisoning semantics, not
+            // timeout behavior, and a 2s budget let scheduler starvation under parallel
+            // cargo runs fail the preflight as Unavailable (observed once in release).
+            Duration::from_secs(10),
         )
     }
     fn methods(&self) -> Vec<String> {
@@ -328,6 +357,26 @@ fn desktop_delivery_duplicate_id_is_never_submitted_twice() {
     assert!(d.send("same", "changed text").is_err());
     drop(d);
     assert_eq!(f.methods().iter().filter(|m| *m == "turn/start").count(), 1);
+}
+
+#[test]
+fn fixture_drop_does_not_hang_when_client_never_connects() {
+    // Regression for the multi-minute zombie processes observed under parallel suite
+    // load: a client that dies before the WebSocket handshake must not leave the
+    // fixture server blocked in accept() past its bounded deadline.
+    let started = Instant::now();
+    {
+        let _f = Fixture::new(Behavior {
+            accept_budget_ms: Some(300),
+            ..Default::default()
+        });
+        // Deliberately never connect; drop joins the server thread.
+    }
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < Duration::from_secs(5),
+        "fixture drop hung for {elapsed:?} when no client ever connected"
+    );
 }
 
 #[test]
