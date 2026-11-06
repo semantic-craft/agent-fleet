@@ -217,3 +217,9 @@ Slice B 已将 Cargo 编译与 session directory 隔离行为测试接入同一�
 - **Outcome**: 编写 `<state_root>/agents.d/herdr.json` 并注册到 `ExternalAgentRegistry`，通过 `herdr agent prompt/read` 接入 Herdr 终端窗格派活；在 `fleet-cli doctor` 中增加 `--live` 或默认真实探测，只读检查五大桌面宿主数据库模式（schema）、进程与 socket 可连通性，消除写死的 `"ready": true`。
 - **Done Predicate**: `fleet-cli send --to herdr/agent-fleet --prompt "echo 1"` 成功分发至 Herdr；`fleet-cli doctor` 真实反映本机 ZCode、DSH、AGY 数据库列对齐状态；`./scripts/check` 绿灯。
 - **Evidence**: .scratch/pstack-relay/checks/20261105T182412.690094Z/receipt.json
+
+### [x] Slice Z: 宿主契约门禁、诚实收据与发布闭环
+- **Playbook**: `Feature`
+- **Outcome**: (1) doctor 列名探测重构为共享 `schema_expectations` 单一事实源，新增 `fleet-cli doctor --gate`（diverged/partial 即退出码 2）与 `schema_contract_sync` 同步测试，宿主 app 升级后 5 分钟发现 Slice V 式漂移；(2) 修复 Codex 适配器 `project/create`（`roots:[{path}]` + 必填 `idempotencyKey`，经真实 codex app-server 0.166.0 实证）；(3) 外部 agent 收据改为 FLEET_TIER 协议：`completed` 仅在 `--expect-marker` 请求且派发脚本回读到标记时给出，herdr 派发器重写为只投活跃 agent、禁止兜底任意 pane，`herdr agent prompt` 失败显式报错；AGENTS.md 同步更新 Herdr 定位；(4) Cindy 0.1.126 无本地注入面（无 gateway.sock、无 session HTTP API、CLI 仅开目录、deep link 仅导航），直连适配器显式降级为 ANet 路由提示（ANet cindy 节点在线已验证），doctor 如实报告 `no-local-gateway` 与 `dispatch_channel: anet`；(5) `scripts/release` 发布闭环：check 绿 → release 构建 → 原子安装 `~/.local/bin` → 装后二进制 MCP stdio 冒烟（initialize/tools/list/list_team）；(6) GitHub Actions CI 跑 check 核心子集。
+- **Done Predicate**: `scripts/check` 绿；`fleet-cli doctor --gate` 在本机真实环境退出 0；真实派活探测：openai-dots `DOTS_PING_OK` 标记回合挂 ChatGPT 桌面侧栏项目、herdr 无活跃 agent 时显式失败（无 pane 粘贴）、cindy 给 ANet 路由报错；`scripts/release` 全链路成功安装新二进制并通过 MCP 冒烟；`cargo test -p fleet-daemon --lib schema_contract` 与 `gate_failures` 通过。
+- **Evidence**: 验收目录 `~/Projects/_status/agent-fleet-verify-20261106-1/`（result.json 含全部探测与回读）；skills/verify-fleet。附加发现并如实记录：codex 0.166 异步落盘（行 ~1s、preview 5–46s 回填）→ dots 收据按 preview 分流 running/thread-visible；herdr `default_known_agent_idle_fallback` 兜底会掩盖死 agent（上游产品缺陷，本仓以标记回读阶梯兜住）。

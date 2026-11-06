@@ -1,0 +1,201 @@
+#!/usr/bin/env python3
+"""Release loop for the agent-fleet engine.
+
+Pipeline (each step must pass before the next runs):
+  1. `scripts/check`            — full offline gate (cargo + fixtures + npm)
+  2. `cargo build --release -p fleet-cli`
+  3. atomic install to ~/.local/bin/fleet-cli
+  4. MCP smoke against the INSTALLED binary over stdio JSON-RPC 2.0:
+     initialize -> tools/list -> tools/call list_team
+  5. optional live dispatch smoke (--dispatch-smoke): send a marker probe to the
+     local zcode host and require a receipt (tier != failed)
+
+The goal is that the binary the MCP config points at is never older than the tree
+that passed the checks. Receipts are printed as JSON to stdout.
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+
+ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_INSTALL = Path.home() / ".local" / "bin" / "fleet-cli"
+DEFAULT_STATE_ROOT = Path.home() / ".local" / "state" / "agent-fleet"
+DEFAULT_PROJECTS_ROOT = Path.home() / "Projects"
+
+
+def sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 16), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def run(cmd, **kw):
+    print(f"$ {' '.join(str(c) for c in cmd)}", flush=True)
+    return subprocess.run(cmd, **kw)
+
+
+def mcp_smoke(binary: Path, state_root: Path, projects_root: Path) -> dict:
+    """Drive the installed binary's MCP server over stdio and return raw exchanges."""
+    proc = subprocess.Popen(
+        [str(binary), "mcp",
+         "--projects-root", str(projects_root),
+         "--state-root", str(state_root)],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        def send(obj):
+            proc.stdin.write(json.dumps(obj) + "\n")
+            proc.stdin.flush()
+
+        def recv(want_id):
+            deadline = time.time() + 20
+            while time.time() < deadline:
+                line = proc.stdout.readline()
+                if not line:
+                    raise RuntimeError("MCP server closed stdout")
+                msg = json.loads(line)
+                if msg.get("id") == want_id:
+                    return msg
+            raise TimeoutError(f"no response for id {want_id}")
+
+        send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": {"name": "fleet-release-smoke", "version": "0"},
+        }})
+        init = recv(1)
+        send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        send({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+        tools = recv(2)
+        names = sorted(t["name"] for t in tools["result"]["tools"])
+        required = {"list_team", "send_message", "message_status", "check_inbox"}
+        missing = required - set(names)
+        if missing:
+            raise RuntimeError(f"MCP tools/list missing {sorted(missing)}: {names}")
+        send({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
+            "name": "list_team", "arguments": {}}})
+        team = recv(3)
+        hosts = team["result"].get("structuredContent", {}).get("canonical_desktop_hosts")
+        if not hosts or len(hosts) != 5:
+            raise RuntimeError(f"list_team did not return 5 canonical hosts: {hosts}")
+        return {
+            "initialize_server": init["result"].get("serverInfo", {}),
+            "tools": names,
+            "canonical_hosts": hosts,
+        }
+    finally:
+        proc.stdin.close()
+        proc.terminate()
+        proc.wait(timeout=10)
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--install-path", type=Path, default=DEFAULT_INSTALL)
+    ap.add_argument("--state-root", type=Path, default=DEFAULT_STATE_ROOT)
+    ap.add_argument("--projects-root", type=Path, default=DEFAULT_PROJECTS_ROOT)
+    ap.add_argument("--skip-check", action="store_true",
+                    help="skip scripts/check (NOT recommended; for iterating on this script)")
+    ap.add_argument("--dispatch-smoke", action="store_true",
+                    help="after install, send a live marker probe to the local zcode host")
+    args = ap.parse_args()
+
+    receipt = {"started_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "steps": []}
+
+    # 1. Full offline gate
+    if not args.skip_check:
+        check = run([sys.executable, str(ROOT / "scripts" / "check")], cwd=ROOT)
+        receipt["steps"].append({"step": "check", "exit": check.returncode})
+        if check.returncode != 0:
+            receipt["ok"] = False
+            print(json.dumps(receipt, indent=1))
+            return 1
+
+    # 2. Release build
+    build = run(["cargo", "build", "--release", "-p", "fleet-cli"], cwd=ROOT)
+    receipt["steps"].append({"step": "build-release", "exit": build.returncode})
+    if build.returncode != 0:
+        receipt["ok"] = False
+        print(json.dumps(receipt, indent=1))
+        return 1
+
+    built = ROOT / "target" / "release" / "fleet-cli"
+    new_hash = sha256(built)
+
+    # 3. Atomic install
+    args.install_path.parent.mkdir(parents=True, exist_ok=True)
+    old_hash = sha256(args.install_path) if args.install_path.exists() else None
+    with tempfile.TemporaryDirectory(dir=args.install_path.parent) as tmp:
+        staged = Path(tmp) / "fleet-cli"
+        shutil.copy2(built, staged)
+        os.chmod(staged, 0o755)
+        os.replace(staged, args.install_path)
+    installed_hash = sha256(args.install_path)
+    if installed_hash != new_hash:
+        receipt["ok"] = False
+        print(json.dumps(receipt, indent=1))
+        return 1
+    receipt["steps"].append({
+        "step": "install",
+        "path": str(args.install_path),
+        "old_sha256": old_hash,
+        "new_sha256": installed_hash,
+        "changed": old_hash != installed_hash,
+    })
+
+    # 4. MCP smoke against the installed binary
+    try:
+        smoke = mcp_smoke(args.install_path, args.state_root, args.projects_root)
+        receipt["steps"].append({"step": "mcp-smoke", "ok": True, "detail": {
+            "server": smoke["initialize_server"],
+            "tools": smoke["tools"],
+        }})
+    except Exception as exc:  # noqa: BLE001 - report and fail closed
+        receipt["steps"].append({"step": "mcp-smoke", "ok": False, "error": str(exc)})
+        receipt["ok"] = False
+        print(json.dumps(receipt, indent=1))
+        return 1
+
+    # 5. Optional live dispatch smoke to the local zcode host
+    if args.dispatch_smoke:
+        marker = f"FLEET_RELEASE_SMOKE_{int(time.time())}"
+        probe = run([
+            str(args.install_path), "send",
+            "--from", "release-smoke",
+            "--to", "zcode/agent-fleet",
+            "--title", "release smoke probe",
+            "--projects-root", str(args.projects_root),
+            "--state-root", str(args.state_root),
+            "--prompt", f"【发布冒烟】请只回复一行：{marker}",
+        ], capture_output=True, text=True)
+        receipt["steps"].append({
+            "step": "dispatch-smoke",
+            "ok": probe.returncode == 0 and "\"tier\"" in probe.stdout,
+            "marker": marker,
+            "stdout": probe.stdout.strip()[:2000],
+            "stderr": probe.stderr.strip()[:500],
+        })
+        if probe.returncode != 0:
+            receipt["ok"] = False
+            print(json.dumps(receipt, indent=1))
+            return 1
+
+    receipt["ok"] = True
+    print(json.dumps(receipt, indent=1))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

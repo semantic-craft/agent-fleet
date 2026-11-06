@@ -1,11 +1,11 @@
 use fleet_daemon::{
     build_configured_host_adapter, detect_antigravity_runtime, detect_cindy_runtime,
-    detect_dsh_runtime, detect_openai_dots_runtime, detect_zcode_runtime, inspect_host_state,
-    probe_external_agent_live_contract, probe_host_live_contract,
-    read_antigravity_latest_response, run_host_poteto_relay, wire_agent_configs,
-    AntigravityRuntimeConfig, CindyRuntimeConfig, DesktopHostAdapter, DshRuntimeConfig,
-    ExternalAgentRegistry, FleetMailboxStore, HostRuntimeOptions, OpenAiDotsRuntimeConfig,
-    PotetoRelayTask, SessionDirectory, ZcodeRuntimeConfig,
+    detect_dsh_runtime, detect_openai_dots_runtime, detect_zcode_runtime,
+    doctor::evaluate_gate_failures, inspect_host_state, probe_external_agent_live_contract,
+    probe_host_live_contract, read_antigravity_latest_response, run_host_poteto_relay,
+    wire_agent_configs, AntigravityRuntimeConfig, CindyRuntimeConfig, DesktopHostAdapter,
+    DshRuntimeConfig, ExternalAgentRegistry, FleetMailboxStore, HostRuntimeOptions,
+    OpenAiDotsRuntimeConfig, PotetoRelayTask, SessionDirectory, ZcodeRuntimeConfig,
 };
 use fleet_proto::{
     normalize_peer_id, validate_session_id, CreateSessionRequest, DeliverTurnRequest,
@@ -691,6 +691,7 @@ fn dispatch_unified_message(
     execute_external: bool,
     from_opt: Option<String>,
     reply_to_opt: Option<String>,
+    expect_marker_opt: Option<String>,
     rt: &HostRuntimeOptions,
 ) -> Result<Value, String> {
     let mailbox = FleetMailboxStore::new(state_root.clone()).map_err(|e| e.to_string())?;
@@ -851,6 +852,7 @@ fn dispatch_unified_message(
                 &resolved_title,
                 &effective_prompt,
                 execute_external,
+                expect_marker_opt.as_deref(),
             )
             .map_err(|e| e.to_string())?;
         if let Some(mut msg) = pending_msg {
@@ -875,6 +877,7 @@ fn run_send(args: &[String]) -> Result<(), String> {
         "--prompt",
         "--model",
         "--execute-external",
+        "--expect-marker",
         "--codex-root",
         "--app-server-socket",
         "--cindy-root",
@@ -920,6 +923,10 @@ fn run_send(args: &[String]) -> Result<(), String> {
         execute_external,
         options.get("--from").cloned(),
         options.get("--reply-to").cloned(),
+        options
+            .get("--expect-marker")
+            .map(|m| m.to_string())
+            .filter(|m| !m.trim().is_empty()),
         &rt,
     )?;
     let output = serde_json::to_string_pretty(&val).map_err(|e| e.to_string())?;
@@ -1042,112 +1049,58 @@ fn run_agents(args: &[String]) -> Result<(), String> {
     }
 }
 
+/// Embedded copy of `scripts/herdr-dispatch.sh`, the single source of truth for the
+/// honest-receipt herdr dispatcher (FLEET_TIER protocol; no pane fallback). Keeping it
+/// `include_str!`-pinned means the embedded fallback can never drift from the repo copy.
+const HERDR_DISPATCH_SCRIPT: &str = include_str!("../../../scripts/herdr-dispatch.sh");
+
 fn ensure_herdr_agent_registered(state_root: &Path) -> Result<(), String> {
     let agents_dir = state_root.join("agents.d");
     fs::create_dir_all(&agents_dir).map_err(|e| e.to_string())?;
     let manifest_path = agents_dir.join("herdr.json");
     let script_path = agents_dir.join("herdr-dispatch.sh");
 
-    if !script_path.exists() {
-        let repo_script = Path::new("scripts/herdr-dispatch.sh");
-        if repo_script.exists() {
-            fs::copy(repo_script, &script_path).map_err(|e| e.to_string())?;
-        } else {
-            let script_content = r#"#!/bin/bash
-set -euo pipefail
-HERDR_BIN="${HERDR_BIN:-$(command -v herdr || echo "$HOME/.local/bin/herdr")}"
-TARGET="agent-fleet"
-PROMPT=""
-CWD=""
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --target|-t) TARGET="$2"; shift 2 ;;
-    --prompt|-p) PROMPT="$2"; shift 2 ;;
-    --cwd|-c) CWD="$2"; shift 2 ;;
-    *) if [[ -z "$PROMPT" ]]; then PROMPT="$1"; fi; shift ;;
-  esac
-done
-if [[ -z "$PROMPT" ]]; then echo "Error: prompt is required" >&2; exit 1; fi
-if command -v "$HERDR_BIN" >/dev/null 2>&1; then
-  if ! "$HERDR_BIN" status server 2>/dev/null | grep -q "status: running"; then
-    "$HERDR_BIN" server >/dev/null 2>&1 &
-    for _ in {1..20}; do
-      if [[ -S "$HOME/.config/herdr/herdr.sock" ]] && "$HERDR_BIN" status server 2>/dev/null | grep -q "status: running"; then break; fi
-      sleep 0.1
-    done
-  fi
-  if "$HERDR_BIN" agent prompt "$TARGET" "$PROMPT" --timeout 5000 >/dev/null 2>&1; then
-    "$HERDR_BIN" agent read "$TARGET" --lines 30
-    exit 0
-  fi
-  PANES_JSON=$("$HERDR_BIN" pane list 2>/dev/null || echo '{"result":{"panes":[]}}')
-  PANE_ID=$(echo "$PANES_JSON" | python3 -c '
-import sys, json
-try:
-    data = json.load(sys.stdin)
-    target = sys.argv[1]
-    cwd = sys.argv[2]
-    panes = data.get("result", {}).get("panes", [])
-    for p in panes:
-        if p.get("label") == target: print(p["pane_id"]); sys.exit(0)
-    if cwd:
-        for p in panes:
-            if p.get("cwd") == cwd: print(p["pane_id"]); sys.exit(0)
-    if panes: print(panes[-1]["pane_id"]); sys.exit(0)
-except Exception: pass
-print("")
-' "$TARGET" "$CWD" 2>/dev/null || echo "")
-  if [[ -z "$PANE_ID" ]]; then
-    CREATE_OUT=$("$HERDR_BIN" tab create --label "$TARGET" ${CWD:+--cwd "$CWD"} 2>/dev/null || echo '{}')
-    PANE_ID=$(echo "$CREATE_OUT" | python3 -c '
-import sys, json
-try: print(json.load(sys.stdin).get("result", {}).get("root_pane", {}).get("pane_id", ""))
-except Exception: pass
-' 2>/dev/null || echo "")
-  fi
-  if [[ -n "$PANE_ID" ]]; then
-    "$HERDR_BIN" pane run "$PANE_ID" "$PROMPT" >/dev/null 2>&1
-    sleep 0.3
-    OUTPUT=$("$HERDR_BIN" pane read "$PANE_ID" --lines 20 2>/dev/null || echo "")
-    if [[ -n "$OUTPUT" ]]; then echo "$OUTPUT"; exit 0; fi
-  fi
-fi
-echo "dispatched to herdr ($TARGET): $PROMPT"
-if [[ "$PROMPT" == "echo "* ]]; then eval "$PROMPT"; fi
-"#;
-            fs::write(&script_path, script_content).map_err(|e| e.to_string())?;
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            if let Ok(meta) = fs::metadata(&script_path) {
-                let mut perms = meta.permissions();
-                perms.set_mode(0o755);
-                let _ = fs::set_permissions(&script_path, perms);
-            }
+    // Refresh the dispatcher script on every registration so upgrades replace the old
+    // pane-fallback script even on machines installed before the honest-receipt contract.
+    let repo_script = Path::new("scripts/herdr-dispatch.sh");
+    if repo_script.exists() {
+        fs::copy(repo_script, &script_path).map_err(|e| e.to_string())?;
+    } else {
+        fs::write(&script_path, HERDR_DISPATCH_SCRIPT).map_err(|e| e.to_string())?;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(meta) = fs::metadata(&script_path) {
+            let mut perms = meta.permissions();
+            perms.set_mode(0o755);
+            let _ = fs::set_permissions(&script_path, perms);
         }
     }
 
-    if !manifest_path.exists() {
-        let manifest = ExternalAgentManifest {
-            id: "herdr".into(),
-            display_name: "Herdr Terminal Multiplexer".into(),
-            command: script_path,
-            args_template: vec![
-                "--target".into(),
-                "{slug}".into(),
-                "--prompt".into(),
-                "{prompt}".into(),
-                "--cwd".into(),
-                "{cwd}".into(),
-            ],
-            resume_args_template: Vec::new(),
-            description: "Herdr terminal pane dispatcher via herdr agent prompt/read".into(),
-        };
-        let registry = ExternalAgentRegistry::new(state_root.to_path_buf())
-            .map_err(|e| e.to_string())?;
-        registry.register(&manifest).map_err(|e| e.to_string())?;
-    }
+    let manifest = ExternalAgentManifest {
+        id: "herdr".into(),
+        display_name: "Herdr Terminal Multiplexer".into(),
+        command: script_path,
+        args_template: vec![
+            "--target".into(),
+            "{slug}".into(),
+            "--prompt".into(),
+            "{prompt}".into(),
+            "--cwd".into(),
+            "{cwd}".into(),
+            "--expect-marker".into(),
+            "{expect_marker}".into(),
+        ],
+        resume_args_template: Vec::new(),
+        description: "Herdr terminal agent dispatcher: submits to an active herdr agent, \
+                      never falls back to arbitrary panes; completed only on marker readback"
+            .into(),
+    };
+    let registry =
+        ExternalAgentRegistry::new(state_root.to_path_buf()).map_err(|e| e.to_string())?;
+    registry.register(&manifest).map_err(|e| e.to_string())?;
+    let _ = manifest_path;
     Ok(())
 }
 
@@ -1262,7 +1215,7 @@ fn run_setup_or_doctor(mode: &str, args: &[String]) -> Result<(), String> {
     let mut normalized_args = Vec::new();
     let mut i = 1;
     while i < args.len() {
-        if (args[i] == "--live" || args[i] == "--wire-agents")
+        if (args[i] == "--live" || args[i] == "--wire-agents" || args[i] == "--gate")
             && (i + 1 == args.len() || args[i + 1].starts_with("--"))
         {
             normalized_args.push(args[i].clone());
@@ -1279,6 +1232,7 @@ fn run_setup_or_doctor(mode: &str, args: &[String]) -> Result<(), String> {
         "--wire-agents",
         "--config-home",
         "--live",
+        "--gate",
     ];
     let options = parse_key_value_pairs(&normalized_args, allowed)?;
     let projects_root = resolve_projects_root(&options)?;
@@ -1290,6 +1244,10 @@ fn run_setup_or_doctor(mode: &str, args: &[String]) -> Result<(), String> {
         .get("--live")
         .map(|v| v != "false" && v != "0")
         .unwrap_or(false);
+    let gate = options
+        .get("--gate")
+        .map(|v| v != "false" && v != "0")
+        .unwrap_or(false);
     let config_home_opt = options.get("--config-home").map(PathBuf::from);
     let report = build_setup_or_doctor_report(
         mode,
@@ -1297,12 +1255,28 @@ fn run_setup_or_doctor(mode: &str, args: &[String]) -> Result<(), String> {
         &state_root,
         wire_agents,
         config_home_opt.as_deref(),
-        live,
+        live || gate,
     )?;
     println!(
         "{}",
         serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?
     );
+    if mode == "doctor" && gate {
+        let failures = evaluate_gate_failures(
+            report
+                .get("canonical_hosts")
+                .and_then(Value::as_array)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]),
+        );
+        if !failures.is_empty() {
+            eprintln!("SCHEMA GATE FAILED ({}):", failures.len());
+            for failure in &failures {
+                eprintln!("  - {failure}");
+            }
+            std::process::exit(2);
+        }
+    }
     Ok(())
 }
 
@@ -1363,6 +1337,10 @@ fn mcp_tools_schema() -> Value {
                         "execute_external": {
                             "type": "boolean",
                             "description": "Whether to execute the external agent binary immediately when target is an external agent."
+                        },
+                        "expect_marker": {
+                            "type": "string",
+                            "description": "Optional unique marker string for external agents: the receipt is only marked completed when the dispatcher script reads the marker back from the agent output."
                         }
                     },
                     "required": ["to", "prompt"]
@@ -1482,6 +1460,11 @@ fn handle_mcp_tool_call(
                 .get("execute_external")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
+            let expect_marker_opt = args
+                .get("expect_marker")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .filter(|m| !m.trim().is_empty());
             dispatch_unified_message(
                 &target_agent,
                 parsed_slug.as_deref().unwrap_or(""),
@@ -1495,6 +1478,7 @@ fn handle_mcp_tool_call(
                 execute_external,
                 from_opt,
                 reply_to_opt,
+                expect_marker_opt,
                 rt,
             )?
         }
@@ -1861,6 +1845,7 @@ fn run_anet_sync_once(
             false,
             Some("grokbot".to_string()),
             Some(task_id.clone()),
+            None,
             rt,
         )?;
         let desktop_session_id = dispatch_val

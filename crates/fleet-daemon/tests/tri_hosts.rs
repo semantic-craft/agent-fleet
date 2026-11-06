@@ -2,6 +2,7 @@
 
 use fleet_daemon::{
     read_cindy_transcript, read_codex_project, read_codex_thread, read_zcode_project,
+    verify_codex_thread_binding_with_preview,
     read_zcode_session, CindyAdapter, CindyRuntimeConfig, DeepSeekHarnessAdapter,
     DesktopHostAdapter, DshRuntimeConfig, ExternalAgentRegistry, HostAdapterError,
     OpenAiDotsAdapter, OpenAiDotsRuntimeConfig, ZcodeAdapter, ZcodeRuntimeConfig,
@@ -167,7 +168,15 @@ impl OpenAiDotsFixture {
                                     proj_seq += 1;
                                     let project_id = format!("019a5300-0000-7000-8000-{proj_seq:012x}");
                                     let name = params["name"].as_str().unwrap_or("unnamed");
-                                    let root_path = params["rootPath"].as_str().unwrap_or("");
+                                    // Pin the codex app-server >= 0.166 contract: roots must
+                                    // be ProjectRoot structs and idempotencyKey is required.
+                                    let root_path = params["roots"][0]["path"].as_str().unwrap_or_else(|| {
+                                        panic!("project/create sent roots without ProjectRoot.path struct: {params}")
+                                    });
+                                    assert!(
+                                        !params["idempotencyKey"].as_str().unwrap_or("").is_empty(),
+                                        "project/create missing required idempotencyKey: {params}"
+                                    );
                                     let sql = format!(
                                         "INSERT INTO projects (id, name, metadata, position, created_at_ms, updated_at_ms) \
                                          VALUES ('{project_id}', '{}', '{{}}', {proj_seq}, 1762300000000, 1762300000000);\
@@ -192,7 +201,7 @@ impl OpenAiDotsFixture {
                                         "project": {
                                             "id": project_id,
                                             "name": name,
-                                            "roots": [root_path],
+                                            "roots": [{"path": root_path}],
                                         }
                                     })
                                 }
@@ -870,7 +879,10 @@ fn openai_dots_rejects_unscoped_null_project_or_empty_preview_in_state_5_sqlite(
         .unwrap_err();
     assert!(matches!(err_null, HostAdapterError::ForbiddenProjectId(_)));
 
-    // Case 2: Thread with empty preview fails `idx_threads_visible_recency_at_ms` visibility check
+    // Case 2: codex 0.166 backfills the sidebar `preview` asynchronously (5–46s after
+    // turn/start, near turn completion). A dispatch whose thread row is bound but whose
+    // preview has not landed must NOT be rejected and must NOT claim visibility: the
+    // receipt honestly reports `running` until the preview is observable.
     let f_empty = OpenAiDotsFixture::new(false, true);
     let mut adapter_empty = OpenAiDotsAdapter::with_runtime(
         f_empty.projects_root.clone(),
@@ -881,17 +893,34 @@ fn openai_dots_rejects_unscoped_null_project_or_empty_preview_in_state_5_sqlite(
     let binding2 = adapter_empty
         .ensure_sidebar_project("dots-preview-guard", Some("Dots Preview Guard"))
         .unwrap();
-    let err_empty = adapter_empty
+    let receipt_empty = adapter_empty
         .create_dots_session(&CreateSessionRequest {
             delivery_id: "dots-empty-preview".into(),
             project_id: binding2.project_id.clone(),
             project_dir: binding2.project_dir.clone(),
-            title: "Should Reject Empty Preview".into(),
-            prompt: "Verify empty preview in threads is rejected.".into(),
+            title: "Running Until Preview".into(),
+            prompt: "Verify empty preview in threads maps to running tier.".into(),
             model: None,
         })
-        .unwrap_err();
-    assert!(matches!(err_empty, HostAdapterError::OpenAiDotsProtocol(_)));
+        .unwrap();
+    assert_eq!(receipt_empty.tier, DeliveryTier::Running);
+    assert!(receipt_empty.preview.trim().is_empty());
+    // `verify_codex_thread_binding_with_preview` remains available for callers that
+    // must insist on full sidebar visibility (e.g. post-completion readbacks).
+    let strict_row = read_codex_thread(
+        &std::path::Path::new("/usr/bin/sqlite3").to_path_buf(),
+        &f_empty.db_path,
+        &receipt_empty.session_id,
+    )
+    .unwrap()
+    .unwrap();
+    let err_strict = verify_codex_thread_binding_with_preview(
+        &strict_row,
+        &binding2.project_id,
+        &binding2.project_dir,
+    )
+    .unwrap_err();
+    assert!(matches!(err_strict, HostAdapterError::OpenAiDotsProtocol(_)));
 }
 
 #[test]
@@ -1397,12 +1426,71 @@ print(json.dumps({"cwd": os.getcwd(), "argv": sys.argv[1:]}))
             "OSS Demo Task",
             "Run open-source agent check.",
             true,
+            None,
         )
         .unwrap();
     assert_eq!(receipt.agent_id, "opencode-oss");
     assert_eq!(receipt.project_dir, projects_root.join("oss-demo"));
-    assert_eq!(receipt.tier, DeliveryTier::Completed);
+    // A script that claims nothing stays at accepted under the honest-receipt contract.
+    assert_eq!(receipt.tier, DeliveryTier::Accepted);
     assert!(receipt.stdout_preview.contains("oss-demo"));
+
+    // A dispatcher that reads its marker back and prints FLEET_TIER: completed is only
+    // credited when the caller requested that marker.
+    let mock_marker = root.join("mock_marker.py");
+    fs::write(
+        &mock_marker,
+        r#"#!/usr/bin/env python3
+import sys
+print("marker echo " + sys.argv[1])
+print("FLEET_TIER: completed")
+"#,
+    )
+    .unwrap();
+    let mut perms = fs::metadata(&mock_marker).unwrap().permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&mock_marker, perms).unwrap();
+    registry
+        .register(&ExternalAgentManifest {
+            id: "marker-oss".into(),
+            display_name: "Marker OSS Agent".into(),
+            command: mock_marker,
+            args_template: vec!["{expect_marker}".into()],
+            resume_args_template: Vec::new(),
+            description: "Echoes marker, claims completion".into(),
+        })
+        .unwrap();
+    let completed = registry
+        .dispatch(
+            "marker-oss",
+            &projects_root,
+            "oss-demo",
+            "ext-deliv-2",
+            None,
+            "Marker Task",
+            "Reply with the marker.",
+            true,
+            Some("OSS_MARKER_OK"),
+        )
+        .unwrap();
+    assert_eq!(completed.tier, DeliveryTier::Completed);
+    assert!(completed.stdout_preview.contains("marker echo OSS_MARKER_OK"));
+    assert!(!completed.stdout_preview.contains("FLEET_TIER"));
+    // Same claim without a requested marker is downgraded to accepted.
+    let downgraded = registry
+        .dispatch(
+            "marker-oss",
+            &projects_root,
+            "oss-demo",
+            "ext-deliv-3",
+            None,
+            "Marker Task",
+            "Reply with the marker.",
+            true,
+            None,
+        )
+        .unwrap();
+    assert_eq!(downgraded.tier, DeliveryTier::Accepted);
 
     let _ = fs::remove_dir_all(&root);
 }

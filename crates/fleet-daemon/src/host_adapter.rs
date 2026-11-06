@@ -84,10 +84,22 @@ impl fmt::Display for HostAdapterError {
                 f,
                 "unscoped CLI/default bucket project_id rejected for sidebar visibility: {id}"
             ),
-            Self::RuntimeNotConfigured(host) => write!(
-                f,
-                "no active local runtime or socket detected for {host}; refusing silent accepted fallback"
-            ),
+            Self::RuntimeNotConfigured(host) => {
+                if *host == DesktopHostKind::Cindy {
+                    write!(
+                        f,
+                        "no local cindy gateway detected (Cindy 0.1.126 ships none); direct \
+                         sidebar dispatch is unsupported — route this task via the ANet cindy \
+                         identity instead (docs/anet.md, delegate-via-anet); refusing silent \
+                         accepted fallback"
+                    )
+                } else {
+                    write!(
+                        f,
+                        "no active local runtime or socket detected for {host}; refusing silent accepted fallback"
+                    )
+                }
+            }
             Self::AntigravityProtocol(reason) => {
                 write!(f, "antigravity desktop adapter error: {reason}")
             }
@@ -713,7 +725,7 @@ impl OpenAiDotsAdapter {
                 model: request.model.clone(),
             });
         };
-        let row = crate::tri_hosts::read_codex_thread(
+        let row = crate::tri_hosts::read_codex_thread_with_retry(
             &runtime.sqlite3_bin,
             &runtime.state_db_path(),
             &receipt.session_id,
@@ -766,7 +778,7 @@ impl OpenAiDotsAdapter {
                 model: request.model.clone(),
             });
         };
-        let row = crate::tri_hosts::read_codex_thread(
+        let row = crate::tri_hosts::read_codex_thread_with_retry(
             &runtime.sqlite3_bin,
             &runtime.state_db_path(),
             &receipt.session_id,
@@ -838,12 +850,14 @@ impl DesktopHostAdapter for OpenAiDotsAdapter {
             None => slug.to_string(),
         };
         let mut client = crate::tri_hosts::AppServerClient::connect(&runtime)?;
+        // codex app-server >= 0.166 expects `roots: [{"path": <abs>}]` (ProjectRoot struct)
+        // plus a required `idempotencyKey`; verified live against 0.166.0 on 2026-11-06.
         let result = client.request(
             "project/create",
             serde_json::json!({
                 "name": resolved_title,
-                "rootPath": dir.path,
-                "roots": [dir.path],
+                "roots": [{"path": dir.path}],
+                "idempotencyKey": format!("fleet-sidebar-{slug}"),
             }),
         )?;
         let project_id = result
@@ -931,7 +945,7 @@ impl DesktopHostAdapter for OpenAiDotsAdapter {
                     "codex app-server turn/start omitted turn.id".into(),
                 )
             })?;
-        let row = crate::tri_hosts::read_codex_thread(
+        let row = crate::tri_hosts::read_codex_thread_with_retry(
             &runtime.sqlite3_bin,
             &runtime.state_db_path(),
             &thread_id,
@@ -946,13 +960,21 @@ impl DesktopHostAdapter for OpenAiDotsAdapter {
             &project.project_id,
             &project.project_dir,
         )?;
+        // codex 0.166 backfills the sidebar preview near turn completion (5–46s); the
+        // row, binding, and accepted inProgress turn are already real, so an empty
+        // preview maps to `running` rather than blocking or overclaiming visibility.
+        let tier = if crate::tri_hosts::codex_thread_preview_visible(&row) {
+            DeliveryTier::ThreadVisible
+        } else {
+            DeliveryTier::Running
+        };
         self.core.commit_created_session(
             request,
             project,
             Some(thread_id),
             Some(turn_id),
             None,
-            DeliveryTier::ThreadVisible,
+            tier,
         )
     }
 
@@ -1016,7 +1038,7 @@ impl DesktopHostAdapter for OpenAiDotsAdapter {
                     "codex app-server turn/start omitted turn.id on follow-up".into(),
                 )
             })?;
-        let row = crate::tri_hosts::read_codex_thread(
+        let row = crate::tri_hosts::read_codex_thread_with_retry(
             &runtime.sqlite3_bin,
             &runtime.state_db_path(),
             &request.session_id,
@@ -1032,12 +1054,19 @@ impl DesktopHostAdapter for OpenAiDotsAdapter {
             &project.project_id,
             &project.project_dir,
         )?;
+        // Same async-preview honesty as create_session: running until the sidebar
+        // preview for this follow-up turn is observable.
+        let tier = if crate::tri_hosts::codex_thread_preview_visible(&row) {
+            DeliveryTier::ThreadVisible
+        } else {
+            DeliveryTier::Running
+        };
         self.core.commit_delivered_turn(
             request,
             project,
             Some(turn_id),
             None,
-            DeliveryTier::ThreadVisible,
+            tier,
         )
     }
 }
@@ -3103,6 +3132,7 @@ impl ExternalAgentRegistry {
         title: &str,
         prompt: &str,
         execute_command: bool,
+        expect_marker: Option<&str>,
     ) -> Result<ExternalAgentReceipt, HostAdapterError> {
         validate_nonempty_id("delivery_id", delivery_id)?;
         validate_nonempty_id("title", title)?;
@@ -3129,7 +3159,8 @@ impl ExternalAgentRegistry {
         let turn_id = format!("{agent_id}-{delivery_id}-turn");
 
         let mut stdout_preview = String::new();
-        let tier = if execute_command {
+        let tier;
+        if execute_command {
             let template = if session_id.is_some() && !manifest.resume_args_template.is_empty() {
                 &manifest.resume_args_template
             } else {
@@ -3144,6 +3175,7 @@ impl ExternalAgentRegistry {
                         .replace("{delivery_id}", delivery_id)
                         .replace("{title}", title)
                         .replace("{prompt}", prompt)
+                        .replace("{expect_marker}", expect_marker.unwrap_or(""))
                 })
                 .collect();
             let output = Command::new(&manifest.command)
@@ -3166,11 +3198,35 @@ impl ExternalAgentRegistry {
                     stderr.trim()
                 )));
             }
-            stdout_preview = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            DeliveryTier::Completed
+            let raw_stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            // Honest tier protocol: a dispatcher script may claim completion ONLY by
+            // printing `FLEET_TIER: completed` on its own stdout line, after it read the
+            // expected marker back from the agent. Anything else stays `accepted`; a
+            // completed claim without a requested marker is downgraded so receipts never
+            // assert work that was not verified.
+            let claimed_tier = raw_stdout
+                .lines()
+                .rev()
+                .find_map(|line| line.trim().strip_prefix("FLEET_TIER:"))
+                .map(str::trim);
+            tier = match claimed_tier {
+                Some("completed") if expect_marker.is_some() => DeliveryTier::Completed,
+                Some(other) if other != "accepted" && other != "completed" => {
+                    return Err(HostAdapterError::ExternalAgentProtocol(format!(
+                        "external agent '{}' printed unknown FLEET_TIER '{other}'",
+                        manifest.id
+                    )));
+                }
+                _ => DeliveryTier::Accepted,
+            };
+            stdout_preview = raw_stdout
+                .lines()
+                .filter(|line| !line.trim().starts_with("FLEET_TIER:"))
+                .collect::<Vec<_>>()
+                .join("\n");
         } else {
-            DeliveryTier::Accepted
-        };
+            tier = DeliveryTier::Accepted;
+        }
 
         Ok(ExternalAgentReceipt {
             agent_id: manifest.id,

@@ -67,6 +67,166 @@ pub fn check_columns_alignment<'a>(
     (aligned, verified, missing)
 }
 
+/// One pinned schema expectation: every column in `columns` must exist in `table` of the
+/// host's live SQLite database labelled `db`. This is the single source of truth shared by
+/// the live probe, `fleet-cli doctor --gate`, and the `schema_contract_sync` test; adapters
+/// that drift from these lists fail the gate instead of silently corrupting host state.
+#[derive(Clone, Debug)]
+pub struct SchemaExpectation {
+    pub db: &'static str,
+    pub table: &'static str,
+    pub columns: &'static [&'static str],
+}
+
+/// Adapter-pinned column expectations per host DB. Run `fleet-cli doctor --gate` after any
+/// host desktop app upgrade; a `diverged` schema fails the gate with the missing columns.
+pub fn schema_expectations(host: DesktopHostKind) -> Vec<SchemaExpectation> {
+    match host {
+        DesktopHostKind::AntigravityDesktop => vec![SchemaExpectation {
+            db: "conversation_summaries",
+            table: "conversation_summaries",
+            columns: &[
+                "conversation_id",
+                "title",
+                "preview",
+                "step_count",
+                "last_modified_time",
+                "workspace_uris",
+                "status",
+                "project_id",
+            ],
+        }],
+        DesktopHostKind::Zcode => vec![
+            SchemaExpectation {
+                db: "tasks-index",
+                table: "tasks",
+                columns: &["task_id", "title", "project_id", "task_status"],
+            },
+            SchemaExpectation {
+                db: "tasks-index",
+                table: "projects",
+                columns: &["project_id", "host_id", "name"],
+            },
+            SchemaExpectation {
+                db: "tasks-index",
+                table: "project_roots",
+                columns: &["project_id", "root_path"],
+            },
+            SchemaExpectation {
+                db: "tasks-index",
+                table: "hosts",
+                columns: &["host_id", "kind"],
+            },
+            SchemaExpectation {
+                db: "cli-db",
+                table: "session",
+                columns: &["id", "project_id", "slug", "directory", "title"],
+            },
+            SchemaExpectation {
+                db: "cli-db",
+                table: "message",
+                columns: &["id", "session_id", "data", "sequence"],
+            },
+        ],
+        DesktopHostKind::OpenaiDots => vec![
+            SchemaExpectation {
+                db: "state_5",
+                table: "threads",
+                columns: &["id", "cwd", "title", "project_id"],
+            },
+            SchemaExpectation {
+                db: "state_5",
+                table: "projects",
+                columns: &["id"],
+            },
+            SchemaExpectation {
+                db: "state_5",
+                table: "project_roots",
+                columns: &["project_id", "path"],
+            },
+        ],
+        // DSH persists JSON storages (workspace.json + session_projcache); Cindy 0.1.126
+        // has no local gateway or SQL surface we own, so neither carries SQL expectations.
+        DesktopHostKind::DeepseekHarness | DesktopHostKind::Cindy => Vec::new(),
+    }
+}
+
+/// Evaluates doctor host reports and returns human-readable gate failures. A failure means
+/// a detected host's live schema `diverged` from `schema_expectations` (missing columns) or
+/// a JSON-storage host reports `partial` alignment. `missing` (app never ran) and Cindy's
+/// `no-local-gateway` (dispatch routed via ANet by design) are not gate failures.
+pub fn evaluate_gate_failures(host_reports: &[Value]) -> Vec<String> {
+    let mut failures = Vec::new();
+    for report in host_reports {
+        let host = report
+            .get("host")
+            .and_then(Value::as_str)
+            .unwrap_or("<unknown-host>");
+        let live = report.get("live").cloned().unwrap_or_else(|| json!({}));
+        let schema_status = live
+            .get("schema_status")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let detected = live
+            .get("detected")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        if !detected {
+            continue;
+        }
+        if schema_status == "diverged" || schema_status == "partial" {
+            let missing = live
+                .get("missing_columns")
+                .and_then(Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(Value::as_str)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_default();
+            failures.push(format!(
+                "host {host}: live schema {schema_status} (expected columns missing: {missing}); \
+                 run fleet-cli doctor for details and realign the adapter before dispatching"
+            ));
+        }
+    }
+    failures
+}
+
+/// Checks every expectation for one database file against its live table columns.
+/// Returns per-table verified columns and `table.column` entries for anything missing.
+fn check_sqlite_expectations(
+    sqlite3_bin: &Path,
+    db_path: &Path,
+    expectations: &[SchemaExpectation],
+    verified_tables: &mut BTreeMap<String, Vec<String>>,
+    missing_columns: &mut Vec<String>,
+) -> bool {
+    let mut all_aligned = true;
+    for exp in expectations {
+        match read_sqlite_table_columns(sqlite3_bin, db_path, exp.table) {
+            Ok(actual) => {
+                let (aligned, verified, missing) = check_columns_alignment(&actual, exp.columns);
+                verified_tables.insert(exp.table.to_string(), verified);
+                if !aligned {
+                    all_aligned = false;
+                    for m in missing {
+                        missing_columns.push(format!("{}.{}", exp.table, m));
+                    }
+                }
+            }
+            Err(_) => {
+                all_aligned = false;
+                for c in exp.columns {
+                    missing_columns.push(format!("{}.{}", exp.table, c));
+                }
+            }
+        }
+    }
+    all_aligned
+}
+
 /// Probes the real, read-only live contract for a canonical desktop host.
 pub fn probe_host_live_contract(host: DesktopHostKind, home: &Path) -> Value {
     let sqlite3_bin = PathBuf::from("/usr/bin/sqlite3");
@@ -108,20 +268,15 @@ pub fn probe_host_live_contract(host: DesktopHostKind, home: &Path) -> Value {
                         })
                 });
 
-            let required_cols = &[
-                "conversation_id",
-                "title",
-                "preview",
-                "step_count",
-                "last_modified_time",
-                "workspace_uris",
-                "status",
-                "project_id",
-            ];
+            let expectations = schema_expectations(DesktopHostKind::AntigravityDesktop);
+            let exp = expectations
+                .first()
+                .expect("antigravity schema expectations must be non-empty");
+            let required_cols = exp.columns;
 
             let (db_exists, cols_aligned, verified, missing) =
                 if db_path.is_file() {
-                    match read_sqlite_table_columns(&sqlite3_bin, &db_path, "conversation_summaries") {
+                    match read_sqlite_table_columns(&sqlite3_bin, &db_path, exp.table) {
                         Ok(actual) => {
                             let (aligned, ver, miss) = check_columns_alignment(&actual, required_cols);
                             (true, aligned, ver, miss.into_iter().map(String::from).collect::<Vec<_>>())
@@ -180,55 +335,42 @@ pub fn probe_host_live_contract(host: DesktopHostKind, home: &Path) -> Value {
             let mut verified_tables = BTreeMap::new();
             let mut missing_columns = Vec::new();
             let mut all_aligned = tasks_db.is_file() && cli_db.is_file();
+            let expectations = schema_expectations(DesktopHostKind::Zcode);
 
             if tasks_db.is_file() {
-                let check_table = |tbl: &str, req: &[&str], verified_tables: &mut BTreeMap<String, Vec<String>>, missing_columns: &mut Vec<String>, all_aligned: &mut bool| {
-                    if let Ok(actual) = read_sqlite_table_columns(&sqlite3_bin, &tasks_db, tbl) {
-                        let (aligned, ver, miss) = check_columns_alignment(&actual, req);
-                        verified_tables.insert(tbl.to_string(), ver);
-                        if !aligned {
-                            *all_aligned = false;
-                            for m in miss {
-                                missing_columns.push(format!("{tbl}.{m}"));
-                            }
-                        }
-                    } else {
-                        *all_aligned = false;
-                        for m in req {
-                            missing_columns.push(format!("{tbl}.{m}"));
-                        }
-                    }
-                };
-
-                check_table("tasks", &["task_id", "title", "project_id", "task_status"], &mut verified_tables, &mut missing_columns, &mut all_aligned);
-                check_table("projects", &["project_id", "host_id", "name"], &mut verified_tables, &mut missing_columns, &mut all_aligned);
-                check_table("project_roots", &["project_id", "root_path"], &mut verified_tables, &mut missing_columns, &mut all_aligned);
-                check_table("hosts", &["host_id", "kind"], &mut verified_tables, &mut missing_columns, &mut all_aligned);
+                let db_expectations: Vec<_> = expectations
+                    .iter()
+                    .filter(|e| e.db == "tasks-index")
+                    .cloned()
+                    .collect();
+                if !check_sqlite_expectations(
+                    &sqlite3_bin,
+                    &tasks_db,
+                    &db_expectations,
+                    &mut verified_tables,
+                    &mut missing_columns,
+                ) {
+                    all_aligned = false;
+                }
             } else {
                 all_aligned = false;
             }
 
             if cli_db.is_file() {
-                let check_table = |tbl: &str, req: &[&str], verified_tables: &mut BTreeMap<String, Vec<String>>, missing_columns: &mut Vec<String>, all_aligned: &mut bool| {
-                    if let Ok(actual) = read_sqlite_table_columns(&sqlite3_bin, &cli_db, tbl) {
-                        let (aligned, ver, miss) = check_columns_alignment(&actual, req);
-                        verified_tables.insert(tbl.to_string(), ver);
-                        if !aligned {
-                            *all_aligned = false;
-                            for m in miss {
-                                missing_columns.push(format!("{tbl}.{m}"));
-                            }
-                        }
-                    } else {
-                        *all_aligned = false;
-                        for m in req {
-                            missing_columns.push(format!("{tbl}.{m}"));
-                        }
-                    }
-                };
-
-                check_table("session", &["id", "project_id", "slug", "directory", "title"], &mut verified_tables, &mut missing_columns, &mut all_aligned);
-                check_table("message", &["id", "session_id", "data", "sequence"], &mut verified_tables, &mut missing_columns, &mut all_aligned);
+                let db_expectations: Vec<_> = expectations
+                    .iter()
+                    .filter(|e| e.db == "cli-db")
+                    .cloned()
+                    .collect();
+                if !check_sqlite_expectations(
+                    &sqlite3_bin,
+                    &cli_db,
+                    &db_expectations,
+                    &mut verified_tables,
+                    &mut missing_columns,
+                ) {
+                    all_aligned = false;
+                }
             } else {
                 all_aligned = false;
             }
@@ -341,27 +483,16 @@ pub fn probe_host_live_contract(host: DesktopHostKind, home: &Path) -> Value {
             let mut all_aligned = db_path.is_file();
 
             if db_path.is_file() {
-                let check_table = |tbl: &str, req: &[&str], verified_tables: &mut BTreeMap<String, Vec<String>>, missing_columns: &mut Vec<String>, all_aligned: &mut bool| {
-                    if let Ok(actual) = read_sqlite_table_columns(&sqlite3_bin, &db_path, tbl) {
-                        let (aligned, ver, miss) = check_columns_alignment(&actual, req);
-                        verified_tables.insert(tbl.to_string(), ver);
-                        if !aligned {
-                            *all_aligned = false;
-                            for m in miss {
-                                missing_columns.push(format!("{tbl}.{m}"));
-                            }
-                        }
-                    } else {
-                        *all_aligned = false;
-                        for m in req {
-                            missing_columns.push(format!("{tbl}.{m}"));
-                        }
-                    }
-                };
-
-                check_table("threads", &["id", "cwd", "title", "project_id"], &mut verified_tables, &mut missing_columns, &mut all_aligned);
-                check_table("projects", &["id"], &mut verified_tables, &mut missing_columns, &mut all_aligned);
-                check_table("project_roots", &["project_id", "path"], &mut verified_tables, &mut missing_columns, &mut all_aligned);
+                let expectations = schema_expectations(DesktopHostKind::OpenaiDots);
+                if !check_sqlite_expectations(
+                    &sqlite3_bin,
+                    &db_path,
+                    &expectations,
+                    &mut verified_tables,
+                    &mut missing_columns,
+                ) {
+                    all_aligned = false;
+                }
             } else {
                 all_aligned = false;
             }
@@ -410,7 +541,18 @@ pub fn probe_host_live_contract(host: DesktopHostKind, home: &Path) -> Value {
                 }
             }
             let sock_opt = candidate_sockets.into_iter().find(|p| p.exists());
-            let ready = root.is_dir() && (sock_opt.is_some() || process_running);
+            // Cindy 0.1.126 ships no local gateway socket and no owned SQL surface; direct
+            // sidebar dispatch is unsupported until Cindy exposes one. `ready` here means
+            // "directly dispatchable", so it is false without a socket even while the app
+            // runs; inbound dispatch routes via the ANet `cindy` identity instead.
+            let ready = root.is_dir() && sock_opt.is_some();
+            let schema_status = if !root.is_dir() {
+                "missing"
+            } else if sock_opt.is_some() {
+                "aligned"
+            } else {
+                "no-local-gateway"
+            };
 
             json!({
                 "detected": root.is_dir(),
@@ -418,7 +560,8 @@ pub fn probe_host_live_contract(host: DesktopHostKind, home: &Path) -> Value {
                 "socket_path": sock_opt,
                 "socket_connected": sock_opt.is_some(),
                 "process_running": process_running,
-                "schema_status": if root.is_dir() { "aligned" } else { "missing" },
+                "dispatch_channel": if sock_opt.is_some() { "desktop-gateway" } else { "anet" },
+                "schema_status": schema_status,
                 "missing_columns": Vec::<String>::new(),
                 "ready": ready,
             })
@@ -496,7 +639,7 @@ mod tests {
             id: "herdr".into(),
             display_name: "Herdr Terminal Multiplexer".into(),
             command: PathBuf::from("/bin/echo"),
-            args_template: vec!["dispatched".into()],
+            args_template: vec!["dispatch".into()],
             resume_args_template: Vec::new(),
             description: "Herdr".into(),
         };
@@ -504,6 +647,70 @@ mod tests {
         assert_eq!(probe["command_exists"], true);
         assert_eq!(probe["ready"], true);
         let _ = fs::remove_dir_all(&temp);
+    }
+
+    /// The pinned schema expectations must stay in sync with the adapters' SQL: every
+    /// expected table and column must still appear in the adapter sources that touch the
+    /// host databases. If an adapter drops or renames a column without updating
+    /// `schema_expectations`, this test fails before any live dispatch can corrupt state.
+    #[test]
+    fn schema_contract_sync() {
+        let adapter_sources = format!(
+            "{}{}{}",
+            include_str!("antigravity.rs"),
+            include_str!("tri_hosts.rs"),
+            include_str!("host_adapter.rs"),
+        );
+        for kind in DesktopHostKind::ALL {
+            for exp in schema_expectations(kind) {
+                assert!(
+                    adapter_sources.contains(exp.table),
+                    "schema expectation table `{}` ({}) not found in adapter sources",
+                    exp.table,
+                    kind.as_str()
+                );
+                for column in exp.columns {
+                    assert!(
+                        adapter_sources.contains(column),
+                        "schema expectation column `{}` for {}.{}` ({}) not found in adapter sources",
+                        column,
+                        exp.db,
+                        exp.table,
+                        kind.as_str()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn gate_failures_flag_diverged_but_not_missing_or_anet_routed() {
+        let reports = vec![
+            json!({
+                "host": "zcode",
+                "live": {"detected": true, "schema_status": "diverged", "missing_columns": ["tasks.task_status"]},
+            }),
+            json!({
+                "host": "antigravity-desktop",
+                "live": {"detected": true, "schema_status": "aligned", "missing_columns": []},
+            }),
+            json!({
+                "host": "deepseek-harness",
+                "live": {"detected": true, "schema_status": "partial", "missing_columns": []},
+            }),
+            json!({
+                "host": "cindy",
+                "live": {"detected": true, "schema_status": "no-local-gateway", "missing_columns": []},
+            }),
+            json!({
+                "host": "openai-dots",
+                "live": {"detected": false, "schema_status": "missing", "missing_columns": []},
+            }),
+        ];
+        let failures = evaluate_gate_failures(&reports);
+        assert_eq!(failures.len(), 2, "expected zcode+deepseek failures: {failures:?}");
+        assert!(failures[0].contains("zcode") && failures[0].contains("tasks.task_status"));
+        assert!(failures[1].contains("deepseek-harness"));
     }
 }
 

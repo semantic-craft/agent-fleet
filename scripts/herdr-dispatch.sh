@@ -1,4 +1,16 @@
 #!/bin/bash
+# Herdr external-agent dispatcher for agent-fleet (`<state_root>/agents.d/herdr.json`).
+#
+# Honest-receipt contract (parsed by ExternalAgentRegistry::dispatch):
+#   exit 0 + "FLEET_TIER: completed"  -> prompt accepted AND --expect-marker was read back
+#                                        from the agent's terminal output
+#   exit 0 + "FLEET_TIER: accepted"   -> prompt accepted; marker absent or not requested
+#   exit non-zero                     -> dispatch refused (e.g. no active agent for TARGET);
+#                                        the error is surfaced on stderr, never swallowed
+#
+# There is deliberately NO pane fallback: prompts are never pasted into arbitrary shell
+# panes. If no agent named TARGET is active, fail loudly with the exact herdr error.
+
 set -euo pipefail
 
 HERDR_BIN="${HERDR_BIN:-$(command -v herdr || echo "$HOME/.local/bin/herdr")}"
@@ -6,6 +18,7 @@ HERDR_BIN="${HERDR_BIN:-$(command -v herdr || echo "$HOME/.local/bin/herdr")}"
 TARGET="agent-fleet"
 PROMPT=""
 CWD=""
+EXPECT_MARKER=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -21,9 +34,16 @@ while [[ $# -gt 0 ]]; do
       CWD="$2"
       shift 2
       ;;
+    --expect-marker|-m)
+      EXPECT_MARKER="$2"
+      shift 2
+      ;;
     *)
       if [[ -z "$PROMPT" ]]; then
         PROMPT="$1"
+      else
+        echo "herdr-dispatch: unexpected argument: $1" >&2
+        exit 2
       fi
       shift
       ;;
@@ -31,80 +51,63 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$PROMPT" ]]; then
-  echo "Error: prompt is required" >&2
-  exit 1
+  echo "herdr-dispatch: --prompt is required" >&2
+  exit 2
 fi
 
-# 1. Ensure herdr server is running if herdr binary is available
-if command -v "$HERDR_BIN" >/dev/null 2>&1; then
-  if ! "$HERDR_BIN" status server 2>/dev/null | grep -q "status: running"; then
-    "$HERDR_BIN" server >/dev/null 2>&1 &
-    for _ in {1..20}; do
-      if [[ -S "$HOME/.config/herdr/herdr.sock" ]] && "$HERDR_BIN" status server 2>/dev/null | grep -q "status: running"; then
+if ! command -v "$HERDR_BIN" >/dev/null 2>&1; then
+  echo "herdr-dispatch: herdr binary not found at $HERDR_BIN" >&2
+  exit 3
+fi
+
+# 1. Ensure the herdr server is running (it must already host an active agent; we never
+#    start agent processes ourselves — see the no-fallback contract above).
+if ! "$HERDR_BIN" status server 2>/dev/null | grep -q "status: running"; then
+  "$HERDR_BIN" server >/dev/null 2>&1 &
+  for _ in {1..20}; do
+    if [[ -S "$HOME/.config/herdr/herdr.sock" ]] && "$HERDR_BIN" status server 2>/dev/null | grep -q "status: running"; then
+      break
+    fi
+    sleep 0.1
+  done
+fi
+if ! "$HERDR_BIN" status server 2>/dev/null | grep -q "status: running"; then
+  echo "herdr-dispatch: herdr server not running and could not be started" >&2
+  exit 3
+fi
+
+# 2. Submit the prompt to an ACTIVE agent only. Any failure (including
+#    agent_not_ready: the agent is no longer the pane foreground process) aborts with the
+#    real herdr error on stderr — no silent swallow, no paste into a shell pane.
+if ! SUBMIT_OUT=$("$HERDR_BIN" agent prompt "$TARGET" "$PROMPT" 2>&1); then
+  echo "herdr-dispatch: no active herdr agent '$TARGET' (start one with: herdr agent start $TARGET --kind <kind> --pane <pane-id>): $SUBMIT_OUT" >&2
+  exit 3
+fi
+echo "$SUBMIT_OUT"
+
+TIER="accepted"
+if [[ -n "$EXPECT_MARKER" ]]; then
+  # 3. Poll the agent's terminal output until the marker appears (bounded). Agents run
+  #    multi-step turns, so a single immediate read races the response; `agent wait`
+  #    state semantics cannot be relied on for readback timing. completed is ONLY ever
+  #    claimed on a real marker readback.
+  DEADLINE=$(( $(date +%s) * 1000 + ${HERDR_WAIT_TIMEOUT_MS:-90000} ))
+  while [[ "$(date +%s)" -lt $(( DEADLINE / 1000 )) ]]; do
+    if OUT=$("$HERDR_BIN" agent read "$TARGET" --lines 80 2>/dev/null); then
+      if printf '%s' "$OUT" | grep -qF -- "$EXPECT_MARKER"; then
+        TIER="completed"
         break
       fi
-      sleep 0.1
-    done
-  fi
-
-  # 2. Try native herdr agent prompt first if an agent is active with this target
-  if "$HERDR_BIN" agent prompt "$TARGET" "$PROMPT" --timeout 5000 >/dev/null 2>&1; then
-    "$HERDR_BIN" agent read "$TARGET" --lines 30
-    exit 0
-  fi
-
-  # 3. Otherwise find an existing pane matching target label or cwd, or create one
-  PANES_JSON=$("$HERDR_BIN" pane list 2>/dev/null || echo '{"result":{"panes":[]}}')
-  PANE_ID=$(echo "$PANES_JSON" | python3 -c '
-import sys, json
-try:
-    data = json.load(sys.stdin)
-    target = sys.argv[1]
-    cwd = sys.argv[2]
-    panes = data.get("result", {}).get("panes", [])
-    for p in panes:
-        if p.get("label") == target:
-            print(p["pane_id"])
-            sys.exit(0)
-    if cwd:
-        for p in panes:
-            if p.get("cwd") == cwd:
-                print(p["pane_id"])
-                sys.exit(0)
-    if panes:
-        print(panes[-1]["pane_id"])
-        sys.exit(0)
-except Exception:
-    pass
-print("")
-' "$TARGET" "$CWD" 2>/dev/null || echo "")
-
-  if [[ -z "$PANE_ID" ]]; then
-    CREATE_OUT=$("$HERDR_BIN" tab create --label "$TARGET" ${CWD:+--cwd "$CWD"} 2>/dev/null || echo '{}')
-    PANE_ID=$(echo "$CREATE_OUT" | python3 -c '
-import sys, json
-try:
-    print(json.load(sys.stdin).get("result", {}).get("root_pane", {}).get("pane_id", ""))
-except Exception:
-    pass
-' 2>/dev/null || echo "")
-  fi
-
-  if [[ -n "$PANE_ID" ]]; then
-    # Run the prompt in the target pane
-    "$HERDR_BIN" pane run "$PANE_ID" "$PROMPT" >/dev/null 2>&1
-    sleep 0.3
-    # Read back the terminal output
-    OUTPUT=$("$HERDR_BIN" pane read "$PANE_ID" --lines 20 2>/dev/null || echo "")
-    if [[ -n "$OUTPUT" ]]; then
-      echo "$OUTPUT"
-      exit 0
     fi
+    sleep 3
+  done
+  if [[ -n "${OUT:-}" ]]; then
+    echo "$OUT" | tail -60
+  fi
+else
+  if OUT=$("$HERDR_BIN" agent read "$TARGET" --lines 20 2>/dev/null); then
+    echo "$OUT"
   fi
 fi
 
-# 4. Fallback if herdr server is not reachable
-echo "dispatched to herdr ($TARGET): $PROMPT"
-if [[ "$PROMPT" == "echo "* ]]; then
-  eval "$PROMPT"
-fi
+echo "FLEET_TIER: $TIER"

@@ -15,7 +15,8 @@ pub use tri_hosts::{
     ensure_dsh_native_workspace, ensure_zcode_sidebar_project, read_cindy_transcript,
     read_codex_magpie_config, read_codex_project, read_codex_thread, read_dsh_native_session,
     read_zcode_project, read_zcode_session, run_dsh_headless_command, run_zcode_headless_command,
-    verify_codex_project_binding, verify_codex_thread_binding, verify_zcode_project_binding,
+    codex_thread_preview_visible, verify_codex_project_binding, verify_codex_thread_binding,
+    verify_codex_thread_binding_with_preview, verify_zcode_project_binding,
     verify_zcode_session_binding, zcode_cli_project_slug, CindyRuntimeConfig, CindySessionReceipt,
     CindySessionSnapshot, CodexMagpieModelConfig, CodexProjectRow, CodexThreadRow,
     DshRuntimeConfig, DshSessionReceipt, DshSessionSnapshot, OpenAiDotsReceipt,
@@ -36,10 +37,11 @@ pub use relay_self_dev::{
     run_host_poteto_relay, HostRelayClosureReceipt, HostRuntimeOptions,
     HostStoreVerificationEvidence, PotetoRelayTask,
 };
-mod doctor;
+pub mod doctor;
 pub use doctor::{
-    check_columns_alignment, is_process_running, probe_external_agent_live_contract,
-    probe_host_live_contract, read_sqlite_table_columns,
+    check_columns_alignment, evaluate_gate_failures, is_process_running,
+    probe_external_agent_live_contract, probe_host_live_contract, read_sqlite_table_columns,
+    schema_expectations,
 };
 
 use fleet_proto::{SessionId, SessionRecord, SessionSelector, SessionState};

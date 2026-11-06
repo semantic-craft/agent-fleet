@@ -296,7 +296,18 @@ fn spawn_codex_app_server(
                                 let project_id =
                                     format!("019a5400-0000-7000-8000-{proj_seq:012x}");
                                 let name = params["name"].as_str().unwrap_or("unnamed");
-                                let root_path = params["rootPath"].as_str().unwrap_or("");
+                                // Pin codex app-server >= 0.166 contract (ProjectRoot
+                                // structs + required idempotencyKey), matching the
+                                // fleet-daemon fixture.
+                                let root_path = params["roots"][0]["path"]
+                                    .as_str()
+                                    .unwrap_or_else(|| {
+                                        panic!("project/create roots missing ProjectRoot.path: {params}")
+                                    });
+                                assert!(
+                                    !params["idempotencyKey"].as_str().unwrap_or("").is_empty(),
+                                    "project/create missing idempotencyKey: {params}"
+                                );
                                 let sql = format!(
                                     "INSERT INTO projects (id, name, metadata, position, created_at_ms, updated_at_ms) \
                                      VALUES ('{project_id}', '{}', '{{}}', {proj_seq}, 1762310000000, 1762310000000);\
@@ -328,7 +339,7 @@ fn spawn_codex_app_server(
                                     "project": {
                                         "id": project_id,
                                         "name": name,
-                                        "roots": [root_path],
+                                        "roots": [{"path": root_path}],
                                     }
                                 })
                             }
@@ -1417,7 +1428,85 @@ fn five_hosts_and_open_engine_cli_mcp_interoperability() {
     assert!(ext_send.status.success());
     let ext_val: Value = serde_json::from_slice(&ext_send.stdout).unwrap();
     assert_eq!(ext_val["agent_id"], "open-coder");
-    assert_eq!(ext_val["tier"], "completed");
+    // Honest-receipt contract: a bare echo command provides no completion evidence, so
+    // the registry must only ever record `accepted` for it.
+    assert_eq!(ext_val["tier"], "accepted");
+
+    // Honest-receipt contract: `completed` requires BOTH an `--expect-marker` request and
+    // the dispatcher script reading that marker back and claiming FLEET_TIER: completed.
+    let marker_script = f.state_root.join("marker-agent.sh");
+    fs::write(
+        &marker_script,
+        "#!/bin/sh\nprintf 'agent replied %s\\n' \"$1\"\nprintf 'FLEET_TIER: completed\\n'\n",
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(&marker_script).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&marker_script, perms).unwrap();
+    }
+    let marker_reg = f.run_cli(&[
+        "agents",
+        "register",
+        "--state-root",
+        &f.state_root.display().to_string(),
+        "--id",
+        "marker-agent",
+        "--name",
+        "Marker Agent",
+        "--command",
+        &marker_script.display().to_string(),
+        "--args",
+        "{expect_marker}",
+        "--description",
+        "Echoes the marker back and claims completion",
+    ]);
+    assert!(marker_reg.status.success());
+
+    let marker_send = f.run_cli(&[
+        "send",
+        "--to",
+        "marker-agent/agent-fleet",
+        "--projects-root",
+        &f.projects_root.display().to_string(),
+        "--state-root",
+        &f.state_root.display().to_string(),
+        "--prompt",
+        "reply with the marker",
+        "--execute-external",
+        "true",
+        "--expect-marker",
+        "MARKER_OK_20261106",
+    ]);
+    assert!(marker_send.status.success());
+    let marker_val: Value = serde_json::from_slice(&marker_send.stdout).unwrap();
+    assert_eq!(marker_val["agent_id"], "marker-agent");
+    assert_eq!(marker_val["tier"], "completed");
+    assert!(marker_val["stdout_preview"]
+        .as_str()
+        .unwrap()
+        .contains("agent replied MARKER_OK_20261106"));
+
+    // Same script, no --expect-marker: a completion claim without a requested marker is
+    // downgraded to accepted so receipts never assert unverified work.
+    let marker_send_noexpect = f.run_cli(&[
+        "send",
+        "--to",
+        "marker-agent/agent-fleet",
+        "--projects-root",
+        &f.projects_root.display().to_string(),
+        "--state-root",
+        &f.state_root.display().to_string(),
+        "--prompt",
+        "reply with the marker",
+        "--execute-external",
+        "true",
+    ]);
+    assert!(marker_send_noexpect.status.success());
+    let marker_noexpect_val: Value = serde_json::from_slice(&marker_send_noexpect.stdout).unwrap();
+    assert_eq!(marker_noexpect_val["tier"], "accepted");
 
     // Register herdr external agent and test default execute_external dispatch
     let herdr_reg = f.run_cli(&[
@@ -1452,7 +1541,8 @@ fn five_hosts_and_open_engine_cli_mcp_interoperability() {
     assert!(herdr_send.status.success());
     let herdr_val: Value = serde_json::from_slice(&herdr_send.stdout).unwrap();
     assert_eq!(herdr_val["agent_id"], "herdr");
-    assert_eq!(herdr_val["tier"], "completed");
+    // The echo stand-in claims nothing, so the receipt stays at accepted.
+    assert_eq!(herdr_val["tier"], "accepted");
     assert!(herdr_val["stdout_preview"]
         .as_str()
         .unwrap()
@@ -1470,7 +1560,7 @@ fn five_hosts_and_open_engine_cli_mcp_interoperability() {
         who_val["canonical_desktop_hosts"].as_array().unwrap().len(),
         5
     );
-    assert_eq!(who_val["external_agents"].as_array().unwrap().len(), 2);
+    assert_eq!(who_val["external_agents"].as_array().unwrap().len(), 3);
 
     let doctor_out = f.run_cli(&[
         "doctor",

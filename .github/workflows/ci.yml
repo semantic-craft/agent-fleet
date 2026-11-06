@@ -1,0 +1,59 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: cargo check
+        run: cargo check --workspace --locked
+
+      - name: cargo test (workspace)
+        run: cargo test --workspace --locked
+
+      - name: Key behavior suites
+        run: |
+          cargo test --workspace --locked session_directory
+          cargo test --locked -p fleet-hub
+          cargo test --workspace --locked delivery_tier
+          cargo test --workspace --locked brief_policy
+          cargo test --locked -p fleet-daemon --lib schema_contract -- --nocapture
+          cargo test --locked -p fleet-daemon --lib gate_failures -- --nocapture
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: npm test
+        run: |
+          npm ci
+          npm test

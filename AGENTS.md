@@ -6,7 +6,7 @@
 
 派活正本是官方 Agent Network（ANet）Research。本机身份、`delegate` 和插件以 agent-fleet 仓库的 `docs/anet.md` 与官方文档为准：<https://docs.agentnetwork.org.cn>。
 
-编码 agent 用官方 `anet agents wire` 与 `anet mcp` 接入（[接入编码 Agent](https://docs.agentnetwork.org.cn/docs/zh-cn/latest/howto/coding-agents.html)、[MCP](https://docs.agentnetwork.org.cn/docs/zh-cn/latest/howto/mcp.html)）。Herdr 只做 pane 宿主，不是派活入口，也不另造到 ANet 的桥。
+编码 agent 用官方 `anet agents wire` 与 `anet mcp` 接入（[接入编码 Agent](https://docs.agentnetwork.org.cn/docs/zh-cn/latest/howto/coding-agents.html)、[MCP](https://docs.agentnetwork.org.cn/docs/zh-cn/latest/howto/mcp.html)）。Herdr 仍是 pane 宿主，不经它转 ANet、不另造到 ANet 的桥；它同时可以作为本引擎 `agents.d` 外部清单里的终端派活目标（`scripts/herdr-dispatch.sh`）：只向活跃 agent 投递、禁止兜底任意 pane，收据按探测标记回读如实分级（2026-11-06 定）。
 
 舰队身份、任务账本和跨身份委派只走 ANet。要进已经打开的 Desktop 窗口，并且 cwd 等于 `~/Projects` 里的项目时，投递走 Reason：边界见 `docs/reason.md`，选用见 `skills/dispatch-desktop-reason`。同一件活只选一条，禁止同时发 ANet 任务和 Reason 进窗。Reason 签到另线，未签到不写成已通。体系落在专属的 `~/Projects`（少仓；主 A 可换 Grok、Dots 或 Cindy），叙事见 `docs/architecture.md`。
 

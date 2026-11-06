@@ -257,6 +257,43 @@ pub fn read_codex_thread(
     }))
 }
 
+/// Readback variant tolerant of the app-server's asynchronous persistence: codex
+/// confirms `turn/start` before the `threads` row is visible in `state_5.sqlite`
+/// (WAL flush). The loop waits a short budget for the row to appear AND for its
+/// sidebar `preview` to be backfilled (fast turns only); on timeout it still returns
+/// the row so callers can honestly report `running` instead of blocking for the
+/// 5–46s preview latency observed on codex-cli 0.166.0 (2026-11-06).
+pub fn read_codex_thread_with_retry(
+    sqlite3_bin: &Path,
+    db_path: &Path,
+    thread_id: &str,
+) -> Result<Option<CodexThreadRow>, HostAdapterError> {
+    const ROW_ATTEMPTS: u32 = 6;
+    const PREVIEW_ATTEMPTS: u32 = 4;
+    const DELAY_MS: u64 = 250;
+    let mut last: Option<CodexThreadRow> = None;
+    for attempt in 1..=ROW_ATTEMPTS {
+        if let Some(row) = read_codex_thread(sqlite3_bin, db_path, thread_id)? {
+            last = Some(row);
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(DELAY_MS));
+    }
+    for attempt in 1..PREVIEW_ATTEMPTS {
+        let Some(row) = &last else { break };
+        if codex_thread_preview_visible(row) {
+            break;
+        }
+        if attempt < PREVIEW_ATTEMPTS {
+            std::thread::sleep(std::time::Duration::from_millis(DELAY_MS));
+            if let Some(refetched) = read_codex_thread(sqlite3_bin, db_path, thread_id)? {
+                last = Some(refetched);
+            }
+        }
+    }
+    Ok(last)
+}
+
 /// Verifies that a `CodexProjectRow` in `state_5.sqlite` matches `expected_project_id` and `expected_dir`.
 pub fn verify_codex_project_binding(
     row: &CodexProjectRow,
@@ -282,7 +319,10 @@ pub fn verify_codex_project_binding(
 }
 
 /// Verifies that a `CodexThreadRow` in `state_5.sqlite` is bound to `expected_project_id`,
-/// `expected_dir`, `archived == 0`, and has a non-empty `preview` (`Gotcha #2`).
+/// `expected_dir`, and `archived == 0`. The preview check is deliberately NOT part of this
+/// identity verification: codex app-server 0.166 backfills the sidebar `preview`/
+/// `recency_at` asynchronously (observed 5–46s, roughly at turn completion), so callers
+/// use `codex_thread_preview_visible` to decide between `thread-visible` and `running`.
 pub fn verify_codex_thread_binding(
     row: &CodexThreadRow,
     expected_project_id: &str,
@@ -316,7 +356,25 @@ pub fn verify_codex_thread_binding(
             row.thread_id
         )));
     }
-    if row.preview.trim().is_empty() {
+    Ok(())
+}
+
+/// Sidebar-visibility evidence for codex threads: a non-empty `preview` participates in
+/// `idx_threads_visible_recency_at_ms`. Empty at read time only means the turn has not
+/// produced its visible item yet — report `running`, never `thread-visible`.
+pub fn codex_thread_preview_visible(row: &CodexThreadRow) -> bool {
+    !row.preview.trim().is_empty()
+}
+
+/// Kept for callers that must insist on full sidebar visibility (e.g. readback paths
+/// that expect the turn to have already rendered); dispatch paths use the split checks.
+pub fn verify_codex_thread_binding_with_preview(
+    row: &CodexThreadRow,
+    expected_project_id: &str,
+    expected_dir: &Path,
+) -> Result<(), HostAdapterError> {
+    verify_codex_thread_binding(row, expected_project_id, expected_dir)?;
+    if !codex_thread_preview_visible(row) {
         return Err(HostAdapterError::OpenAiDotsProtocol(format!(
             "thread {} has empty preview in state_5.sqlite and fails idx_threads_visible_recency_at_ms",
             row.thread_id
