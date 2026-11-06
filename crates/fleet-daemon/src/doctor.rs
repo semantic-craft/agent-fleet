@@ -15,7 +15,11 @@ pub fn is_process_running(pattern: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Reads back column names of a SQLite table via `sqlite3 -readonly -json <db> "PRAGMA table_info(<table>)"`.
+/// Reads back column names of a SQLite table via `sqlite3 -json <db> "PRAGMA table_info(<table>)"`.
+/// Tries `-readonly` first; host daemons holding a hot WAL (e.g. Antigravity) can make
+/// read-only opens fail with SQLITE_CANTOPEN, in which case a plain open is used — the
+/// query itself (`PRAGMA table_info`) never writes, and a plain open only performs the
+/// same WAL recovery any reader process would.
 pub fn read_sqlite_table_columns(
     sqlite3_bin: &Path,
     db_path: &Path,
@@ -25,13 +29,23 @@ pub fn read_sqlite_table_columns(
         return Err(format!("database file does not exist: {}", db_path.display()));
     }
     let query = format!("PRAGMA table_info({table})");
-    let output = Command::new(sqlite3_bin)
+    let readonly = Command::new(sqlite3_bin)
         .arg("-readonly")
         .arg("-json")
         .arg(db_path)
         .arg(&query)
         .output()
         .map_err(|e| format!("failed to execute sqlite3: {e}"))?;
+    let output = if readonly.status.success() {
+        readonly
+    } else {
+        Command::new(sqlite3_bin)
+            .arg("-json")
+            .arg(db_path)
+            .arg(&query)
+            .output()
+            .map_err(|e| format!("failed to execute sqlite3: {e}"))?
+    };
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!("sqlite3 pragma failed: {}", stderr.trim()));
@@ -174,7 +188,12 @@ pub fn evaluate_gate_failures(host_reports: &[Value]) -> Vec<String> {
         if !detected {
             continue;
         }
-        if schema_status == "diverged" || schema_status == "partial" {
+        if schema_status == "unreadable" {
+            failures.push(format!(
+                "host {host}: live schema unreadable after retries (busy/locked/hot-WAL recovery); \
+                 re-run fleet-cli doctor --gate when the host app is idle"
+            ));
+        } else if schema_status == "diverged" || schema_status == "partial" {
             let missing = live
                 .get("missing_columns")
                 .and_then(Value::as_array)
@@ -196,16 +215,42 @@ pub fn evaluate_gate_failures(host_reports: &[Value]) -> Vec<String> {
 
 /// Checks every expectation for one database file against its live table columns.
 /// Returns per-table verified columns and `table.column` entries for anything missing.
+/// Retries a read a few times: host daemons (e.g. Antigravity) briefly make their
+/// SQLite unreadable to `-readonly` clients while recovering a hot WAL, which must
+/// not be mistaken for schema divergence.
+fn read_sqlite_table_columns_with_retry(
+    sqlite3_bin: &Path,
+    db_path: &Path,
+    table: &str,
+) -> Result<Vec<String>, String> {
+    const ATTEMPTS: u32 = 3;
+    const DELAY_MS: u64 = 400;
+    let mut last_err = String::new();
+    for attempt in 1..=ATTEMPTS {
+        match read_sqlite_table_columns(sqlite3_bin, db_path, table) {
+            Ok(cols) => return Ok(cols),
+            Err(e) => {
+                last_err = e;
+                if attempt < ATTEMPTS {
+                    std::thread::sleep(std::time::Duration::from_millis(DELAY_MS));
+                }
+            }
+        }
+    }
+    Err(last_err)
+}
+
 fn check_sqlite_expectations(
     sqlite3_bin: &Path,
     db_path: &Path,
     expectations: &[SchemaExpectation],
     verified_tables: &mut BTreeMap<String, Vec<String>>,
     missing_columns: &mut Vec<String>,
+    unreadable_tables: &mut Vec<String>,
 ) -> bool {
     let mut all_aligned = true;
     for exp in expectations {
-        match read_sqlite_table_columns(sqlite3_bin, db_path, exp.table) {
+        match read_sqlite_table_columns_with_retry(sqlite3_bin, db_path, exp.table) {
             Ok(actual) => {
                 let (aligned, verified, missing) = check_columns_alignment(&actual, exp.columns);
                 verified_tables.insert(exp.table.to_string(), verified);
@@ -217,10 +262,12 @@ fn check_sqlite_expectations(
                 }
             }
             Err(_) => {
+                // Read failed after retries (busy/locked/hot-WAL recovery): the schema
+                // was NOT observed, so claiming `diverged` would be dishonest. Report
+                // the table as unreadable; the gate treats persistent unreadability as
+                // its own failure, never as column drift.
                 all_aligned = false;
-                for c in exp.columns {
-                    missing_columns.push(format!("{}.{}", exp.table, c));
-                }
+                unreadable_tables.push(exp.table.to_string());
             }
         }
     }
@@ -274,21 +321,27 @@ pub fn probe_host_live_contract(host: DesktopHostKind, home: &Path) -> Value {
                 .expect("antigravity schema expectations must be non-empty");
             let required_cols = exp.columns;
 
+            let mut unreadable = false;
             let (db_exists, cols_aligned, verified, missing) =
                 if db_path.is_file() {
-                    match read_sqlite_table_columns(&sqlite3_bin, &db_path, exp.table) {
+                    match read_sqlite_table_columns_with_retry(&sqlite3_bin, &db_path, exp.table) {
                         Ok(actual) => {
                             let (aligned, ver, miss) = check_columns_alignment(&actual, required_cols);
                             (true, aligned, ver, miss.into_iter().map(String::from).collect::<Vec<_>>())
                         }
-                        Err(_) => (true, false, Vec::new(), required_cols.iter().map(|s| s.to_string()).collect()),
+                        Err(_) => {
+                            unreadable = true;
+                            (true, false, Vec::new(), Vec::new())
+                        }
                     }
                 } else {
-                    (false, false, Vec::new(), required_cols.iter().map(|s| s.to_string()).collect())
+                    (false, false, Vec::new(), Vec::new())
                 };
 
             let schema_status = if !db_exists {
                 "missing"
+            } else if unreadable {
+                "unreadable"
             } else if cols_aligned {
                 "aligned"
             } else {
@@ -334,6 +387,7 @@ pub fn probe_host_live_contract(host: DesktopHostKind, home: &Path) -> Value {
 
             let mut verified_tables = BTreeMap::new();
             let mut missing_columns = Vec::new();
+            let mut unreadable_tables = Vec::new();
             let mut all_aligned = tasks_db.is_file() && cli_db.is_file();
             let expectations = schema_expectations(DesktopHostKind::Zcode);
 
@@ -349,6 +403,7 @@ pub fn probe_host_live_contract(host: DesktopHostKind, home: &Path) -> Value {
                     &db_expectations,
                     &mut verified_tables,
                     &mut missing_columns,
+                    &mut unreadable_tables,
                 ) {
                     all_aligned = false;
                 }
@@ -368,6 +423,7 @@ pub fn probe_host_live_contract(host: DesktopHostKind, home: &Path) -> Value {
                     &db_expectations,
                     &mut verified_tables,
                     &mut missing_columns,
+                    &mut unreadable_tables,
                 ) {
                     all_aligned = false;
                 }
@@ -377,6 +433,8 @@ pub fn probe_host_live_contract(host: DesktopHostKind, home: &Path) -> Value {
 
             let schema_status = if !tasks_db.is_file() && !cli_db.is_file() {
                 "missing"
+            } else if !unreadable_tables.is_empty() {
+                "unreadable"
             } else if all_aligned {
                 "aligned"
             } else {
@@ -480,6 +538,7 @@ pub fn probe_host_live_contract(host: DesktopHostKind, home: &Path) -> Value {
 
             let mut verified_tables = BTreeMap::new();
             let mut missing_columns = Vec::new();
+            let mut unreadable_tables = Vec::new();
             let mut all_aligned = db_path.is_file();
 
             if db_path.is_file() {
@@ -490,6 +549,7 @@ pub fn probe_host_live_contract(host: DesktopHostKind, home: &Path) -> Value {
                     &expectations,
                     &mut verified_tables,
                     &mut missing_columns,
+                    &mut unreadable_tables,
                 ) {
                     all_aligned = false;
                 }
@@ -499,6 +559,8 @@ pub fn probe_host_live_contract(host: DesktopHostKind, home: &Path) -> Value {
 
             let schema_status = if !db_path.is_file() {
                 "missing"
+            } else if !unreadable_tables.is_empty() {
+                "unreadable"
             } else if all_aligned {
                 "aligned"
             } else {
@@ -711,6 +773,16 @@ mod tests {
         assert_eq!(failures.len(), 2, "expected zcode+deepseek failures: {failures:?}");
         assert!(failures[0].contains("zcode") && failures[0].contains("tasks.task_status"));
         assert!(failures[1].contains("deepseek-harness"));
+
+        // Unreadable (busy/hot-WAL) is its own failure, never reported as column drift.
+        let unreadable = vec![json!({
+            "host": "antigravity-desktop",
+            "live": {"detected": true, "schema_status": "unreadable", "missing_columns": []},
+        })];
+        let failures = evaluate_gate_failures(&unreadable);
+        assert_eq!(failures.len(), 1);
+        assert!(failures[0].contains("unreadable"));
+        assert!(!failures[0].contains("missing:"));
     }
 }
 
