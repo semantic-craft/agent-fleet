@@ -779,6 +779,11 @@ pub fn attach_dsh_session_to_workspace(
                 ws_path.display()
             ))
         })?;
+    let ws_cwd = ws_entry
+        .get("path")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
     if ws_entry.get("sessionIds").and_then(Value::as_array).is_none() {
         ws_entry["sessionIds"] = json!([]);
     }
@@ -796,7 +801,8 @@ pub fn attach_dsh_session_to_workspace(
     fs::write(&tmp_path, &bytes)?;
     fs::rename(&tmp_path, &ws_path)?;
     refresh_running_dsh_desktop_app_if_matching_home(dsh_root, &bytes, None);
-    sync_live_dsh_session_via_inspector(dsh_root, Some(project_id), None, session_id);
+    let cwd_opt = (!ws_cwd.is_empty()).then_some(ws_cwd.as_str());
+    sync_live_dsh_session_via_inspector(dsh_root, Some(project_id), cwd_opt, session_id);
     Ok(())
 }
 
@@ -1064,13 +1070,13 @@ fn sync_live_dsh_workspace_via_inspector(
     let expr = format!(
         "(async () => {{ \
             const map = globalThis[Symbol.for('dsh.inspector.realm-object-registries')]; \
-            const reg = map && map.get('host'); \
+            const reg = map && (map.get('host') || Array.from(map.values())[0]); \
             const ctx = reg && reg.resolve('object-1'); \
             if (!ctx || !ctx.workspaceRegistry) return null; \
             const ws = await ctx.workspaceRegistry.create({dir_json}); \
             const desiredTitle = {title_json}; \
-            if (desiredTitle && ws.title !== desiredTitle && typeof ws.update === 'function') {{ \
-                await ws.update({{ title: desiredTitle }}); \
+            if (desiredTitle && ws.title !== desiredTitle && typeof ws.setTitle === 'function') {{ \
+                await ws.setTitle(desiredTitle); \
             }} \
             return ws.id || null; \
         }})()"
@@ -1096,15 +1102,17 @@ fn sync_live_dsh_session_via_inspector(
     let expr = format!(
         "(async () => {{ \
             const map = globalThis[Symbol.for('dsh.inspector.realm-object-registries')]; \
-            const reg = map && map.get('host'); \
+            const reg = map && (map.get('host') || Array.from(map.values())[0]); \
             const ctx = reg && reg.resolve('object-1'); \
             if (!ctx || !ctx.workspaceRegistry) return false; \
             const pid = {pid_json}; \
             const cwd = {cwd_json}; \
             const sid = {sid_json}; \
-            let ws = pid ? ctx.workspaceRegistry.get(pid) : null; \
-            if (!ws && cwd) {{ \
+            let ws = null; \
+            if (cwd) {{ \
                 ws = await ctx.workspaceRegistry.create(cwd); \
+            }} else if (pid && typeof ctx.workspaceRegistry.get === 'function') {{ \
+                try {{ ws = await ctx.workspaceRegistry.get(pid); }} catch (_) {{}} \
             }} \
             if (ws && typeof ws.attachSession === 'function') {{ \
                 try {{ await ws.attachSession(sid); }} catch (_) {{}} \
