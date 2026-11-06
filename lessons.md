@@ -67,3 +67,21 @@
 - 修复：每次 `send` 和 `status` 使用独立 HTTP client，禁用重定向与自动重试。未验证 `dack` 保留后续回读能力，响应 wire 版本不兼容时拒绝作为证据。
 - 验证点：`cargo test -p fleet-hub` 的 `session_and_capability_sends_use_separate_connections`、`unverified_done_can_be_read_again_for_core_verification` 和 `conflicting_response_wire_version_is_rejected` 覆盖该边界。
 - 复发记录：Seen 1x (2026-11-04)。
+
+### doctor 读库失败不能报成 schema 漂移（2026-11-06）
+
+**sqlite 只读打开在 hot-WAL 下失败时，gate 报 schema_status=unreadable（或重试后读到列），绝不能把 SQLITE_CANTOPEN 记成「列缺失／diverged」。**
+
+- 起因与后果：`a29dfdd` 前，Antigravity daemon 的 hot-WAL 窗口让 `sqlite3 -readonly` 报 SQLITE_CANTOPEN，gate 误报 `diverged (all columns missing)`。
+- 修复与证据：`a29dfdd` — 3 次重试；持续读失败用独立的 `schema_status=unreadable`；`read_sqlite_table_columns` 回退 plain open 仅做 PRAGMA table_info（查询不写；plain open 只做标准 WAL 恢复）。本机 daemon 忙碌下 `doctor --gate` 3/3 绿。
+- 正确做法（Done right）：只读探测与 schema 比对分开；打开失败是可达性／锁问题，不是列集合证据。
+- 验证点：在 Antigravity daemon 忙碌时跑 `doctor --gate`，确认不出现「all columns missing」；人为不可读路径应得到 unreadable 而非 diverged。
+- 复发记录：Seen 1x (2026-11-06)。
+
+### ZCode 与 DSH 桌面侧栏可见性必须对齐宿主源码查询条件与内存态（2026-11-07）
+
+**ZCode Desktop 侧栏按 `provider = 'glm'` 过滤 `v2/tasks-index.sqlite` 且从 `cli/db/db.sqlite` 的 `part` 表渲染消息；DSH Desktop 的 `SingleJsonUnit` 在启动时把 `workspace.json` 读入内存且不监听磁盘文件变化，必须经由 `127.0.0.1:9230` Inspector CDP 同步宿主内存态并广播 `api-session/added`。**
+
+- 起因与后果：`attach_zcode_session_to_tasks_index` 此前未写 `provider` 列（留空为 `NULL`），且在真实 `zcode` CLI 已写入完整消息与 `part` 行后又额外插入无 `part` 行的 `message` 记录，导致会话在 ZCode Desktop 侧栏被 `WHERE provider='glm'` 完全过滤，点开时还会多出空白消息气泡；DSH Desktop 则因 `SingleJsonUnit` 只认内存态，仅改磁盘 `workspace.json` 不会刷新已打开的桌面侧栏。
+- 正确做法：`crates/fleet-daemon/src/tri_hosts.rs` 写入 ZCode `tasks` 表时固定填齐 `provider = 'glm'`、`title_overridden = 1`、`cli_session_present = 1` 与 `meta_json`，仅在无真实 CLI `part` 行时才补写 fallback `message` + `part`；写入 DSH 实机 `~/.dsh` 时通过 `127.0.0.1:9230` 调用 `ctx.workspaceRegistry` 与 `ctx.emit('api-session/added', item)`。
+- 复发记录：Seen 1x (2026-11-07)。

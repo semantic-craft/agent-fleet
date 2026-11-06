@@ -272,7 +272,7 @@ pub fn read_codex_thread_with_retry(
     const PREVIEW_ATTEMPTS: u32 = 4;
     const DELAY_MS: u64 = 250;
     let mut last: Option<CodexThreadRow> = None;
-    for attempt in 1..=ROW_ATTEMPTS {
+    for _attempt in 1..=ROW_ATTEMPTS {
         if let Some(row) = read_codex_thread(sqlite3_bin, db_path, thread_id)? {
             last = Some(row);
             break;
@@ -644,6 +644,7 @@ pub fn ensure_dsh_native_workspace(
     }
     let storages_dir = dsh_root.join("storages");
     fs::create_dir_all(&storages_dir)?;
+    let _ = sync_live_dsh_workspace_via_inspector(dsh_root, project_dir, title);
     let ws_path = storages_dir.join("workspace.json");
     let mut doc: Value = if ws_path.exists() {
         serde_json::from_slice(&fs::read(&ws_path)?).map_err(|e| {
@@ -795,6 +796,7 @@ pub fn attach_dsh_session_to_workspace(
     fs::write(&tmp_path, &bytes)?;
     fs::rename(&tmp_path, &ws_path)?;
     refresh_running_dsh_desktop_app_if_matching_home(dsh_root, &bytes, None);
+    sync_live_dsh_session_via_inspector(dsh_root, Some(project_id), None, session_id);
     Ok(())
 }
 
@@ -870,6 +872,8 @@ pub fn sync_dsh_session_title_in_projcache(
             Some((&projcache_path, &bytes)),
         );
     }
+    let cwd_opt = (!cwd_str.is_empty()).then_some(cwd_str.as_str());
+    sync_live_dsh_session_via_inspector(dsh_root, None, cwd_opt, session_id);
     Ok(())
 }
 
@@ -990,6 +994,132 @@ fn refresh_running_dsh_desktop_app_if_matching_home(
     if let Some((pc_path, pc_bytes)) = projcache_override {
         let _ = fs::write(pc_path, pc_bytes);
     }
+}
+
+/// Evaluates an async JavaScript expression inside the running DeepSeek Harness Desktop
+/// host process (`127.0.0.1:9230` Inspector CDP endpoint) when `dsh_root` is the user's
+/// live `~/.dsh` directory. Fails soft (`None`) when the desktop app is not running or
+/// the inspector port is closed.
+fn eval_dsh_live_inspector_js(dsh_root: &Path, expression: &str) -> Option<Value> {
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    if !is_live_user_dsh_root(dsh_root, home.as_deref()) {
+        return None;
+    }
+    let addr: std::net::SocketAddr = "127.0.0.1:9230".parse().ok()?;
+    let mut http_stream = TcpStream::connect_timeout(&addr, Duration::from_millis(600)).ok()?;
+    let _ = http_stream.set_read_timeout(Some(Duration::from_millis(1000)));
+    let _ = http_stream.set_write_timeout(Some(Duration::from_millis(1000)));
+    http_stream
+        .write_all(b"GET /json HTTP/1.1\r\nHost: 127.0.0.1:9230\r\nConnection: close\r\n\r\n")
+        .ok()?;
+    let mut raw_resp = String::new();
+    http_stream.read_to_string(&mut raw_resp).ok()?;
+    let (_, body) = raw_resp.split_once("\r\n\r\n")?;
+    let targets: Vec<Value> = serde_json::from_str(body.trim()).ok()?;
+    let ws_url = targets
+        .first()?
+        .get("webSocketDebuggerUrl")
+        .and_then(Value::as_str)?;
+
+    let ws_stream = TcpStream::connect_timeout(&addr, Duration::from_millis(600)).ok()?;
+    let _ = ws_stream.set_read_timeout(Some(Duration::from_millis(2500)));
+    let _ = ws_stream.set_write_timeout(Some(Duration::from_millis(2500)));
+    let config = WebSocketConfig::default()
+        .max_message_size(Some(4 * 1024 * 1024))
+        .max_frame_size(Some(4 * 1024 * 1024));
+    let (mut ws, _) = client_with_config(ws_url, ws_stream, Some(config)).ok()?;
+    let req = json!({
+        "id": 1,
+        "method": "Runtime.evaluate",
+        "params": {
+            "expression": expression,
+            "awaitPromise": true,
+            "returnByValue": true,
+        }
+    });
+    ws.send(Message::Text(req.to_string().into())).ok()?;
+    for _ in 0..16 {
+        let Ok(msg) = ws.read() else {
+            break;
+        };
+        if let Message::Text(text) = msg {
+            if let Ok(val) = serde_json::from_str::<Value>(&text) {
+                if val.get("id") == Some(&json!(1)) {
+                    let _ = ws.close(None);
+                    return val.pointer("/result/result/value").cloned();
+                }
+            }
+        }
+    }
+    None
+}
+
+fn sync_live_dsh_workspace_via_inspector(
+    dsh_root: &Path,
+    project_dir: &Path,
+    title: &str,
+) -> Option<String> {
+    let dir_json = serde_json::to_string(&project_dir.to_string_lossy()).ok()?;
+    let title_json = serde_json::to_string(title).ok()?;
+    let expr = format!(
+        "(async () => {{ \
+            const map = globalThis[Symbol.for('dsh.inspector.realm-object-registries')]; \
+            const reg = map && map.get('host'); \
+            const ctx = reg && reg.resolve('object-1'); \
+            if (!ctx || !ctx.workspaceRegistry) return null; \
+            const ws = await ctx.workspaceRegistry.create({dir_json}); \
+            const desiredTitle = {title_json}; \
+            if (desiredTitle && ws.title !== desiredTitle && typeof ws.update === 'function') {{ \
+                await ws.update({{ title: desiredTitle }}); \
+            }} \
+            return ws.id || null; \
+        }})()"
+    );
+    eval_dsh_live_inspector_js(dsh_root, &expr)?
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+fn sync_live_dsh_session_via_inspector(
+    dsh_root: &Path,
+    project_id: Option<&str>,
+    cwd: Option<&str>,
+    session_id: &str,
+) {
+    let pid_json = serde_json::to_string(&project_id.unwrap_or_default()).unwrap_or_else(|_| "\"\"".into());
+    let cwd_json = serde_json::to_string(&cwd.unwrap_or_default()).unwrap_or_else(|_| "\"\"".into());
+    let sid_json = match serde_json::to_string(session_id) {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    let expr = format!(
+        "(async () => {{ \
+            const map = globalThis[Symbol.for('dsh.inspector.realm-object-registries')]; \
+            const reg = map && map.get('host'); \
+            const ctx = reg && reg.resolve('object-1'); \
+            if (!ctx || !ctx.workspaceRegistry) return false; \
+            const pid = {pid_json}; \
+            const cwd = {cwd_json}; \
+            const sid = {sid_json}; \
+            let ws = pid ? ctx.workspaceRegistry.get(pid) : null; \
+            if (!ws && cwd) {{ \
+                ws = await ctx.workspaceRegistry.create(cwd); \
+            }} \
+            if (ws && typeof ws.attachSession === 'function') {{ \
+                try {{ await ws.attachSession(sid); }} catch (_) {{}} \
+            }} \
+            if (ctx.sessionController && typeof ctx.emit === 'function') {{ \
+                const list = await ctx.sessionController.list({{}}, new AbortController().signal); \
+                const item = list && list.items && list.items.find(i => i.sessionId === sid); \
+                if (item) {{ \
+                    ctx.emit('api-session/added', item); \
+                }} \
+            }} \
+            return true; \
+        }})()"
+    );
+    let _ = eval_dsh_live_inspector_js(dsh_root, &expr);
 }
 
 /// Reads back a session snapshot from `<dsh_root>/storages/session_projcache/sessions/<session_id>.json`
@@ -1637,10 +1767,12 @@ CREATE TABLE IF NOT EXISTS tasks (\
     workspace_path TEXT NOT NULL,\
     workspace_identity TEXT,\
     task_id TEXT NOT NULL,\
+    trace_id TEXT,\
     title TEXT NOT NULL DEFAULT '',\
+    title_overridden INTEGER NOT NULL DEFAULT 0,\
     task_status TEXT NOT NULL DEFAULT 'normal',\
     provider TEXT,\
-    mode TEXT NOT NULL DEFAULT 'build',\
+    mode TEXT NOT NULL DEFAULT 'default',\
     model TEXT,\
     created_at INTEGER NOT NULL,\
     updated_at INTEGER NOT NULL,\
@@ -1649,12 +1781,23 @@ CREATE TABLE IF NOT EXISTS tasks (\
     pinned INTEGER NOT NULL DEFAULT 0,\
     archived INTEGER NOT NULL DEFAULT 0,\
     deleted INTEGER NOT NULL DEFAULT 0,\
+    deleted_at INTEGER,\
+    meta_json TEXT,\
+    meta_mtime_ms INTEGER,\
+    cli_session_present INTEGER NOT NULL DEFAULT 0,\
+    cli_deleted INTEGER NOT NULL DEFAULT 0,\
+    cli_deleted_at INTEGER,\
+    cli_title TEXT,\
+    cli_title_source TEXT,\
+    cli_created_at INTEGER,\
+    cli_updated_at INTEGER,\
+    cli_last_turn_id TEXT,\
+    cli_last_outcome TEXT,\
+    cli_last_error TEXT,\
+    cli_summary_mtime_ms INTEGER,\
     host_id TEXT NOT NULL DEFAULT 'local',\
     root_path TEXT,\
     project_id TEXT,\
-    cli_title TEXT,\
-    cli_created_at INTEGER,\
-    cli_updated_at INTEGER,\
     PRIMARY KEY (workspace_key, task_id)\
 );\
 CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_host_task ON tasks(host_id, task_id);\
@@ -1688,6 +1831,14 @@ CREATE TABLE IF NOT EXISTS message (\
     time_updated INTEGER NOT NULL,\
     data TEXT NOT NULL,\
     sequence INTEGER\
+);\
+CREATE TABLE IF NOT EXISTS part (\
+    id TEXT PRIMARY KEY,\
+    message_id TEXT NOT NULL,\
+    session_id TEXT NOT NULL,\
+    time_created INTEGER NOT NULL,\
+    time_updated INTEGER NOT NULL,\
+    data TEXT NOT NULL\
 );\
 ";
 
@@ -1739,6 +1890,7 @@ pub struct ZcodeSessionSnapshot {
     pub title: String,
     pub cwd: PathBuf,
     pub workspace_key: String,
+    pub provider: String,
     pub task_status: String,
     pub message_count: usize,
     pub archived: i64,
@@ -2037,24 +2189,66 @@ pub fn attach_zcode_session_to_tasks_index(
     let esc_sid = escape_sql_literal(session_id);
     let esc_title = escape_sql_literal(title);
     let esc_pid = escape_sql_literal(project_id);
+    let esc_tid = escape_sql_literal(turn_id);
+    let now_iso = current_time_iso();
+    let meta_json = serde_json::json!({
+        "taskId": session_id,
+        "traceId": session_id,
+        "title": title,
+        "titleOverridden": true,
+        "workspacePath": root_str,
+        "createdAt": now_iso,
+        "updatedAt": now_iso,
+        "mode": "default",
+        "provider": "glm",
+        "status": "completed",
+    })
+    .to_string();
+    let esc_meta_json = escape_sql_literal(&meta_json);
 
     let tasks_sql = format!(
         "INSERT INTO tasks (\
-            workspace_key, workspace_path, task_id, title, task_status, host_id, \
-            root_path, project_id, cli_title, cli_created_at, cli_updated_at, \
+            workspace_key, workspace_path, task_id, trace_id, title, title_overridden, \
+            task_status, provider, mode, host_id, root_path, project_id, \
+            meta_json, meta_mtime_ms, cli_session_present, cli_deleted, \
+            cli_title, cli_title_source, cli_created_at, cli_updated_at, \
+            cli_last_turn_id, cli_last_outcome, \
             created_at, updated_at, deleted, archived\
          ) VALUES (\
-            '{esc_wk}', '{esc_root}', '{esc_sid}', '{esc_title}', 'normal', 'local', \
-            '{esc_root}', '{esc_pid}', '{esc_title}', {now_ms}, {now_ms}, \
+            '{esc_wk}', '{esc_root}', '{esc_sid}', '{esc_sid}', '{esc_title}', 1, \
+            'normal', 'glm', 'default', 'local', '{esc_root}', '{esc_pid}', \
+            '{esc_meta_json}', {now_ms}, 1, 0, \
+            '{esc_title}', 'custom', {now_ms}, {now_ms}, \
+            '{esc_tid}', 'completed', \
             {now_ms}, {now_ms}, 0, 0\
          ) ON CONFLICT(workspace_key, task_id) DO UPDATE SET \
             project_id = excluded.project_id, \
             root_path = excluded.root_path, \
             workspace_path = excluded.workspace_path, \
+            provider = 'glm', \
+            mode = COALESCE(NULLIF(tasks.mode, ''), 'default'), \
             title = CASE WHEN tasks.title = '' THEN excluded.title ELSE tasks.title END, \
+            title_overridden = 1, \
+            cli_title = CASE WHEN COALESCE(tasks.cli_title, '') = '' THEN excluded.cli_title ELSE tasks.cli_title END, \
+            cli_session_present = 1, \
+            cli_deleted = 0, \
+            cli_created_at = COALESCE(tasks.cli_created_at, excluded.cli_created_at), \
+            cli_updated_at = excluded.cli_updated_at, \
+            cli_last_turn_id = excluded.cli_last_turn_id, \
+            cli_last_outcome = COALESCE(tasks.cli_last_outcome, 'completed'), \
+            meta_json = COALESCE(tasks.meta_json, excluded.meta_json), \
+            meta_mtime_ms = excluded.meta_mtime_ms, \
             deleted = 0, \
             archived = 0, \
-            updated_at = excluded.updated_at;"
+            updated_at = excluded.updated_at; \
+         UPDATE tasks SET \
+            provider = 'glm', \
+            mode = COALESCE(NULLIF(mode, ''), 'default'), \
+            title_overridden = 1, \
+            cli_session_present = 1, \
+            cli_deleted = 0, \
+            cli_last_outcome = COALESCE(cli_last_outcome, 'completed') \
+         WHERE provider IS NULL AND project_id IS NOT NULL;"
     );
     exec_sqlite_write(
         sqlite3_bin,
@@ -2064,14 +2258,20 @@ pub fn attach_zcode_session_to_tasks_index(
     )?;
 
     let esc_cli_pid = escape_sql_literal(&cli_proj_id);
-    let esc_tid = escape_sql_literal(turn_id);
     let msg_json = serde_json::json!({
         "role": "user",
         "turn_id": turn_id,
         "text": prompt,
+        "time": { "created": now_ms },
     })
     .to_string();
     let esc_msg_json = escape_sql_literal(&msg_json);
+    let part_json = serde_json::json!({
+        "type": "text",
+        "text": prompt,
+    })
+    .to_string();
+    let esc_part_json = escape_sql_literal(&part_json);
 
     let cli_sql = format!(
         "INSERT INTO session (\
@@ -2080,12 +2280,26 @@ pub fn attach_zcode_session_to_tasks_index(
             '{esc_sid}', '{esc_cli_pid}', '{esc_sid}', '{esc_root}', '{esc_root}', '{esc_title}', '0.17.1', {now_ms}, {now_ms}\
          ) ON CONFLICT(id) DO UPDATE SET \
             directory = excluded.directory, \
+            title = CASE WHEN session.title = '' OR session.title LIKE 'New session - %' THEN excluded.title ELSE session.title END, \
             time_updated = excluded.time_updated; \
+         DELETE FROM message \
+         WHERE session_id = '{esc_sid}' \
+           AND NOT EXISTS (SELECT 1 FROM part p WHERE p.message_id = message.id); \
          INSERT OR IGNORE INTO message (\
             id, session_id, time_created, time_updated, data, sequence\
-         ) VALUES (\
+         ) SELECT \
             '{esc_tid}', '{esc_sid}', {now_ms}, {now_ms}, '{esc_msg_json}', \
-            COALESCE((SELECT MAX(sequence) + 1 FROM message WHERE session_id = '{esc_sid}'), 0)\
+            COALESCE((SELECT MAX(sequence) + 1 FROM message WHERE session_id = '{esc_sid}'), 0) \
+         WHERE NOT EXISTS (\
+            SELECT 1 FROM message m JOIN part p ON p.message_id = m.id \
+            WHERE m.session_id = '{esc_sid}' AND json_extract(m.data, '$.turn_id') IS NULL\
+         ); \
+         INSERT OR IGNORE INTO part (\
+            id, message_id, session_id, time_created, time_updated, data\
+         ) SELECT \
+            'prt_{esc_tid}', '{esc_tid}', '{esc_sid}', {now_ms}, {now_ms}, '{esc_part_json}' \
+         WHERE EXISTS (\
+            SELECT 1 FROM message m WHERE m.id = '{esc_tid}' AND m.session_id = '{esc_sid}'\
          );"
     );
     exec_sqlite_write(
@@ -2119,6 +2333,7 @@ pub fn read_zcode_session(
 
     let task_query = format!(
         "SELECT workspace_key, workspace_path, task_id, title, task_status, \
+         COALESCE(provider, '') AS provider, \
          COALESCE(root_path, workspace_path) AS root_path, COALESCE(project_id, '') AS project_id, \
          archived, deleted \
          FROM tasks WHERE task_id = '{session_id}' AND deleted = 0 LIMIT 1;"
@@ -2179,6 +2394,11 @@ pub fn read_zcode_session(
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string(),
+        provider: task_row
+            .get("provider")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
         task_status: task_row
             .get("task_status")
             .and_then(Value::as_str)
@@ -2226,6 +2446,12 @@ pub fn verify_zcode_session_binding(
         return Err(HostAdapterError::ZcodeProtocol(format!(
             "session {} is archived in tasks-index.sqlite and invisible in sidebar",
             snap.session_id
+        )));
+    }
+    if snap.provider != "glm" {
+        return Err(HostAdapterError::ZcodeProtocol(format!(
+            "session {} has provider {:?} in tasks-index.sqlite (expected 'glm' for ZCode Desktop sidebar visibility)",
+            snap.session_id, snap.provider
         )));
     }
     if snap.message_count == 0 {

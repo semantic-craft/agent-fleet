@@ -1333,6 +1333,7 @@ fn five_hosts_and_open_engine_cli_mcp_interoperability() {
                 f.projects_root.join("self-dev-zcode")
             );
             assert_eq!(session_snapshot.session_id, "sess_zcode_relay_1");
+            assert_eq!(session_snapshot.provider, "glm");
             assert_eq!(session_snapshot.message_count, 2);
             assert_eq!(turn_ids.len(), 2);
         }

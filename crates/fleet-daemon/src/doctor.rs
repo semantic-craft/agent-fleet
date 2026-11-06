@@ -114,7 +114,15 @@ pub fn schema_expectations(host: DesktopHostKind) -> Vec<SchemaExpectation> {
             SchemaExpectation {
                 db: "tasks-index",
                 table: "tasks",
-                columns: &["task_id", "title", "project_id", "task_status"],
+                columns: &[
+                    "task_id",
+                    "title",
+                    "project_id",
+                    "task_status",
+                    "provider",
+                    "cli_created_at",
+                    "cli_updated_at",
+                ],
             },
             SchemaExpectation {
                 db: "tasks-index",
@@ -140,6 +148,11 @@ pub fn schema_expectations(host: DesktopHostKind) -> Vec<SchemaExpectation> {
                 db: "cli-db",
                 table: "message",
                 columns: &["id", "session_id", "data", "sequence"],
+            },
+            SchemaExpectation {
+                db: "cli-db",
+                table: "part",
+                columns: &["id", "message_id", "session_id", "data"],
             },
         ],
         DesktopHostKind::OpenaiDots => vec![
