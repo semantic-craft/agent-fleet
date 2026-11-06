@@ -2026,7 +2026,9 @@ pub fn ensure_zcode_sidebar_project(
          LEFT JOIN project_roots r ON p.project_id = r.project_id \
          WHERE (r.root_path = '{escaped_root}' OR (p.name = '{escaped_title}' AND p.host_id = 'local')) \
            AND p.deleted = 0 \
-         ORDER BY CASE WHEN r.root_path = '{escaped_root}' THEN 0 ELSE 1 END, p.position ASC \
+         ORDER BY CASE WHEN p.name = '{escaped_title}' AND p.host_id = 'local' THEN 0 \
+                       WHEN r.root_path = '{escaped_root}' THEN 1 \
+                       ELSE 2 END, p.position ASC \
          LIMIT 1;"
     );
     let existing = run_sqlite_json(
@@ -2047,6 +2049,10 @@ pub fn ensure_zcode_sidebar_project(
     let upsert_sql = format!(
         "INSERT OR IGNORE INTO hosts (host_id, kind, position) \
          VALUES ('local', 'local', 0); \
+         UPDATE projects SET deleted = 1, updated_at = {now_ms} \
+         WHERE project_id != '{escaped_pid}' AND deleted = 0 \
+           AND ( (host_id = 'local' AND name = '{escaped_title}') \
+                 OR project_id IN (SELECT project_id FROM project_roots WHERE root_path = '{escaped_root}') ); \
          INSERT INTO projects (project_id, host_id, name, position, deleted, created_at, updated_at) \
          VALUES ('{escaped_pid}', 'local', '{escaped_title}', 0, 0, {now_ms}, {now_ms}) \
          ON CONFLICT(project_id) DO UPDATE SET \
@@ -2055,7 +2061,9 @@ pub fn ensure_zcode_sidebar_project(
             updated_at = excluded.updated_at; \
          INSERT INTO project_roots (project_id, root_path, position, is_primary) \
          VALUES ('{escaped_pid}', '{escaped_root}', 0, 1) \
-         ON CONFLICT(project_id, root_path) DO UPDATE SET is_primary = 1;"
+         ON CONFLICT(project_id, root_path) DO UPDATE SET is_primary = 1; \
+         UPDATE tasks SET project_id = '{escaped_pid}' \
+         WHERE root_path = '{escaped_root}' AND COALESCE(project_id, '') != '{escaped_pid}';"
     );
     exec_sqlite_write(
         sqlite3_bin,

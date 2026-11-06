@@ -771,7 +771,7 @@ fn dispatch_unified_message(
         let mut adapter =
             build_configured_adapter(host_kind, projects_root, state_root, rt)?;
         let binding = adapter
-            .ensure_sidebar_project(slug, Some(&resolved_title))
+            .ensure_sidebar_project(slug, None)
             .map_err(|e| e.to_string())?;
         let receipt = if let Some(session_id) = resolved_session_id {
             let req = DeliverTurnRequest {
