@@ -63,6 +63,18 @@ Slice B 已将 Cargo 编译与 session directory 隔离行为测试接入同一�
 | R | 落地 Reason Network 级 CLI 与 MCP 开放入口 (`fleet-cli who/send/mcp/setup/doctor/agents`) | 下方 Slice R 的 Done Predicate |
 | S | 升级仓库对外开源文档与架构设计 (`README.md`、`DESIGN.md`、`docs/desktop-rea-dossier.md`) | 下方 Slice S 的 Done Predicate |
 | T | 五大桌面 Agent + 外部开源 Agent 互通闭环验证、合入 `main` 与零遗留收口 | 下方 Slice T 的 Done Predicate |
+| U | 修复真实 Runtime 自动探测与彻底废除生产 Accepted 影子降级 | 下方 Slice U 的 Done Predicate |
+| V | 修复真实 ZCode 表结构对齐与消除 SQL 注入写死时间戳 | 下方 Slice V 的 Done Predicate |
+| W | DSH 消除进程强杀、优先 Gateway 模式并打通全链路模型透传 | 下方 Slice W 的 Done Predicate |
+| X | 对等信封升级会话级寻址 (host/slug#session) 与双向防串信投递 | 下方 Slice X 的 Done Predicate |
+| Y | 接入 Herdr 派活清单与 doctor 真实环境契约探测 | 下方 Slice Y 的 Done Predicate |
+| Z | 宿主契约门禁、诚实收据与发布闭环 | 下方 Slice Z 的 Done Predicate |
+| AA | 修复 desktop_delivery_disconnect 高负载 flaky 与 fixture 挂死 | 下方 Slice AA 的 Done Predicate |
+| AB | 独立核验并自底向上合入三源合一 6-PR 堆叠栈 (`#119`–`#124`) 及本机双二进制原子发布 | 下方 Slice AB 的 Done Predicate |
+| AC | 阿里云自托管 `fleet-workbench-server` 实网切换、主动外呼 Connector 联调与 `alma-relay-ops` 退役 | 下方 Slice AC 的 Done Predicate |
+| AD | 将 6 宿主探测、路径模板与增量游标收敛为声明式 `HostSpec` 驱动表 | 下方 Slice AD 的 Done Predicate |
+| AE | 为 `(OrderSeq, UpdatedSeq)` 序列器、33ms 合并器与代际租约补齐状态机属性测试 | 下方 Slice AE 的 Done Predicate |
+| AF | 在 `FleetLedgerStore` 实现基于 `UpdatedSeq` 水位线的幂等冷热分层压缩 (`fleet-cli ledger compact`) | 下方 Slice AF 的 Done Predicate |
 
 ### [x] Slice A: 盘点与接力入口
 - **Playbook**: `Investigation`
@@ -229,3 +241,33 @@ Slice B 已将 Cargo 编译与 session directory 隔离行为测试接入同一�
 - **Outcome**: 三个机制修复：(1) 断言失败根因——客户端 2s 预检预算在调度饥饿下返回 `Unavailable` 而非 `Unknown`（release 日志 line 340 实证），fixture 客户端预算 2s→10s；(2) 服务器 3s 读超时提前退出的竞态余量，3s→30s 并补写超时；(3) 压测中实抓的挂死机制——客户端在 WS 握手前失败时 `accept()` 无限阻塞使 `Fixture::drop` 的 join 挂起（观测到 7 分钟僵尸进程），改为非阻塞轮询 + 60s 硬期限，并新增永久回归测试 `fixture_drop_does_not_hang_when_client_never_connects`（300ms 预算经 `Behavior.accept_budget_ms` 字段注入，无 env 竞态）。
 - **Done Predicate**: `scripts/check` 全绿；desktop_delivery 19/19（含新回归测试）；修复后二进制在 8×CPU 负载 + `--test-threads=16` 下 150/150 通过；无 >5s 的 fixture drop。
 - **Evidence**: 修复后 8×CPU 负载 + --test-threads=16 压测 150/150 通过（修复前同型负载 200 次未复现断言型失败但实抓挂死僵尸进程）；scripts/check 13/13 绿（receipt .scratch/pstack-relay/checks/20261106T024130.005023Z）；原始失败 panic 见 release 日志。
+
+### [x] Slice AB: 独立核验并自底向上合入三源合一 6-PR 堆叠栈 (`#119`–`#124`) 及本机双二进制原子发布
+- **Playbook**: `Shipping`
+- **Outcome**: 按 `playbooks/shipping.md` 与 `merge-safety.md` 独立核验 `#119` 至 `#124` 的 `git patch-id` 与契约测试，自底向上依次 Squash 合入 `main`；升级 `scripts/release` 在临时 `CARGO_TARGET_DIR` 中构建并将 `fleet-cli` 与 `fleet-workbench-server` 原子安装至 `~/.local/bin/`，完成 MCP stdio 冒烟与 `fleet-cli doctor --gate` 校验；将受控上下文区间会话队列 (`Slice AB` 至 `Slice AF`) 写入 `docs/pstack-relay.md` 并产出下一棒启动提示词。
+- **Done Predicate**: `#119` 至 `#124` 全部 `MERGED` 入 `main`；`python3 scripts/release` 退出码 `0`；`~/.local/bin/fleet-cli doctor --gate` 与 `~/.local/bin/fleet-workbench-server --help` 退出码 `0`；`scripts/check` 绿灯。
+- **Evidence**: b73e8eb619ad5e8ab3e5877c8d2fee0381d61e63;~/.local/bin/fleet-cli;~/.local/bin/fleet-workbench-server;scripts/release;docs/pstack-relay.md
+
+### [ ] Slice AC: 阿里云自托管 `fleet-workbench-server` 实网切换、主动外呼 Connector 联调与 `alma-relay-ops` 退役
+- **Playbook**: `Feature`
+- **Outcome**: 在受控单会话上下文预算 (`<= 6` 个工作集文件：`docker/Dockerfile.workbench`、`docker/docker-compose.aliyun.yml`、`crates/fleet-daemon/src/connector_ws.rs`、`crates/fleet-cli/src/main.rs`、`docs/landscape.md`) 内完成阿里云节点 `fleet-workbench-server` 部署与本机 `fleet-cli connector --server wss://<aliyun-host>/ws/v2/connector` 实网联调，验证手机/网页端与本机桌面宿主双向时间线同步及代际租约切换，并在 `docs/landscape.md` 完成 `alma-relay-ops` 退役收口。
+- **Done Predicate**: `fleet-cli doctor --workbench https://<aliyun-host> --gate` 退出码 `0`（若无线上凭据则通过本机 TLS/反向代理全真模拟网关与 `unified_workbench_e2e` 验证完整切换契约）；`scripts/check` 绿灯。
+- **Evidence**: PENDING
+
+### [ ] Slice AD: 将 6 宿主探测、路径模板与增量游标收敛为声明式 `HostSpec` 驱动表
+- **Playbook**: `Refactoring`
+- **Outcome**: 在受控单会话上下文预算 (`<= 5` 个工作集文件：`crates/fleet-proto/src/host.rs`、`crates/fleet-daemon/src/doctor.rs`、`crates/fleet-daemon/src/observer.rs`、`crates/fleet-daemon/src/host_adapter.rs`、`crates/fleet-daemon/src/desktop.rs`) 内，将 6 个宿主 (`openai-dots`、`cindy`、`deepseek-harness`、`antigravity-desktop`、`zcode`、`grokbot`) 的存储路径模板、SQLite/JSON Schema 期望签名、派活通道枚举与增量回读游标提取器统一收敛为声明式 `HostSpec` 静态表，消除跨文件重复分支。
+- **Done Predicate**: `cargo test -p fleet-daemon schema_contract`、`cargo test -p fleet-daemon --test timeline_observer` 与 `scripts/check` 退出码 `0`；`fleet-cli doctor --gate` 退出码 `0`。
+- **Evidence**: PENDING
+
+### [ ] Slice AE: 为 `(OrderSeq, UpdatedSeq)` 序列器、33ms 合并器与代际租约补齐状态机属性测试
+- **Playbook**: `Feature`
+- **Outcome**: 在受控单会话上下文预算 (`<= 4` 个工作集文件：`crates/fleet-proto/src/workbench.rs`、`crates/fleet-daemon/src/ledger.rs`、`crates/fleet-workbench-server/src/lib.rs`、`crates/fleet-daemon/tests/state_machine_invariants.rs`) 内，构建确定性随机交错状态机测试，注入乱序流式增量、断线重连 (`after_seq`)、并发审批 (`RuntimeNotice`) 与旧租约 (`LeaseFenced`) 抢占序列，锁死「`OrderSeq` 永不因后续更新而漂移」与「过期代际租约零落盘」两条代数不变量。
+- **Done Predicate**: `cargo test -p fleet-daemon --test state_machine_invariants` 跑通 1,000 组随机交错操作序列且 100% 通过；`scripts/check` 退出码 `0`。
+- **Evidence**: PENDING
+
+### [ ] Slice AF: 在 `FleetLedgerStore` 实现基于 `UpdatedSeq` 水位线的幂等冷热分层压缩 (`fleet-cli ledger compact`)
+- **Playbook**: `Feature`
+- **Outcome**: 在受控单会话上下文预算 (`<= 4` 个工作集文件：`crates/fleet-daemon/src/ledger.rs`、`crates/fleet-daemon/tests/ledger_wal.rs`、`crates/fleet-cli/src/main.rs`、`DESIGN.md`) 内，为 `FleetLedgerStore` 新增幂等冷热分层压缩能力与 `fleet-cli ledger compact [--before-seq <seq>]` 命令，将已终态 (`Completed`/`Failed`) 会话的中间流式增量碎片折叠为终态快照，同时严格保留每条消息的 `OrderSeq` 锚点、收据链与幂等键。
+- **Done Predicate**: `cargo test -p fleet-daemon --test ledger_wal` 证明 10,000 条流式碎片压缩后记录数减少 `> 80%`、`OrderSeq` 历史顺序零变化、重复执行 `compact` 幂等收敛且检索 `p99 < 1.0 ms`；`scripts/check` 退出码 `0`。
+- **Evidence**: PENDING
