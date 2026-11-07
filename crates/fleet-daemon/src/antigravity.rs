@@ -69,6 +69,27 @@ impl AntigravityRuntimeConfig {
             .join(format!("{conversation_id}.db"))
             .exists()
     }
+
+    pub fn cascade_turns_path(&self, conversation_id: &str) -> Option<PathBuf> {
+        let brain_transcript = self
+            .antigravity_root
+            .join("brain")
+            .join(conversation_id)
+            .join(".system_generated")
+            .join("logs")
+            .join("transcript.jsonl");
+        if brain_transcript.is_file() {
+            return Some(brain_transcript);
+        }
+        let cascade_jsonl = self
+            .antigravity_root
+            .join("cascades")
+            .join(format!("{conversation_id}.jsonl"));
+        if cascade_jsonl.is_file() {
+            return Some(cascade_jsonl);
+        }
+        None
+    }
 }
 
 /// Discovered `hub_<port>.json` record from `~/.gemini/antigravity/daemon/`.
@@ -338,6 +359,57 @@ fn parse_summary_row(row: &Value) -> Result<AntigravityConversationSummary, Host
         source,
         project_id,
     })
+}
+
+/// Lists all conversation summaries from `conversation_summaries.db` using `SQLITE_OPEN_READONLY`
+/// so native Antigravity Desktop WAL files and mtimes are never mutated.
+pub fn list_conversation_summaries_readonly(
+    db_path: &Path,
+) -> Result<Vec<AntigravityConversationSummary>, HostAdapterError> {
+    if !db_path.is_absolute() {
+        return Err(HostAdapterError::AntigravityProtocol(format!(
+            "conversation_summaries.db path must be absolute: {}",
+            db_path.display()
+        )));
+    }
+    if !db_path.exists() {
+        return Ok(Vec::new());
+    }
+    let conn = crate::tri_hosts::open_sqlite_readonly_preserve_mtime(db_path)
+        .map_err(|e| HostAdapterError::AntigravityProtocol(e.to_string()))?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT conversation_id, COALESCE(title, ''), COALESCE(preview, ''), \
+             COALESCE(step_count, 0), COALESCE(last_modified_time, ''), \
+             COALESCE(workspace_uris, '[]'), COALESCE(status, ''), COALESCE(source, ''), \
+             COALESCE(project_id, '') \
+             FROM conversation_summaries ORDER BY conversation_id ASC;",
+        )
+        .map_err(|e| HostAdapterError::AntigravityProtocol(e.to_string()))?;
+    let mut summaries = Vec::new();
+    while stmt
+        .step()
+        .map_err(|e| HostAdapterError::AntigravityProtocol(e.to_string()))?
+    {
+        let raw_uris = stmt.column_text(5);
+        let workspace_uris: Vec<String> = if raw_uris.trim().is_empty() {
+            Vec::new()
+        } else {
+            serde_json::from_str(&raw_uris).unwrap_or_default()
+        };
+        summaries.push(AntigravityConversationSummary {
+            conversation_id: stmt.column_text(0),
+            title: stmt.column_text(1),
+            preview: stmt.column_text(2),
+            step_count: stmt.column_i64(3),
+            last_modified_time: stmt.column_text(4),
+            workspace_uris,
+            status: stmt.column_text(6),
+            source: stmt.column_text(7),
+            project_id: stmt.column_text(8),
+        });
+    }
+    Ok(summaries)
 }
 
 /// Validates that a read-back `AntigravityConversationSummary` is bound to `expected_project_id`

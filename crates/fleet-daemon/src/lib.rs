@@ -15,13 +15,15 @@ pub use tri_hosts::{
     ensure_dsh_native_workspace, ensure_zcode_sidebar_project, read_cindy_transcript,
     read_codex_magpie_config, read_codex_project, read_codex_thread, read_dsh_native_session,
     read_zcode_project, read_zcode_session, run_dsh_headless_command, run_zcode_headless_command,
-    codex_thread_preview_visible, verify_codex_project_binding, verify_codex_thread_binding,
+    codex_thread_preview_visible, decompress_dsh_two_frame_zstd, list_codex_projects_readonly,
+    list_codex_threads_readonly, list_zcode_messages_readonly, list_zcode_sessions_readonly,
+    verify_codex_project_binding, verify_codex_thread_binding,
     verify_codex_thread_binding_with_preview, verify_zcode_project_binding,
     verify_zcode_session_binding, zcode_cli_project_slug, CindyRuntimeConfig, CindySessionReceipt,
     CindySessionSnapshot, CodexMagpieModelConfig, CodexProjectRow, CodexThreadRow,
     DshRuntimeConfig, DshSessionReceipt, DshSessionSnapshot, OpenAiDotsReceipt,
-    OpenAiDotsRuntimeConfig, ZcodeProjectRow, ZcodeRuntimeConfig, ZcodeSessionReceipt,
-    ZcodeSessionSnapshot,
+    OpenAiDotsRuntimeConfig, ZcodeObservedMessage, ZcodeProjectRow, ZcodeRuntimeConfig,
+    ZcodeSessionReceipt, ZcodeSessionSnapshot,
 };
 mod host_adapter;
 pub use host_adapter::{
@@ -34,6 +36,14 @@ pub use host_adapter::{
 };
 pub mod ledger;
 pub use ledger::{FleetLedgerStore, SqliteError};
+pub mod observer;
+pub use observer::{
+    ensure_no_active_native_writer, extract_fleet_message_metadata, project_host_timelines,
+    AntigravityTimelineObserver, CindyTimelineObserver, DeepSeekHarnessTimelineObserver,
+    FleetMessageEnvelopeMeta, GrokBotTimelineObserver, HostTimelineObserver,
+    NativeWriterLockGuard, ObserverCheckpoint, ObserverErrorRecord, ObserverScanReport,
+    OpenAiDotsTimelineObserver, ZcodeTimelineObserver,
+};
 mod relay_self_dev;
 pub use relay_self_dev::{
     run_host_poteto_relay, HostRelayClosureReceipt, HostRuntimeOptions,

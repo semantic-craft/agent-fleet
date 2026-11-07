@@ -45,6 +45,10 @@ pub enum HostAdapterError {
     CindyProtocol(String),
     ZcodeProtocol(String),
     ExternalAgentProtocol(String),
+    NativeWriterActive {
+        host: DesktopHostKind,
+        detail: String,
+    },
 }
 
 impl fmt::Display for HostAdapterError {
@@ -120,6 +124,12 @@ impl fmt::Display for HostAdapterError {
             }
             Self::ExternalAgentProtocol(reason) => {
                 write!(f, "external agent adapter error: {reason}")
+            }
+            Self::NativeWriterActive { host, detail } => {
+                write!(
+                    f,
+                    "NativeWriterActive: active native writer lock on {host}: {detail}"
+                )
             }
         }
     }
@@ -960,6 +970,11 @@ impl DesktopHostAdapter for OpenAiDotsAdapter {
         request: &CreateSessionRequest,
     ) -> Result<HostSessionReceipt, HostAdapterError> {
         let project = self.core.validate_create_session(request)?;
+        crate::observer::ensure_no_active_native_writer(
+            self.core.host,
+            &self.core.state_root,
+            None,
+        )?;
         let Some(runtime) = self.runtime.clone() else {
             return self.core.commit_created_session(
                 request,
@@ -970,6 +985,11 @@ impl DesktopHostAdapter for OpenAiDotsAdapter {
                 DeliveryTier::Accepted,
             );
         };
+        crate::observer::ensure_no_active_native_writer(
+            self.core.host,
+            &runtime.codex_root,
+            None,
+        )?;
         let magpie_cfg = crate::tri_hosts::read_codex_magpie_config(&runtime.codex_root);
         let resolved_model = request
             .model
@@ -1052,6 +1072,11 @@ impl DesktopHostAdapter for OpenAiDotsAdapter {
         request: &DeliverTurnRequest,
     ) -> Result<HostSessionReceipt, HostAdapterError> {
         let project = self.core.validate_deliver_turn(request)?;
+        crate::observer::ensure_no_active_native_writer(
+            self.core.host,
+            &self.core.state_root,
+            Some(&request.session_id),
+        )?;
         let Some(runtime) = self.runtime.clone() else {
             return self.core.commit_delivered_turn(
                 request,
@@ -1061,6 +1086,11 @@ impl DesktopHostAdapter for OpenAiDotsAdapter {
                 DeliveryTier::Accepted,
             );
         };
+        crate::observer::ensure_no_active_native_writer(
+            self.core.host,
+            &runtime.codex_root,
+            Some(&request.session_id),
+        )?;
         let magpie_cfg = crate::tri_hosts::read_codex_magpie_config(&runtime.codex_root);
         let resolved_model = request
             .model
@@ -1416,6 +1446,11 @@ impl DesktopHostAdapter for DeepSeekHarnessAdapter {
         request: &CreateSessionRequest,
     ) -> Result<HostSessionReceipt, HostAdapterError> {
         let project = self.core.validate_create_session(request)?;
+        crate::observer::ensure_no_active_native_writer(
+            self.core.host,
+            &self.core.state_root,
+            None,
+        )?;
         let Some(runtime) = self.runtime.clone() else {
             return self.core.commit_created_session(
                 request,
@@ -1426,6 +1461,9 @@ impl DesktopHostAdapter for DeepSeekHarnessAdapter {
                 DeliveryTier::Accepted,
             );
         };
+        if let Some(ref dsh_root) = runtime.dsh_root {
+            crate::observer::ensure_no_active_native_writer(self.core.host, dsh_root, None)?;
+        }
         let use_gateway = runtime.base_url.is_some()
             && (runtime.dsh_bin.is_none() || runtime.is_gateway_active());
         if !use_gateway {
@@ -1988,6 +2026,11 @@ impl DesktopHostAdapter for CindyAdapter {
         request: &CreateSessionRequest,
     ) -> Result<HostSessionReceipt, HostAdapterError> {
         let project = self.core.validate_create_session(request)?;
+        crate::observer::ensure_no_active_native_writer(
+            self.core.host,
+            &self.core.state_root,
+            None,
+        )?;
         let Some(runtime) = self.runtime.clone() else {
             return self.core.commit_created_session(
                 request,
@@ -1998,6 +2041,11 @@ impl DesktopHostAdapter for CindyAdapter {
                 DeliveryTier::Accepted,
             );
         };
+        crate::observer::ensure_no_active_native_writer(
+            self.core.host,
+            &runtime.cindy_root,
+            None,
+        )?;
         if runtime.is_anet_bridge() {
             let (session_key, turn_id, tier) = crate::tri_hosts::dispatch_cindy_via_anet_bridge(
                 &runtime,
@@ -2085,6 +2133,11 @@ impl DesktopHostAdapter for CindyAdapter {
         request: &DeliverTurnRequest,
     ) -> Result<HostSessionReceipt, HostAdapterError> {
         let project = self.core.validate_deliver_turn(request)?;
+        crate::observer::ensure_no_active_native_writer(
+            self.core.host,
+            &self.core.state_root,
+            Some(&request.session_id),
+        )?;
         let Some(runtime) = self.runtime.clone() else {
             return self.core.commit_delivered_turn(
                 request,
@@ -2094,6 +2147,11 @@ impl DesktopHostAdapter for CindyAdapter {
                 DeliveryTier::Accepted,
             );
         };
+        crate::observer::ensure_no_active_native_writer(
+            self.core.host,
+            &runtime.cindy_root,
+            Some(&request.session_id),
+        )?;
         if runtime.is_anet_bridge() {
             let (_session_key, turn_id, tier) = crate::tri_hosts::dispatch_cindy_via_anet_bridge(
                 &runtime,
@@ -2268,6 +2326,11 @@ impl DesktopHostAdapter for AntigravityDesktopAdapter {
         request: &CreateSessionRequest,
     ) -> Result<HostSessionReceipt, HostAdapterError> {
         let project = self.core.validate_create_session(request)?;
+        crate::observer::ensure_no_active_native_writer(
+            self.core.host,
+            &self.core.state_root,
+            None,
+        )?;
         let Some(runtime) = self.runtime.clone() else {
             return self.core.commit_created_session(
                 request,
@@ -2278,6 +2341,11 @@ impl DesktopHostAdapter for AntigravityDesktopAdapter {
                 DeliveryTier::Accepted,
             );
         };
+        crate::observer::ensure_no_active_native_writer(
+            self.core.host,
+            &runtime.antigravity_root,
+            None,
+        )?;
         let hubs = crate::antigravity::discover_antigravity_hubs(&runtime.daemon_dir())?;
         let (conversation_id, turn_id) = if let Some(hub) = hubs
             .first()
@@ -3016,6 +3084,11 @@ impl DesktopHostAdapter for ZcodeAdapter {
         request: &CreateSessionRequest,
     ) -> Result<HostSessionReceipt, HostAdapterError> {
         let project = self.core.validate_create_session(request)?;
+        crate::observer::ensure_no_active_native_writer(
+            self.core.host,
+            &self.core.state_root,
+            None,
+        )?;
         let Some(runtime) = self.runtime.clone() else {
             return self.core.commit_created_session(
                 request,
@@ -3026,6 +3099,11 @@ impl DesktopHostAdapter for ZcodeAdapter {
                 DeliveryTier::Accepted,
             );
         };
+        crate::observer::ensure_no_active_native_writer(
+            self.core.host,
+            &runtime.zcode_root,
+            None,
+        )?;
         let (session_id, turn_id) = crate::tri_hosts::run_zcode_headless_command(
             &runtime,
             &project.project_dir,
