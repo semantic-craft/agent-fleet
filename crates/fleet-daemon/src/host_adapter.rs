@@ -77,7 +77,10 @@ impl fmt::Display for HostAdapterError {
                 "session {session_id} belongs to project {expected_project_id}, not {supplied_project_id}"
             ),
             Self::DuplicateDelivery(id) => {
-                write!(f, "delivery id {id} already claimed on this host adapter")
+                write!(
+                    f,
+                    "DuplicateDelivery: delivery id {id} already claimed on this host adapter"
+                )
             }
             Self::InvalidModel(model) => write!(f, "invalid model configuration: {model}"),
             Self::ForbiddenProjectId(id) => write!(
@@ -201,11 +204,11 @@ pub struct PersistedTurnRecord {
     pub model: Option<String>,
 }
 
-/// Shared verified project-root & state engine backing each of the four canonical desktop adapters.
 #[derive(Debug)]
 struct HostLifecycleCore {
     host: DesktopHostKind,
     projects_root: PathBuf,
+    state_root: PathBuf,
     state_file: PathBuf,
     state: PersistedHostState,
 }
@@ -222,7 +225,6 @@ impl HostLifecycleCore {
         if !state_root.is_absolute() {
             return Err(ProjectPathError::InvalidRoot(state_root).into());
         }
-        // Validate root has no traversal or cache segments before touching disk.
         let _ = resolve_project_dir_in_root(&projects_root, "probe-slug")?;
         if projects_root.exists() {
             let meta = fs::symlink_metadata(&projects_root)?;
@@ -235,6 +237,8 @@ impl HostLifecycleCore {
         let canonical_projects_root = fs::canonicalize(&projects_root)?;
         fs::create_dir_all(&state_root)?;
         let state_file = state_root.join(format!("{}-state.json", host.as_str()));
+        let lock_file = state_root.join(format!("{}-state.lock", host.as_str()));
+        let _guard = crate::ledger::AdvisoryFileLock::acquire_exclusive(&lock_file)?;
         let state = if state_file.exists() {
             serde_json::from_slice(&fs::read(&state_file)?).map_err(|e| {
                 std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
@@ -245,13 +249,45 @@ impl HostLifecycleCore {
         Ok(Self {
             host,
             projects_root: canonical_projects_root,
+            state_root,
             state_file,
             state,
         })
     }
 
+    fn lock_state_file(&self) -> Result<crate::ledger::AdvisoryFileLock, HostAdapterError> {
+        let lock_file = self.state_root.join(format!("{}-state.lock", self.host.as_str()));
+        crate::ledger::AdvisoryFileLock::acquire_exclusive(&lock_file)
+    }
+
+    fn merge_disk_state(&mut self) -> Result<(), HostAdapterError> {
+        if !self.state_file.exists() {
+            return Ok(());
+        }
+        let disk: PersistedHostState =
+            serde_json::from_slice(&fs::read(&self.state_file)?).map_err(|e| {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
+            })?;
+        for (k, v) in disk.projects {
+            self.state.projects.entry(k).or_insert(v);
+        }
+        for (k, v) in disk.slug_to_project_id {
+            self.state.slug_to_project_id.entry(k).or_insert(v);
+        }
+        for (k, v) in disk.sessions {
+            self.state.sessions.entry(k).or_insert(v);
+        }
+        for d in disk.claimed_deliveries {
+            self.state.claimed_deliveries.insert(d);
+        }
+        self.state.next_session_seq = self.state.next_session_seq.max(disk.next_session_seq);
+        self.state.next_turn_seq = self.state.next_turn_seq.max(disk.next_turn_seq);
+        Ok(())
+    }
+
     fn persist(&self) -> Result<(), HostAdapterError> {
-        let tmp = self.state_file.with_extension("json.tmp");
+        let pid = std::process::id();
+        let tmp = self.state_file.with_extension(format!("json.tmp.{pid}"));
         let bytes = serde_json::to_vec_pretty(&self.state)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
         fs::write(&tmp, bytes)?;
@@ -300,8 +336,11 @@ impl HostLifecycleCore {
             }
             false
         } else {
-            fs::create_dir(&candidate)?;
-            true
+            match fs::create_dir(&candidate) {
+                Ok(()) => true,
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => false,
+                Err(e) => return Err(e.into()),
+            }
         };
         let canonical = self.verify_existing_dir_inside_root(&candidate)?;
         let workspace_uri = format!("file://{}", canonical.display());
@@ -320,6 +359,8 @@ impl HostLifecycleCore {
         project_id_override: Option<String>,
     ) -> Result<SidebarProjectBinding, HostAdapterError> {
         let dir = self.ensure_project_dir(slug)?;
+        let _guard = self.lock_state_file()?;
+        self.merge_disk_state()?;
         let resolved_title = match title {
             Some(t) => {
                 validate_nonempty_id("project title", t)?;
@@ -408,6 +449,8 @@ impl HostLifecycleCore {
         workspace_uris_override: Option<Vec<String>>,
         tier: DeliveryTier,
     ) -> Result<HostSessionReceipt, HostAdapterError> {
+        let _guard = self.lock_state_file()?;
+        self.merge_disk_state()?;
         if !self
             .state
             .claimed_deliveries
@@ -448,6 +491,18 @@ impl HostLifecycleCore {
             .sessions
             .insert(session_id.clone(), session_record);
         self.persist()?;
+        drop(_guard);
+
+        let ledger = crate::ledger::FleetLedgerStore::open(&self.state_root)?;
+        let prompt_hash = fleet_proto::sha256_hex(request.prompt.as_bytes());
+        let _ = ledger.claim_delivery(
+            self.host.as_str(),
+            &request.delivery_id,
+            &prompt_hash,
+            Some(&session_id),
+            Some(&turn_id),
+            true,
+        )?;
 
         Ok(HostSessionReceipt {
             host: self.host,
@@ -527,6 +582,8 @@ impl HostLifecycleCore {
         workspace_uris_override: Option<Vec<String>>,
         tier: DeliveryTier,
     ) -> Result<HostSessionReceipt, HostAdapterError> {
+        let _guard = self.lock_state_file()?;
+        self.merge_disk_state()?;
         if !self
             .state
             .claimed_deliveries
@@ -550,6 +607,18 @@ impl HostLifecycleCore {
             });
         }
         self.persist()?;
+        drop(_guard);
+
+        let ledger = crate::ledger::FleetLedgerStore::open(&self.state_root)?;
+        let prompt_hash = fleet_proto::sha256_hex(request.prompt.as_bytes());
+        let _ = ledger.claim_delivery(
+            self.host.as_str(),
+            &request.delivery_id,
+            &prompt_hash,
+            Some(&request.session_id),
+            Some(&turn_id),
+            true,
+        )?;
 
         Ok(HostSessionReceipt {
             host: self.host,
@@ -3218,6 +3287,17 @@ impl ExternalAgentRegistry {
             .unwrap_or_else(|| format!("{agent_id}-{slug}-session-1"));
         let turn_id = format!("{agent_id}-{delivery_id}-turn");
 
+        let ledger = crate::ledger::FleetLedgerStore::open(&self.state_root)?;
+        let prompt_hash = fleet_proto::sha256_hex(prompt.as_bytes());
+        let _ = ledger.claim_delivery(
+            &manifest.id,
+            delivery_id,
+            &prompt_hash,
+            Some(&resolved_sid),
+            Some(&turn_id),
+            true,
+        )?;
+
         let mut stdout_preview = String::new();
         let tier;
         if execute_command {
@@ -3302,11 +3382,12 @@ impl ExternalAgentRegistry {
     }
 }
 
-/// Persistent bidirectional peer mailbox store (`<state_root>/mailboxes.json`), enabling GrokBot
-/// and the five canonical desktop hosts to exchange messages, replies, and `check_inbox` pulls.
-#[derive(Debug)]
+/// Persistent bidirectional peer mailbox store backed by `FleetLedgerStore` (`<state_root>/fleet-ledger.sqlite`
+/// in WAL mode) with automatic one-time import from legacy `<state_root>/mailboxes.json`.
+#[derive(Clone, Debug)]
 pub struct FleetMailboxStore {
     state_root: PathBuf,
+    ledger: crate::ledger::FleetLedgerStore,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -3317,18 +3398,19 @@ struct PersistedMailboxState {
 
 impl FleetMailboxStore {
     pub fn new(state_root: PathBuf) -> Result<Self, HostAdapterError> {
-        if !state_root.is_absolute() {
-            return Err(ProjectPathError::InvalidRoot(state_root).into());
-        }
-        fs::create_dir_all(&state_root)?;
-        Ok(Self { state_root })
+        let ledger = crate::ledger::FleetLedgerStore::open(&state_root)?;
+        Ok(Self { state_root, ledger })
+    }
+
+    pub fn ledger(&self) -> &crate::ledger::FleetLedgerStore {
+        &self.ledger
     }
 
     pub fn mailbox_file(&self) -> PathBuf {
         self.state_root.join("mailboxes.json")
     }
 
-    fn load(&self) -> Result<PersistedMailboxState, HostAdapterError> {
+    fn load_legacy_json(&self) -> Result<PersistedMailboxState, HostAdapterError> {
         let path = self.mailbox_file();
         if !path.exists() {
             return Ok(PersistedMailboxState::default());
@@ -3342,7 +3424,7 @@ impl FleetMailboxStore {
         })
     }
 
-    fn save(&self, state: &PersistedMailboxState) -> Result<(), HostAdapterError> {
+    fn save_legacy_json(&self, state: &PersistedMailboxState) -> Result<(), HostAdapterError> {
         let path = self.mailbox_file();
         let tmp = path.with_extension("json.tmp");
         let bytes = serde_json::to_vec_pretty(state)
@@ -3352,8 +3434,11 @@ impl FleetMailboxStore {
         Ok(())
     }
 
-    /// Enqueues a peer message idempotently by `message.id`.
-    pub fn enqueue(&self, mut message: InboxMessage) -> Result<InboxMessage, HostAdapterError> {
+    /// Legacy full-JSON rewrite benchmark baseline (`mailboxes.json`).
+    pub fn enqueue_legacy_json(
+        &self,
+        mut message: InboxMessage,
+    ) -> Result<InboxMessage, HostAdapterError> {
         validate_nonempty_id("message.id", &message.id)?;
         let from_addr = PeerAddress::parse(&message.from)?;
         let to_addr = PeerAddress::parse(&message.to)?;
@@ -3369,7 +3454,7 @@ impl FleetMailboxStore {
             validate_session_id(sid)?;
         }
         validate_brief(&message.body)?;
-        let mut state = self.load()?;
+        let mut state = self.load_legacy_json()?;
         if let Some(existing) = state.messages.iter().find(|m| m.id == message.id) {
             if existing.from == message.from
                 && existing.to == message.to
@@ -3380,8 +3465,13 @@ impl FleetMailboxStore {
             return Err(HostAdapterError::DuplicateDelivery(message.id));
         }
         state.messages.push(message.clone());
-        self.save(&state)?;
+        self.save_legacy_json(&state)?;
         Ok(message)
+    }
+
+    /// Enqueues a peer message idempotently by `message.id` into the WAL ledger.
+    pub fn enqueue(&self, message: InboxMessage) -> Result<InboxMessage, HostAdapterError> {
+        self.ledger.enqueue(message)
     }
 
     /// Reads unread messages for `recipient` (supporting `<agent>`, `<agent>/<slug>`, or `<agent>[/<slug>]#<session_id>`),
@@ -3391,57 +3481,17 @@ impl FleetMailboxStore {
         recipient: &str,
         mark_delivered: bool,
     ) -> Result<Vec<InboxMessage>, HostAdapterError> {
-        let query = PeerAddress::parse(recipient)?;
-        let mut state = self.load()?;
-        let mut matched = Vec::new();
-        let mut changed = false;
-        for msg in &mut state.messages {
-            if !msg.delivered && msg.matches_recipient(&query) {
-                matched.push(msg.clone());
-                if mark_delivered {
-                    msg.delivered = true;
-                    changed = true;
-                }
-            }
-        }
-        if changed {
-            self.save(&state)?;
-        }
-        Ok(matched)
+        self.ledger.check_inbox(recipient, mark_delivered)
     }
 
     /// Reads outbound messages matching `sender` (`<agent>`, `<agent>/<slug>`, or `<agent>[/<slug>]#<session_id>`).
     pub fn check_outbox(&self, sender: &str) -> Result<Vec<InboxMessage>, HostAdapterError> {
-        let query = PeerAddress::parse(sender)?;
-        let state = self.load()?;
-        Ok(state
-            .messages
-            .into_iter()
-            .filter(|m| m.matches_sender(&query))
-            .collect())
+        self.ledger.check_outbox(sender)
     }
 
     /// Lists all messages associated with `session_id` (either as sender `#session_id`, recipient `#session_id`, or `message.session_id`).
     pub fn list_by_session(&self, session_id: &str) -> Result<Vec<InboxMessage>, HostAdapterError> {
-        let sid = validate_session_id(session_id.trim())?;
-        let state = self.load()?;
-        Ok(state
-            .messages
-            .into_iter()
-            .filter(|m| {
-                m.session_id.as_deref() == Some(sid)
-                    || m.sender_address()
-                        .ok()
-                        .and_then(|a| a.session_id)
-                        .as_deref()
-                        == Some(sid)
-                    || m.recipient_address()
-                        .ok()
-                        .and_then(|a| a.session_id)
-                        .as_deref()
-                        == Some(sid)
-            })
-            .collect())
+        self.ledger.list_by_session(session_id)
     }
 
     /// Resolves the reply route (`PeerAddress` including original `session_id`) for a given `reply_to_id`.
@@ -3476,12 +3526,11 @@ impl FleetMailboxStore {
     }
 
     pub fn get_message(&self, id: &str) -> Result<Option<InboxMessage>, HostAdapterError> {
-        let state = self.load()?;
-        Ok(state.messages.into_iter().find(|m| m.id == id))
+        self.ledger.get_message(id)
     }
 
     pub fn list_all(&self) -> Result<Vec<InboxMessage>, HostAdapterError> {
-        Ok(self.load()?.messages)
+        self.ledger.list_all_messages()
     }
 }
 
