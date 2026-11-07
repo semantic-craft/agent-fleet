@@ -1,31 +1,32 @@
-# DESIGN.md: Hybrid Agent Network + Reason Network Engine
+# DESIGN.md: Unified 3-Pillar Agent Network + Reason Network + Agents-Anywhere Workbench Engine
 
-`agent-fleet` is an open-source Rust coordination engine that synthesizes two upstream architectures into one verifiable system:
+`agent-fleet` is an open-source, pure-Rust coordination and self-hosted remote workbench engine that synthesizes three upstream architectures into one verifiable system with zero Python/multi-runtime glue:
 
 1. **[sleep2agi/agent-network](https://github.com/sleep2agi/agent-network) (ANet)**: cryptographically correlated task ledgers, single-channel operation claims, anonymous status readback (`POST /relay/send` and `POST /relay/status` on Wire v3), and explicit delivery tiers.
-2. **[reason-machines/reason-network](https://github.com/reason-machines/reason-network)**: live session directory discovery, `cwd`-follows-session process pinning, and direct injection into open desktop project threads so dispatched work appears under the left sidebar project (`~/Projects/<slug>`).
+2. **[reason-machines/reason-network](https://github.com/reason-machines/reason-network)**: live session directory discovery, `cwd`-follows-session process pinning (`fchdir`), and direct injection into open desktop project threads so dispatched work appears under the left sidebar project (`~/Projects/<slug>`).
+3. **[anywhere-labs/Agents-Anywhere](https://github.com/anywhere-labs/Agents-Anywhere) (Workbench v2)**: self-hosted `/api/v2/*` REST and WebSocket workbench (`fleet-workbench-server`), monotonic `updatedSeq` timeline sequencer (`TimelineWriteBuffer`), outbound Connector RPC (`fleet-cli connector start` over `/api/v2/connector/ws` + HTTP `/api/v2/connector/ingest` spillover), and interactive approval notice state machines.
 
 ```
 +-----------------------------------------------------------------------------------+
-|                      Any Machine Running agent-fleet (`fleet-cli`)                |
+|          Any Machine Running agent-fleet (`fleet-cli` + `fleet-workbench-server`) |
 |                                                                                   |
-|   External Open-Source Agents          CLI / Automation        ANet Hub Relay     |
-|   (Claude Code, OpenCode, Cursor, ...) (`who`, `send`, `relay`) (`fleet-hub`)     |
-|                 |                               |                     |           |
-|                 +---------------+---------------+---------------------+           |
-|                                 |                                                 |
-|                        [fleet-cli mcp / send]                                     |
-|                                 |                                                 |
-|        +------------------------+------------------------+                        |
-|        |                        |                        |                        |
-|        v                        v                        v                        |
-|  +-----------+           +-------------+          +--------------+                |
-|  |Project Dir|           |Host Adapter |          |External Agent|                |
-|  |Boundary   |           |5 Desktop UIs|          |Registry      |                |
-|  |~/Projects |           |Sidebar Sync |          |agents.d/*.json                |
-|  +-----------+           +-------------+          +--------------+                |
-|                                 |                                                 |
-|     +-------------+-------------+-------------+-------------+                     |
+|   External Open-Source Agents     CLI / Automation      Workbench v2 + ANet Hub   |
+|   (Claude Code, OpenCode, ...)    (`who`, `send`)       (`fleet-workbench-server`)|
+|                 |                        |                          |             |
+|                 +------------------------+--------------------------+             |
+|                                          |                                        |
+|                     [fleet-cli mcp / send / connector start]                      |
+|                                          |                                        |
+|        +---------------------------------+--------------------------------+       |
+|        |                                 |                                |       |
+|        v                                 v                                v       |
+|  +---------------+               +---------------+               +--------------+ |
+|  |Sandbox FS &   |               |Host Adapter + |               |Unified WAL   | |
+|  |fchdir Boundary|               |Timeline       |               |Ledger        | |
+|  |~/Projects     |               |Observer (5 UI)|               |fleet-ledger  | |
+|  +---------------+               +---------------+               +--------------+ |
+|                                          |                                        |
+|     +-------------+-------------+--------+----+-------------+                     |
 |     |             |             |             |             |                     |
 |     v             v             v             v             v                     |
 | Antigravity   OpenAI Dots   DeepSeek      Cindy         ZCode                     |

@@ -1,6 +1,6 @@
 # 架构
 
-> **当前接线采用 ANet，Hub 正本为 `https://anet.sonori.dev`。** 本仓提供独立 Rust fleet engine（`crates/fleet-proto`、`crates/fleet-hub`、`crates/fleet-daemon`、`crates/fleet-cli`），融合 ANet 与 Reason 投递机制并兼容 Hub。codex-host 仍由上游维护。身份与 `delegate` 见 [anet.md](anet.md)。Desktop 进窗的边界见 [reason.md](reason.md)。Cindy 插件见 [plugins/agent-network-cindy](../plugins/agent-network-cindy/README.md)。CommHub MCP、#90 门铃桥与 agenvo fork 的安装步骤已退出。
+> **当前接线采用 ANet，Hub 正本为 `https://anet.sonori.dev`。** 本仓提供独立纯 Rust fleet engine（`crates/fleet-proto`、`crates/fleet-hub`、`crates/fleet-daemon`、`crates/fleet-workbench-server`、`crates/fleet-cli`），融合 ANet、Reason 桌面侧栏投递与 Agents-Anywhere v2 自托管工作台（[workbench-architecture.md](workbench-architecture.md)）并兼容 Hub。codex-host 仍由上游维护。身份与 `delegate` 见 [anet.md](anet.md)。Desktop 进窗的边界见 [reason.md](reason.md)。Cindy 插件见 [plugins/agent-network-cindy](../plugins/agent-network-cindy/README.md)。CommHub MCP、#90 门铃桥与 agenvo fork 的安装步骤已退出。
 
 ## 体验验收
 
