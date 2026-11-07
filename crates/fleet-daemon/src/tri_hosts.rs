@@ -1252,9 +1252,15 @@ pub fn run_dsh_headless_command(
         "/Applications/DeepSeek Harness.app/Contents/Resources/app/dsh/node_modules/@deepseek-ai/dsh-experimental-session-search/cordis.patch.yml",
     );
     let temp_model_patch = if let Some(m) = model.map(str::trim).filter(|s| !s.is_empty()) {
-        let (provider, model_id) = match m.split_once('/') {
+        let (provider, model_id) = match m.split_once(':') {
             Some((p, id)) if !p.is_empty() && !id.is_empty() => (p, id),
-            _ => ("deepseek", m),
+            _ if m.starts_with("zcode/")
+                || m.starts_with("minimax-code/")
+                || m.starts_with("google-vertex/claude-") =>
+            {
+                ("magpie-anthropic", m)
+            }
+            _ => ("magpie", m),
         };
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -1809,6 +1815,16 @@ pub(crate) fn dispatch_cindy_via_anet_bridge(
                             .pointer("/error/code")
                             .and_then(Value::as_str)
                             .unwrap_or(phase);
+                        // `worker.cjs` writes `phase: "unverified", error: { code: "CREATE_OUTCOME_UNKNOWN" }`
+                        // immediately before awaiting `runJob({ kind: "create" })`. Wait for `create` to return.
+                        if phase == "unverified"
+                            && code == "CREATE_OUTCOME_UNKNOWN"
+                            && observed_task_id.is_none()
+                            && start.elapsed() < Duration::from_secs(20)
+                        {
+                            std::thread::sleep(Duration::from_millis(300));
+                            continue;
+                        }
                         return Err(HostAdapterError::CindyProtocol(format!(
                             "Cindy ANet bridge task {ix_id} entered `{phase}` ({code})"
                         )));
