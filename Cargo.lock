@@ -200,6 +200,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "fleet-workbench-server"
+version = "0.1.0"
+dependencies = [
+ "fleet-daemon",
+ "fleet-proto",
+ "libc",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tungstenite",
+]
+
+[[package]]
 name = "form_urlencoded"
 version = "1.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
