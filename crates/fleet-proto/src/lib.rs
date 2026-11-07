@@ -8,11 +8,28 @@ pub use brief::{validate_brief, BriefPolicyError};
 
 mod host;
 pub use host::{
-    normalize_peer_id, resolve_project_dir_in_root, validate_nonempty_id, validate_project_slug,
-    validate_session_id, CreateSessionRequest, DeliverTurnRequest, DesktopHostKind,
-    ExternalAgentManifest, HostSessionReceipt, InboxMessage, MessageAttachment, PeerAddress,
-    ProjectDirRecord, ProjectPathError, SidebarProjectBinding, GROKBOT_APP_DISPLAY_NAME,
-    GROKBOT_BUNDLE_ID,
+    normalize_peer_id, resolve_project_dir_in_root, resolve_workbench_file_path,
+    validate_nonempty_id, validate_project_slug, validate_session_id, CreateSessionRequest,
+    DeliverTurnRequest, DesktopHostKind, ExternalAgentManifest, HostSessionReceipt, InboxMessage,
+    MessageAttachment, PeerAddress, ProjectDirRecord, ProjectPathError, SidebarProjectBinding,
+    GROKBOT_APP_DISPLAY_NAME, GROKBOT_BUNDLE_ID,
+};
+
+pub mod timeline;
+pub use timeline::{
+    canonical_timeline_content_json_utf16, push_escaped_utf16_json_body, sha256_digest, sha256_hex,
+    stable_runtime_session_id, str_to_utf16_with_surrogate_escapes, timeline_content_hash,
+    timeline_content_hash_utf16, turn_position_item_id, CanonicalSessionId, InvalidOrderSeq,
+    SessionMeta, TimelineContentHash, TimelineError, TimelineItem, TimelineItemKind,
+    TimelineItemStatus, TimelineOrderSeq, TimelineRole, UpdatedSeq,
+};
+
+pub mod workbench;
+pub use workbench::{
+    ConnectorRpcFrame, EffectiveCapabilities, IngestBatchResult, IngestRejection,
+    InteractionStatus, PlanFenceConflict, PlanReviewTicket, ProtocolEventEnvelope,
+    ProtocolEventRecoveryResponse, SessionNotice, SessionNoticeKind, WorkbenchProtocolError,
+    MAX_CONNECTOR_WS_FRAME_BYTES, PROTOCOL_VERSION_V1_1,
 };
 
 /// Native thread identity survives index file renames and daemon restarts.
