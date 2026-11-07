@@ -2902,3 +2902,357 @@ fn extract_zcode_ids_from_json(
         *parsed_turn_id = Some(tid.to_string());
     }
 }
+
+/// Opens a native SQLite database strictly read-only (`SQLITE_OPEN_READONLY`).
+/// When a WAL-mode database has no active `-shm` or non-empty `-wal` file on disk, uses
+/// `SQLITE_OPEN_URI` (`0x40`) with `file:<path>?immutable=1` so SQLite never attempts to
+/// create `-shm` or mutate database mtimes.
+pub(crate) fn open_sqlite_readonly_preserve_mtime(
+    db_path: &Path,
+) -> Result<crate::ledger::SqliteConnection, crate::ledger::SqliteError> {
+    const SQLITE_OPEN_URI: std::ffi::c_int = 0x0000_0040;
+    let wal_path = PathBuf::from(format!("{}-wal", db_path.display()));
+    let shm_path = PathBuf::from(format!("{}-shm", db_path.display()));
+    let has_active_wal = shm_path.exists()
+        && wal_path
+            .metadata()
+            .map(|m| m.len() > 0)
+            .unwrap_or(false);
+    if has_active_wal {
+        if let Ok(conn) = crate::ledger::SqliteConnection::open_with_flags(
+            db_path,
+            crate::ledger::SQLITE_OPEN_READONLY | crate::ledger::SQLITE_OPEN_NOMUTEX,
+            2_000,
+        ) {
+            if conn.prepare("SELECT 1;").is_ok() {
+                return Ok(conn);
+            }
+        }
+    }
+    let uri = format!("file:{}?immutable=1", db_path.display());
+    crate::ledger::SqliteConnection::open_with_flags(
+        Path::new(&uri),
+        crate::ledger::SQLITE_OPEN_READONLY | SQLITE_OPEN_URI | crate::ledger::SQLITE_OPEN_NOMUTEX,
+        2_000,
+    )
+}
+
+/// Lists all projects from `state_5.sqlite` using `SQLITE_OPEN_READONLY`.
+pub fn list_codex_projects_readonly(
+    db_path: &Path,
+) -> Result<Vec<CodexProjectRow>, HostAdapterError> {
+    if !db_path.is_absolute() {
+        return Err(HostAdapterError::OpenAiDotsProtocol(format!(
+            "state_5.sqlite path must be absolute: {}",
+            db_path.display()
+        )));
+    }
+    if !db_path.exists() {
+        return Ok(Vec::new());
+    }
+    let conn = open_sqlite_readonly_preserve_mtime(db_path)
+        .map_err(|e| HostAdapterError::OpenAiDotsProtocol(e.to_string()))?;
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT p.id, COALESCE(p.name, ''), COALESCE(r.path, ''), COALESCE(p.position, 0) \
+         FROM projects p LEFT JOIN project_roots r ON p.id = r.project_id \
+         ORDER BY p.position ASC, r.position ASC;",
+    ) else {
+        return Ok(Vec::new());
+    };
+    let mut rows = Vec::new();
+    while stmt
+        .step()
+        .map_err(|e| HostAdapterError::OpenAiDotsProtocol(e.to_string()))?
+    {
+        rows.push(CodexProjectRow {
+            project_id: stmt.column_text(0),
+            name: stmt.column_text(1),
+            root_path: PathBuf::from(stmt.column_text(2)),
+            position: stmt.column_i64(3),
+        });
+    }
+    Ok(rows)
+}
+
+/// Lists all non-archived threads from `state_5.sqlite` using `SQLITE_OPEN_READONLY`.
+pub fn list_codex_threads_readonly(
+    db_path: &Path,
+) -> Result<Vec<CodexThreadRow>, HostAdapterError> {
+    if !db_path.is_absolute() {
+        return Err(HostAdapterError::OpenAiDotsProtocol(format!(
+            "state_5.sqlite path must be absolute: {}",
+            db_path.display()
+        )));
+    }
+    if !db_path.exists() {
+        return Ok(Vec::new());
+    }
+    let conn = open_sqlite_readonly_preserve_mtime(db_path)
+        .map_err(|e| HostAdapterError::OpenAiDotsProtocol(e.to_string()))?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, COALESCE(project_id, ''), COALESCE(cwd, ''), COALESCE(title, ''), \
+             COALESCE(preview, ''), COALESCE(archived, 0), COALESCE(rollout_path, '') \
+             FROM threads WHERE COALESCE(archived, 0) = 0 ORDER BY id ASC;",
+        )
+        .map_err(|e| HostAdapterError::OpenAiDotsProtocol(e.to_string()))?;
+    let mut rows = Vec::new();
+    while stmt
+        .step()
+        .map_err(|e| HostAdapterError::OpenAiDotsProtocol(e.to_string()))?
+    {
+        rows.push(CodexThreadRow {
+            thread_id: stmt.column_text(0),
+            project_id: stmt.column_text(1),
+            cwd: PathBuf::from(stmt.column_text(2)),
+            title: stmt.column_text(3),
+            preview: stmt.column_text(4),
+            archived: stmt.column_i64(5),
+            rollout_path: stmt.column_text(6),
+        });
+    }
+    Ok(rows)
+}
+
+/// Decompresses a two-frame `session.v4.jsonl.zstd` DeepSeek Harness archive, returning
+/// `(frame_0_header_json, frame_1_turn_events)` without mutating the archive.
+pub fn decompress_dsh_two_frame_zstd(
+    archive_path: &Path,
+) -> Result<(Option<Value>, Vec<Value>), HostAdapterError> {
+    if !archive_path.is_absolute() || !archive_path.exists() {
+        return Err(HostAdapterError::DshProtocol(format!(
+            "DSH session archive does not exist at {}",
+            archive_path.display()
+        )));
+    }
+    let raw = fs::read(archive_path)?;
+    if raw.len() < 4 || raw[..4] != [0x28, 0xB5, 0x2F, 0xFD] {
+        return Err(HostAdapterError::DshProtocol(format!(
+            "DSH session archive {} is missing zstd magic header (0xFD2FB528)",
+            archive_path.display()
+        )));
+    }
+    let zstd_bin = if Path::new("/opt/homebrew/bin/zstd").exists() {
+        "/opt/homebrew/bin/zstd"
+    } else if Path::new("/usr/local/bin/zstd").exists() {
+        "/usr/local/bin/zstd"
+    } else {
+        "zstd"
+    };
+    let decomp = Command::new(zstd_bin)
+        .arg("-d")
+        .arg("-c")
+        .arg(archive_path)
+        .output()
+        .map_err(|e| {
+            HostAdapterError::DshProtocol(format!(
+                "failed to execute {zstd_bin} -d -c {}: {e}",
+                archive_path.display()
+            ))
+        })?;
+    if !decomp.status.success() {
+        return Err(HostAdapterError::DshProtocol(format!(
+            "zstd decompression failed for {}: {}",
+            archive_path.display(),
+            String::from_utf8_lossy(&decomp.stderr).trim()
+        )));
+    }
+    let text = String::from_utf8(decomp.stdout).map_err(|e| {
+        HostAdapterError::DshProtocol(format!(
+            "invalid UTF-8 in decompressed {}: {e}",
+            archive_path.display()
+        ))
+    })?;
+    let mut header: Option<Value> = None;
+    let mut events = Vec::new();
+    for (idx, line) in text.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let val: Value = serde_json::from_str(trimmed).map_err(|e| {
+            HostAdapterError::DshProtocol(format!(
+                "corrupt JSON on line {} of {}: {e}",
+                idx + 1,
+                archive_path.display()
+            ))
+        })?;
+        if header.is_none()
+            && matches!(
+                val.get("type").and_then(Value::as_str),
+                Some("session/header" | "header" | "session_header" | "meta")
+            )
+        {
+            header = Some(val);
+        } else if header.is_none() && idx == 0 && val.get("version").is_some() {
+            header = Some(val);
+        } else {
+            events.push(val);
+        }
+    }
+    Ok((header, events))
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ZcodeObservedMessage {
+    pub message_id: String,
+    pub session_id: String,
+    pub sequence: i64,
+    pub time_created: i64,
+    pub time_updated: i64,
+    pub message_data: String,
+    pub parts_data: Vec<String>,
+}
+
+/// Lists all non-deleted ZCode sessions by reading `tasks-index.sqlite` and `cli/db/db.sqlite`
+/// strictly with `SQLITE_OPEN_READONLY` so database mtimes and WAL state are untouched.
+pub fn list_zcode_sessions_readonly(
+    tasks_index_db_path: &Path,
+    cli_db_path: &Path,
+) -> Result<Vec<ZcodeSessionSnapshot>, HostAdapterError> {
+    if !tasks_index_db_path.is_absolute() || !cli_db_path.is_absolute() {
+        return Err(HostAdapterError::ZcodeProtocol(
+            "ZCode SQLite paths must be absolute".into(),
+        ));
+    }
+    if !tasks_index_db_path.exists() {
+        return Ok(Vec::new());
+    }
+    let tasks_conn = open_sqlite_readonly_preserve_mtime(tasks_index_db_path)
+        .map_err(|e| HostAdapterError::ZcodeProtocol(e.to_string()))?;
+
+    let cli_conn = if cli_db_path.exists() {
+        Some(
+            open_sqlite_readonly_preserve_mtime(cli_db_path)
+                .map_err(|e| HostAdapterError::ZcodeProtocol(e.to_string()))?,
+        )
+    } else {
+        None
+    };
+
+    let mut stmt = tasks_conn
+        .prepare(
+            "SELECT COALESCE(workspace_key, ''), COALESCE(workspace_path, ''), task_id, \
+             COALESCE(title, ''), COALESCE(task_status, 'normal'), COALESCE(provider, ''), \
+             COALESCE(root_path, workspace_path, ''), COALESCE(project_id, ''), \
+             COALESCE(archived, 0) \
+             FROM tasks WHERE COALESCE(deleted, 0) = 0 ORDER BY task_id ASC;",
+        )
+        .map_err(|e| HostAdapterError::ZcodeProtocol(e.to_string()))?;
+
+    let mut out = Vec::new();
+    while stmt
+        .step()
+        .map_err(|e| HostAdapterError::ZcodeProtocol(e.to_string()))?
+    {
+        let workspace_key = stmt.column_text(0);
+        let workspace_path = stmt.column_text(1);
+        let task_id = stmt.column_text(2);
+        let title = stmt.column_text(3);
+        let task_status = stmt.column_text(4);
+        let provider = stmt.column_text(5);
+        let root_path = stmt.column_text(6);
+        let project_id = stmt.column_text(7);
+        let archived = stmt.column_i64(8);
+
+        let mut cli_project_id = String::new();
+        let mut cli_dir = String::new();
+        let mut msg_count: usize = 0;
+
+        if let Some(ref c_conn) = cli_conn {
+            if let Ok(mut s_stmt) = c_conn.prepare(
+                "SELECT COALESCE(project_id, ''), COALESCE(directory, ''), \
+                 (SELECT COUNT(*) FROM message m WHERE m.session_id = session.id) \
+                 FROM session WHERE id = ?1 LIMIT 1;",
+            ) {
+                let _ = s_stmt.bind_text(1, &task_id);
+                if let Ok(true) = s_stmt.step() {
+                    cli_project_id = s_stmt.column_text(0);
+                    cli_dir = s_stmt.column_text(1);
+                    msg_count = s_stmt.column_i64(2).max(0) as usize;
+                }
+            }
+        }
+        let resolved_cwd = if !root_path.is_empty() {
+            root_path
+        } else if !workspace_path.is_empty() {
+            workspace_path
+        } else {
+            cli_dir
+        };
+
+        out.push(ZcodeSessionSnapshot {
+            session_id: task_id,
+            project_id,
+            cli_project_id,
+            title,
+            cwd: PathBuf::from(resolved_cwd),
+            workspace_key,
+            provider,
+            task_status,
+            message_count: msg_count,
+            archived,
+        });
+    }
+    Ok(out)
+}
+
+/// Reads all messages and parts for `session_id` from ZCode's `cli/db/db.sqlite` using `SQLITE_OPEN_READONLY`.
+pub fn list_zcode_messages_readonly(
+    cli_db_path: &Path,
+    session_id: &str,
+) -> Result<Vec<ZcodeObservedMessage>, HostAdapterError> {
+    if !cli_db_path.is_absolute() || !cli_db_path.exists() {
+        return Ok(Vec::new());
+    }
+    let conn = open_sqlite_readonly_preserve_mtime(cli_db_path)
+        .map_err(|e| HostAdapterError::ZcodeProtocol(e.to_string()))?;
+    list_zcode_messages_with_conn(&conn, session_id)
+}
+
+pub(crate) fn list_zcode_messages_with_conn(
+    conn: &crate::ledger::SqliteConnection,
+    session_id: &str,
+) -> Result<Vec<ZcodeObservedMessage>, HostAdapterError> {
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, session_id, COALESCE(sequence, 0), COALESCE(time_created, 0), \
+             COALESCE(time_updated, 0), COALESCE(data, '{}') \
+             FROM message WHERE session_id = ?1 \
+             ORDER BY COALESCE(sequence, 0) ASC, time_created ASC, id ASC;",
+        )
+        .map_err(|e| HostAdapterError::ZcodeProtocol(e.to_string()))?;
+    stmt.bind_text(1, session_id)
+        .map_err(|e| HostAdapterError::ZcodeProtocol(e.to_string()))?;
+
+    let mut messages = Vec::new();
+    while stmt
+        .step()
+        .map_err(|e| HostAdapterError::ZcodeProtocol(e.to_string()))?
+    {
+        let message_id = stmt.column_text(0);
+        let mut parts_data = Vec::new();
+        if let Ok(mut p_stmt) = conn.prepare(
+            "SELECT COALESCE(data, '{}') FROM part \
+             WHERE session_id = ?1 AND message_id = ?2 \
+             ORDER BY time_created ASC, id ASC;",
+        ) {
+            let _ = p_stmt.bind_text(1, session_id);
+            let _ = p_stmt.bind_text(2, &message_id);
+            while let Ok(true) = p_stmt.step() {
+                parts_data.push(p_stmt.column_text(0));
+            }
+        }
+        messages.push(ZcodeObservedMessage {
+            message_id,
+            session_id: stmt.column_text(1),
+            sequence: stmt.column_i64(2),
+            time_created: stmt.column_i64(3),
+            time_updated: stmt.column_i64(4),
+            message_data: stmt.column_text(5),
+            parts_data,
+        });
+    }
+    Ok(messages)
+}
