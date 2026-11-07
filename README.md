@@ -46,6 +46,9 @@
 | [crates/AGENTS.md](crates/AGENTS.md) | Rust 引擎任务到源码、核心类型（`DesktopHostKind`、`FleetMailboxStore`、`DesktopHostAdapter`）与测试的 30 秒路由表 |
 | `cargo run -p fleet-cli -- skill` | 输出面向 AI Agent 的内嵌技能指南（6 大节点 `bundle_id`、CLI 子命令与 5 个 MCP 工具） |
 | [DESIGN.md](DESIGN.md) | 混合 Agent Network + Reason Network 引擎架构、五大桌面宿主存储契约与不变量 |
+| [docs/workbench-architecture.md](docs/workbench-architecture.md) | 三源合一（ANet + Reason + Agents-Anywhere）纯 Rust 自托管工作台架构蓝图与 6 大冲突消解矩阵 |
+| [docs/workbench-unification-plan.md](docs/workbench-unification-plan.md) | 纯 Rust 工作台与 Timeline 融合的 6-PR 可验证切片执行计划（`PR-1`–`PR-6`） |
+| [docs/workbench-handoff-prompt.md](docs/workbench-handoff-prompt.md) | 下一席编码 Agent 开工必读上下文范畴与一键启动提示词 |
 | [docs/rust-engine.md](docs/rust-engine.md) | 四个 Rust crate 边界说明与可重放 smoke 验证 |
 | `./scripts/check` | 全仓统一门禁（Cargo 全量测试、五大桌面端 + GrokBot E2E 测试、34 项 Node 门禁测试与隐私守卫） |
 
