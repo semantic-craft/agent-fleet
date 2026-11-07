@@ -9,23 +9,29 @@ use fleet_daemon::{
     OpenAiDotsRuntimeConfig, PotetoRelayTask, SessionDirectory, ZcodeRuntimeConfig,
 };
 use fleet_proto::{
-    normalize_peer_id, validate_session_id, CreateSessionRequest, DeliverTurnRequest,
-    DesktopHostKind, ExternalAgentManifest, InboxMessage, PeerAddress, SessionSelector,
+    normalize_peer_id,
+    timeline::{
+        timeline_content_hash, CanonicalSessionId, SessionMeta, TimelineItem, TimelineItemKind,
+        TimelineItemStatus, TimelineOrderSeq, TimelineRole, UpdatedSeq,
+    },
+    validate_session_id, CreateSessionRequest, DeliverTurnRequest, DeliveryTier, DesktopHostKind,
+    ExternalAgentManifest, InboxMessage, PeerAddress, SessionSelector, SidebarProjectBinding,
     GROKBOT_APP_DISPLAY_NAME, GROKBOT_BUNDLE_ID,
 };
 use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, BTreeSet},
     env, fs,
-    io::{self, BufRead, Write},
+    io::{self, BufRead, Read, Write},
+    net::{SocketAddr, TcpStream, ToSocketAddrs},
     path::{Path, PathBuf},
     process::{Command, ExitCode},
     sync::atomic::{AtomicU64, Ordering},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 const USAGE: &str =
-    "usage: fleet-cli <sessions|hosts|relay|who|send|inbox|hook|agents|anet-sync|setup|doctor|mcp|skill|help> ...";
+    "usage: fleet-cli <sessions|hosts|relay|who|send|inbox|hook|agents|anet-sync|connector|setup|doctor|mcp|skill|help> ...";
 
 const SKILL_GUIDE: &str = "\
 # agent-fleet: Standalone Multi-Agent & Desktop Sidebar Engine
@@ -493,6 +499,11 @@ fn build_team_inventory(
 
     let mut canonical_peers = vec!["grokbot"];
     canonical_peers.extend(DesktopHostKind::ALL.iter().map(|h| h.as_str()));
+    let workbench_sessions_count = mailbox
+        .ledger()
+        .list_sessions()
+        .map(|s| s.len())
+        .unwrap_or(0);
 
     Ok(json!({
         "engine": "agent-fleet",
@@ -506,10 +517,175 @@ fn build_team_inventory(
             "ready": mailbox.mailbox_file().exists(),
         },
         "mailbox_messages_count": total_messages,
+        "workbench_sessions_count": workbench_sessions_count,
         "desktop_hosts": desktop_hosts,
         "external_agents": external_agents,
         "session_directory": live_sessions,
     }))
+}
+
+fn resolve_workbench_url(options: &BTreeMap<String, String>) -> Option<String> {
+    options
+        .get("--workbench")
+        .or_else(|| options.get("--workbench-url"))
+        .cloned()
+        .or_else(|| env::var("FLEET_WORKBENCH_URL").ok())
+        .map(|s| s.trim().trim_end_matches('/').to_string())
+        .filter(|s| !s.is_empty())
+}
+
+fn parse_workbench_addr(base_url: &str) -> Result<(String, SocketAddr), String> {
+    let stripped = base_url
+        .trim()
+        .strip_prefix("http://")
+        .or_else(|| base_url.trim().strip_prefix("https://"))
+        .unwrap_or(base_url.trim());
+    let host_port = stripped.split('/').next().unwrap_or(stripped);
+    let addr_str = if host_port.contains(':') {
+        host_port.to_string()
+    } else {
+        format!("{host_port}:80")
+    };
+    let sock_addr = addr_str
+        .to_socket_addrs()
+        .map_err(|e| format!("invalid workbench address {addr_str}: {e}"))?
+        .next()
+        .ok_or_else(|| format!("cannot resolve workbench address {addr_str}"))?;
+    Ok((addr_str, sock_addr))
+}
+
+fn read_http_response_json(stream: &mut TcpStream) -> Result<(u16, Value), String> {
+    let mut raw = Vec::new();
+    stream.read_to_end(&mut raw).map_err(|e| e.to_string())?;
+    let text = String::from_utf8_lossy(&raw);
+    let (head, body) = text
+        .split_once("\r\n\r\n")
+        .ok_or_else(|| "malformed HTTP response from workbench server".to_string())?;
+    let status_line = head.lines().next().unwrap_or("");
+    let code = status_line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse::<u16>().ok())
+        .unwrap_or(500);
+    let val = serde_json::from_str::<Value>(body.trim()).unwrap_or_else(|_| json!({}));
+    Ok((code, val))
+}
+
+fn http_get_workbench_json(base_url: &str, path: &str) -> Result<(u16, Value), String> {
+    let (host_header, sock_addr) = parse_workbench_addr(base_url)?;
+    let mut stream = TcpStream::connect_timeout(&sock_addr, Duration::from_millis(500))
+        .map_err(|e| format!("connect {sock_addr}: {e}"))?;
+    let _ = stream.set_nodelay(true);
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
+    let req = format!("GET {path} HTTP/1.1\r\nHost: {host_header}\r\nConnection: close\r\n\r\n");
+    stream.write_all(req.as_bytes()).map_err(|e| e.to_string())?;
+    stream.flush().map_err(|e| e.to_string())?;
+    read_http_response_json(&mut stream)
+}
+
+fn http_post_workbench_json(
+    base_url: &str,
+    path: &str,
+    payload: &Value,
+) -> Result<(u16, Value), String> {
+    let (host_header, sock_addr) = parse_workbench_addr(base_url)?;
+    let mut stream = TcpStream::connect_timeout(&sock_addr, Duration::from_millis(500))
+        .map_err(|e| format!("connect {sock_addr}: {e}"))?;
+    let _ = stream.set_nodelay(true);
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
+    let body_bytes = serde_json::to_vec(payload).map_err(|e| e.to_string())?;
+    let req = format!(
+        "POST {path} HTTP/1.1\r\nHost: {host_header}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body_bytes.len()
+    );
+    stream.write_all(req.as_bytes()).map_err(|e| e.to_string())?;
+    stream.write_all(&body_bytes).map_err(|e| e.to_string())?;
+    stream.flush().map_err(|e| e.to_string())?;
+    read_http_response_json(&mut stream)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn record_and_stream_peer_timeline_item(
+    ledger: &FleetLedgerStore,
+    runtime: &str,
+    external_session_id: &str,
+    project_slug: &str,
+    title: &str,
+    delivery_id: &str,
+    kind: TimelineItemKind,
+    role: TimelineRole,
+    content: &str,
+    delivery_tier: DeliveryTier,
+    sidebar_binding: Option<SidebarProjectBinding>,
+    peer_sender: Option<String>,
+    workbench_url_opt: Option<&str>,
+) -> Result<(CanonicalSessionId, bool), String> {
+    let existing_sessions = ledger.list_sessions().unwrap_or_default();
+    let canonical_sid = existing_sessions
+        .iter()
+        .find(|s| s.runtime == runtime && s.external_session_id == external_session_id)
+        .map(|s| s.session_id.clone())
+        .unwrap_or_else(|| {
+            CanonicalSessionId::derive("local-connector", runtime, external_session_id)
+                .unwrap_or_else(|_| {
+                    CanonicalSessionId::derive("local-connector", "zcode", "default-session")
+                        .unwrap()
+                })
+        });
+
+    let existing_items = ledger
+        .list_timeline_items(canonical_sid.as_str(), None, 10_000)
+        .unwrap_or_default();
+    let next_order_seq = (existing_items.len() + 1) as i64;
+    let now_millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+
+    let meta = SessionMeta {
+        session_id: canonical_sid.clone(),
+        connector_id: "conn-local".to_string(),
+        runtime: runtime.to_string(),
+        external_session_id: external_session_id.to_string(),
+        project_slug: project_slug.to_string(),
+        title: title.to_string(),
+        latest_updated_seq: UpdatedSeq::new(next_order_seq),
+        delivery_tier: Some(delivery_tier),
+        sidebar_binding: sidebar_binding.clone(),
+    };
+    ledger.upsert_session(&meta).map_err(|e| e.to_string())?;
+
+    let item = TimelineItem {
+        item_id: format!("peer-item-{delivery_id}"),
+        session_id: canonical_sid.clone(),
+        turn_id: Some(delivery_id.to_string()),
+        kind,
+        status: TimelineItemStatus::Completed,
+        role,
+        content: content.to_string(),
+        order_seq: TimelineOrderSeq::try_from(next_order_seq).map_err(|e| e.to_string())?,
+        updated_seq: UpdatedSeq::new(next_order_seq),
+        content_hash: timeline_content_hash(kind.as_str(), "completed", role.as_str(), content),
+        delivery_tier: Some(delivery_tier),
+        sidebar_binding,
+        peer_sender,
+        created_at_ms: now_millis,
+    };
+    ledger
+        .upsert_timeline_batch(std::slice::from_ref(&item))
+        .map_err(|e| e.to_string())?;
+
+    let streamed = if let Some(wb_url) = workbench_url_opt {
+        http_post_workbench_json(wb_url, "/api/v2/connector/ingest", &json!({ "items": [item] }))
+            .map(|(code, _)| (200..300).contains(&code))
+            .unwrap_or(false)
+    } else {
+        false
+    };
+
+    Ok((canonical_sid, streamed))
 }
 
 fn resolve_projects_root(options: &BTreeMap<String, String>) -> Result<PathBuf, String> {
@@ -704,9 +880,14 @@ fn dispatch_unified_message(
     from_opt: Option<String>,
     reply_to_opt: Option<String>,
     expect_marker_opt: Option<String>,
+    workbench_url_opt: Option<&str>,
     rt: &HostRuntimeOptions,
 ) -> Result<Value, String> {
     let mailbox = FleetMailboxStore::new(state_root.clone()).map_err(|e| e.to_string())?;
+    let orig_msg = match reply_to_opt.as_deref() {
+        Some(reply_id) => mailbox.get_message(reply_id).map_err(|e| e.to_string())?,
+        None => None,
+    };
     let (resolved_slug, resolved_session_id, resolved_from) = enrich_sender_and_reply_target(
         &mailbox,
         target_agent,
@@ -731,11 +912,11 @@ fn dispatch_unified_message(
         };
         let msg = InboxMessage {
             id: delivery_id.clone(),
-            from: sender,
+            from: sender.clone(),
             to: to_addr,
             project_slug: Some(slug.to_string()),
-            session_id: resolved_session_id,
-            reply_to: reply_to_opt,
+            session_id: resolved_session_id.clone(),
+            reply_to: reply_to_opt.clone(),
             body: prompt,
             files: Vec::new(),
             wake: true,
@@ -743,7 +924,59 @@ fn dispatch_unified_message(
             created_at_unix,
             delivered: false,
         };
+        let framed_reply = msg.format_peer_frame();
         let saved = mailbox.enqueue(msg).map_err(|e| e.to_string())?;
+
+        // Determine if this reply belongs to an existing desktop host thread
+        let mut thread_runtime = "grokbot".to_string();
+        let mut thread_ext_sid = saved
+            .session_id
+            .clone()
+            .unwrap_or_else(|| saved.id.clone());
+        let mut thread_tier = DeliveryTier::Accepted;
+        if let Some(ref orig) = orig_msg {
+            if let Ok(orig_to) = PeerAddress::parse(&orig.to) {
+                if DesktopHostKind::parse(&orig_to.agent).is_ok() {
+                    thread_runtime = orig_to.agent;
+                    if let Some(sid) = orig_to.session_id.or_else(|| orig.session_id.clone()) {
+                        thread_ext_sid = sid;
+                    }
+                    thread_tier = DeliveryTier::ThreadVisible;
+                }
+            }
+        } else if let Ok(from_peer) = PeerAddress::parse(&sender) {
+            if DesktopHostKind::parse(&from_peer.agent).is_ok() {
+                thread_runtime = from_peer.agent.clone();
+                if let Some(sid) = from_peer.session_id {
+                    thread_ext_sid = sid;
+                } else if let Ok(sessions) = mailbox.ledger().list_sessions() {
+                    if let Some(found) = sessions
+                        .iter()
+                        .find(|s| s.runtime == thread_runtime && s.project_slug == slug)
+                    {
+                        thread_ext_sid = found.external_session_id.clone();
+                    }
+                }
+                thread_tier = DeliveryTier::ThreadVisible;
+            }
+        }
+
+        let (canonical_sid, wb_streamed) = record_and_stream_peer_timeline_item(
+            mailbox.ledger(),
+            &thread_runtime,
+            &thread_ext_sid,
+            slug,
+            &resolved_title,
+            &saved.id,
+            TimelineItemKind::AssistantMessage,
+            TimelineRole::Assistant,
+            &framed_reply,
+            thread_tier,
+            None,
+            Some(saved.from.clone()),
+            workbench_url_opt,
+        )?;
+
         return Ok(json!({
             "host": "grokbot",
             "delivery_id": saved.id,
@@ -751,6 +984,8 @@ fn dispatch_unified_message(
             "to": saved.to,
             "project_slug": slug,
             "session_id": saved.session_id,
+            "canonical_session_id": canonical_sid.as_str(),
+            "workbench_streamed": wb_streamed,
             "reply_to": saved.reply_to,
             "tier": "accepted",
         }));
@@ -787,21 +1022,21 @@ fn dispatch_unified_message(
             .map_err(|e| e.to_string())?;
         let receipt = if let Some(session_id) = resolved_session_id {
             let req = DeliverTurnRequest {
-                delivery_id,
-                project_id: binding.project_id,
+                delivery_id: delivery_id.clone(),
+                project_id: binding.project_id.clone(),
                 session_id,
-                project_dir: binding.project_dir,
-                prompt: effective_prompt,
+                project_dir: binding.project_dir.clone(),
+                prompt: effective_prompt.clone(),
                 model: model_opt,
             };
             adapter.deliver_turn(&req).map_err(|e| e.to_string())?
         } else {
             let req = CreateSessionRequest {
-                delivery_id,
-                project_id: binding.project_id,
-                project_dir: binding.project_dir,
-                title: resolved_title,
-                prompt: effective_prompt,
+                delivery_id: delivery_id.clone(),
+                project_id: binding.project_id.clone(),
+                project_dir: binding.project_dir.clone(),
+                title: resolved_title.clone(),
+                prompt: effective_prompt.clone(),
                 model: model_opt,
             };
             adapter.create_session(&req).map_err(|e| e.to_string())?
@@ -810,8 +1045,27 @@ fn dispatch_unified_message(
             msg.session_id = Some(receipt.session_id.clone());
             mailbox.enqueue(msg).map_err(|e| e.to_string())?;
         }
+        let (canonical_sid, wb_streamed) = record_and_stream_peer_timeline_item(
+            mailbox.ledger(),
+            host_kind.as_str(),
+            &receipt.session_id,
+            slug,
+            &resolved_title,
+            &delivery_id,
+            TimelineItemKind::UserMessage,
+            TimelineRole::User,
+            &effective_prompt,
+            receipt.tier,
+            Some(binding),
+            resolved_from.clone(),
+            workbench_url_opt,
+        )?;
         let mut val = serde_json::to_value(&receipt).map_err(|e| e.to_string())?;
         if let Some(obj) = val.as_object_mut() {
+            if resolved_from.is_some() || reply_to_opt.is_some() || workbench_url_opt.is_some() {
+                obj.insert("canonical_session_id".into(), json!(canonical_sid.as_str()));
+                obj.insert("workbench_streamed".into(), json!(wb_streamed));
+            }
             if resolved_from.is_some() || reply_to_opt.is_some() {
                 obj.insert("to".into(), json!(to_addr));
             }
@@ -890,6 +1144,8 @@ fn run_send(args: &[String]) -> Result<(), String> {
         "--model",
         "--execute-external",
         "--expect-marker",
+        "--workbench",
+        "--workbench-url",
         "--codex-root",
         "--app-server-socket",
         "--cindy-root",
@@ -920,6 +1176,7 @@ fn run_send(args: &[String]) -> Result<(), String> {
         .get("--execute-external")
         .map(|v| v == "true" || v == "1")
         .unwrap_or(true);
+    let wb_url = resolve_workbench_url(&options);
     let rt = parse_runtime_options(&options)?;
 
     let val = dispatch_unified_message(
@@ -939,6 +1196,7 @@ fn run_send(args: &[String]) -> Result<(), String> {
             .get("--expect-marker")
             .map(|m| m.to_string())
             .filter(|m| !m.trim().is_empty()),
+        wb_url.as_deref(),
         &rt,
     )?;
     let output = serde_json::to_string_pretty(&val).map_err(|e| e.to_string())?;
@@ -1116,12 +1374,63 @@ fn ensure_herdr_agent_registered(state_root: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn probe_workbench_live_contract(workbench_url: &str) -> Value {
+    let health_res = http_get_workbench_json(workbench_url, "/api/v2/health");
+    let providers_res = http_get_workbench_json(workbench_url, "/api/v2/providers");
+
+    match (health_res, providers_res) {
+        (Ok((h_code, h_val)), Ok((p_code, p_val))) => {
+            let health_ok = h_code == 200
+                && h_val.get("status").and_then(Value::as_str) == Some("ok");
+            let connectors = p_val
+                .get("connectors")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let providers = p_val
+                .get("providers")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let cindy_anet = providers.iter().any(|p| {
+                p.get("provider_id").and_then(Value::as_str) == Some("cindy")
+                    && p.get("capabilities")
+                        .and_then(|c| c.get("dispatch_channel"))
+                        .and_then(Value::as_str)
+                        == Some("anet")
+            });
+            let ready = health_ok && p_code == 200 && !connectors.is_empty();
+            json!({
+                "url": workbench_url,
+                "reachable": true,
+                "health_status": h_val.get("status").and_then(Value::as_str).unwrap_or("unknown"),
+                "active_connector_leases": connectors.len(),
+                "connectors": connectors,
+                "providers_count": providers.len(),
+                "cindy_dispatch_channel": if cindy_anet { "anet" } else { "unknown" },
+                "ready": ready,
+            })
+        }
+        (Err(err), _) | (_, Err(err)) => json!({
+            "url": workbench_url,
+            "reachable": false,
+            "health_status": "unreachable",
+            "active_connector_leases": 0,
+            "connectors": [],
+            "providers_count": 0,
+            "error": err,
+            "ready": false,
+        }),
+    }
+}
+
 fn build_setup_or_doctor_report(
     mode: &str,
     projects_root: &Path,
     state_root: &Path,
     wire_agents: bool,
     config_home_opt: Option<&Path>,
+    workbench_url_opt: Option<&str>,
     live: bool,
 ) -> Result<Value, String> {
     if !projects_root.is_absolute() || !state_root.is_absolute() {
@@ -1187,7 +1496,9 @@ fn build_setup_or_doctor_report(
         external_agent_checks.push(info);
     }
 
-    Ok(json!({
+    let workbench_report = workbench_url_opt.map(probe_workbench_live_contract);
+
+    let mut out = json!({
         "mode": mode,
         "status": "ok",
         "live_mode": live,
@@ -1220,7 +1531,13 @@ fn build_setup_or_doctor_report(
                 }
             }
         }
-    }))
+    });
+    if let Some(wb) = workbench_report {
+        if let Some(obj) = out.as_object_mut() {
+            obj.insert("workbench".to_string(), wb);
+        }
+    }
+    Ok(out)
 }
 
 fn run_setup_or_doctor(mode: &str, args: &[String]) -> Result<(), String> {
@@ -1243,6 +1560,8 @@ fn run_setup_or_doctor(mode: &str, args: &[String]) -> Result<(), String> {
         "--state-root",
         "--wire-agents",
         "--config-home",
+        "--workbench",
+        "--workbench-url",
         "--live",
         "--gate",
     ];
@@ -1261,12 +1580,14 @@ fn run_setup_or_doctor(mode: &str, args: &[String]) -> Result<(), String> {
         .map(|v| v != "false" && v != "0")
         .unwrap_or(false);
     let config_home_opt = options.get("--config-home").map(PathBuf::from);
+    let wb_url = resolve_workbench_url(&options);
     let report = build_setup_or_doctor_report(
         mode,
         &projects_root,
         &state_root,
         wire_agents,
         config_home_opt.as_deref(),
+        wb_url.as_deref(),
         live || gate,
     )?;
     println!(
@@ -1274,13 +1595,23 @@ fn run_setup_or_doctor(mode: &str, args: &[String]) -> Result<(), String> {
         serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?
     );
     if mode == "doctor" && gate {
-        let failures = evaluate_gate_failures(
+        let mut failures = evaluate_gate_failures(
             report
                 .get("canonical_hosts")
                 .and_then(Value::as_array)
                 .map(Vec::as_slice)
                 .unwrap_or(&[]),
         );
+        if let Some(wb_obj) = report.get("workbench") {
+            let wb_ready = wb_obj.get("ready").and_then(Value::as_bool).unwrap_or(false);
+            if !wb_ready {
+                let err_detail = wb_obj
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .unwrap_or("workbench health or connector lease check failed");
+                failures.push(format!("workbench: {err_detail}"));
+            }
+        }
         if !failures.is_empty() {
             eprintln!("SCHEMA GATE FAILED ({}):", failures.len());
             for failure in &failures {
@@ -1420,6 +1751,7 @@ fn handle_mcp_tool_call(
     projects_root: &Path,
     state_root: &Path,
     directory_opt: Option<&Path>,
+    workbench_url_opt: Option<&str>,
     rt: &HostRuntimeOptions,
 ) -> Result<Value, String> {
     let tool_name = params
@@ -1477,6 +1809,10 @@ fn handle_mcp_tool_call(
                 .and_then(Value::as_str)
                 .map(str::to_string)
                 .filter(|m| !m.trim().is_empty());
+            let effective_wb = args
+                .get("workbench_url")
+                .and_then(Value::as_str)
+                .or(workbench_url_opt);
             dispatch_unified_message(
                 &target_agent,
                 parsed_slug.as_deref().unwrap_or(""),
@@ -1491,6 +1827,7 @@ fn handle_mcp_tool_call(
                 from_opt,
                 reply_to_opt,
                 expect_marker_opt,
+                effective_wb,
                 rt,
             )?
         }
@@ -1542,11 +1879,46 @@ fn handle_mcp_tool_call(
                 let kind = DesktopHostKind::parse(host_str).map_err(|e| e.to_string())?;
                 let (_projects, sessions) =
                     inspect_host_state(kind, state_root).map_err(|e| e.to_string())?;
-                let session = sessions
-                    .into_iter()
-                    .find(|s| s.session_id == session_id)
-                    .ok_or_else(|| format!("session {session_id} not found on {kind}"))?;
-                serde_json::to_value(session).map_err(|e| e.to_string())?
+                if let Some(session) = sessions.into_iter().find(|s| s.session_id == session_id) {
+                    let mut v = serde_json::to_value(session).map_err(|e| e.to_string())?;
+                    if let Ok(ledger) = FleetLedgerStore::open(state_root) {
+                        if let Ok(canonical_sid) =
+                            CanonicalSessionId::derive("conn-local", kind.as_str(), session_id)
+                        {
+                            let items = ledger
+                                .list_timeline_items(canonical_sid.as_str(), None, 100)
+                                .unwrap_or_default();
+                            if let Some(obj) = v.as_object_mut() {
+                                obj.insert(
+                                    "canonical_session_id".into(),
+                                    json!(canonical_sid.as_str()),
+                                );
+                                obj.insert("timeline_items_count".into(), json!(items.len()));
+                            }
+                        }
+                    }
+                    v
+                } else if let Ok(ledger) = FleetLedgerStore::open(state_root) {
+                    if let Ok(Some(meta)) = ledger.get_session(session_id) {
+                        let items = ledger
+                            .list_timeline_items(meta.session_id.as_str(), None, 100)
+                            .unwrap_or_default();
+                        json!({
+                            "host": meta.runtime,
+                            "session_id": meta.external_session_id,
+                            "canonical_session_id": meta.session_id.as_str(),
+                            "project_slug": meta.project_slug,
+                            "title": meta.title,
+                            "latest_updated_seq": meta.latest_updated_seq.get(),
+                            "delivery_tier": meta.delivery_tier.map(|t| t.as_str()).unwrap_or("thread-visible"),
+                            "timeline_items_count": items.len(),
+                        })
+                    } else {
+                        return Err(format!("session {session_id} not found on {kind}"));
+                    }
+                } else {
+                    return Err(format!("session {session_id} not found on {kind}"));
+                }
             }
         }
         "register_agent" => {
@@ -1619,6 +1991,8 @@ fn run_mcp(args: &[String]) -> Result<(), String> {
         "--projects-root",
         "--state-root",
         "--directory",
+        "--workbench",
+        "--workbench-url",
         "--codex-root",
         "--app-server-socket",
         "--cindy-root",
@@ -1635,6 +2009,7 @@ fn run_mcp(args: &[String]) -> Result<(), String> {
     let projects_root = resolve_projects_root(&options)?;
     let state_root = resolve_state_root(&options)?;
     let dir_opt = options.get("--directory").map(PathBuf::from);
+    let wb_url = resolve_workbench_url(&options);
     let rt = parse_runtime_options(&options)?;
 
     let stdin = io::stdin();
@@ -1699,6 +2074,7 @@ fn run_mcp(args: &[String]) -> Result<(), String> {
                 &projects_root,
                 &state_root,
                 dir_opt.as_deref(),
+                wb_url.as_deref(),
                 &rt,
             ) {
                 Ok(result) => json!({
@@ -1877,6 +2253,7 @@ fn run_anet_sync_once(
             Some("grokbot".to_string()),
             Some(task_id.clone()),
             None,
+            env::var("FLEET_WORKBENCH_URL").ok().as_deref(),
             rt,
         )?;
         let desktop_session_id = dispatch_val

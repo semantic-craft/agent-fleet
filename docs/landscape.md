@@ -13,7 +13,7 @@
 
 | 目录 | 是什么 | 状态 |
 | --- | --- | --- |
-| `agent-fleet` | 本仓库：独立多 Agent 协调与桌面侧栏派活引擎（`crates/`）及跨仓库接线正本。协议与架构说明见 [DESIGN.md](../DESIGN.md)、[rust-engine.md](rust-engine.md)、[anet.md](anet.md)、[reason.md](reason.md)，自制派活插件见 `plugins/`（如 `plugins/agent-network-cindy`） | 核心 |
+| `agent-fleet` | 本仓库：独立多 Agent 协调、桌面侧栏派活与 Agents-Anywhere v2 自托管工作台引擎（`crates/`）及跨仓库接线正本。协议与架构说明见 [DESIGN.md](../DESIGN.md)、[workbench-architecture.md](workbench-architecture.md)、[rust-engine.md](rust-engine.md)、[anet.md](anet.md)、[reason.md](reason.md)，自制派活插件见 `plugins/`（如 `plugins/agent-network-cindy`） | 核心 |
 | Reason（无目录） | 投递层。源码在上游，不 clone 进 `~/Projects`，不 fork。接线说明见 [reason.md](reason.md)。签到另线，不宣称已通 | 核心＝接线文档；源码仍上游 |
 | codex-host（无目录） | 壳。源码在上游，不 clone 进 `~/Projects`，不 fork，不在本仓实现 | 核心＝接线文档；源码仍上游 |
 | PODAS（无目录） | 伞名。`~/Projects` 里没有这个目录，也不是 Git 仓，不是第三正本 | 伞名，无目录 |
@@ -22,7 +22,7 @@
 | `_forks/agenvo` | 上游 Agenvo 的最小 fork（历史 connector／relay）。本机派活已改官方 anet，见 [anet.md](anet.md) | 遗留 |
 | `agent-plugins` | 只做 marketplace／安装根：`claude/`、`codex/`、`zcode/`、`dsh/` 等自有插件；多 agent 派活插件不放这里，在 `agent-fleet/plugins/` | 无关：不是通信基础设施；其中 `dsh/lcu-dsh`（LCU Computer Use 插件）线上在用 |
 | `outer-loop-kit` | 外环业务规则（outer-loop）；ANet 通用派活契约引用本仓 | 治理 |
-| `alma-relay-ops` | 多设备穿透／回家底座的运维仓（上游 yetone/alma-relay） | 无关：网络底座，不是派活通道 |
+| `alma-relay-ops` | 多设备穿透／回家底座的运维仓（上游 yetone/alma-relay）；随 `fleet-workbench-server` 阿里云自托管切换批准后准备退役 | 无关：网络底座，不是派活通道（阿里云切换批准后退役） |
 | `_ref/esp32-iphone-agent`、`zotero-bridge` | 硬件 iPhone 操控实验；Zotero 文献桥 | 无关 |
 
 2026-11-04 目录复核：历史条目 `dsh-superagent-prototype` 当前不在 `~/Projects`、`_ref` 或 `_forks` 下，因此移出当前目录表。其迁移或移除原因未核实，不据此声称已归档，也不据此删除或恢复任何内容。
