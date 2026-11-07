@@ -32,6 +32,8 @@ pub use host_adapter::{
     ExternalAgentRegistry, FleetMailboxStore, HostAdapterError, OpenAiDotsAdapter,
     PersistedSessionRecord, PersistedTurnRecord, ZcodeAdapter,
 };
+pub mod ledger;
+pub use ledger::{FleetLedgerStore, SqliteError};
 mod relay_self_dev;
 pub use relay_self_dev::{
     run_host_poteto_relay, HostRelayClosureReceipt, HostRuntimeOptions,
