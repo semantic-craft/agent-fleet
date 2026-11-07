@@ -2,9 +2,10 @@ use fleet_daemon::{
     build_configured_host_adapter, detect_antigravity_runtime, detect_cindy_runtime,
     detect_dsh_runtime, detect_openai_dots_runtime, detect_zcode_runtime,
     doctor::evaluate_gate_failures, inspect_host_state, probe_external_agent_live_contract,
-    probe_host_live_contract, read_antigravity_latest_response, run_host_poteto_relay,
-    wire_agent_configs, AntigravityRuntimeConfig, CindyRuntimeConfig, DesktopHostAdapter,
-    DshRuntimeConfig, ExternalAgentRegistry, FleetMailboxStore, HostRuntimeOptions,
+    probe_host_live_contract, project_host_timelines, read_antigravity_latest_response,
+    run_connector_daemon, run_host_poteto_relay, wire_agent_configs, AntigravityRuntimeConfig,
+    CindyRuntimeConfig, ConnectorConfig, DesktopHostAdapter, DshRuntimeConfig,
+    ExternalAgentRegistry, FleetLedgerStore, FleetMailboxStore, HostRuntimeOptions,
     OpenAiDotsRuntimeConfig, PotetoRelayTask, SessionDirectory, ZcodeRuntimeConfig,
 };
 use fleet_proto::{
@@ -341,6 +342,17 @@ fn run_hosts(args: &[String]) -> Result<(), String> {
             };
             let receipt = adapter.deliver_turn(&req).map_err(|e| e.to_string())?;
             serde_json::to_string_pretty(&receipt).map_err(|e| e.to_string())?
+        }
+        "sync-timeline" => {
+            let state_root_for_ledger = PathBuf::from(options.get("--state-root").ok_or(USAGE)?);
+            let ledger = FleetLedgerStore::open(&state_root_for_ledger).map_err(|e| e.to_string())?;
+            let report = project_host_timelines(&ledger, "conn-local", host.as_str(), None)
+                .map_err(|e| e.to_string())?;
+            serde_json::to_string_pretty(&json!({
+                "host": host.as_str(),
+                "report": report,
+            }))
+            .map_err(|e| e.to_string())?
         }
         _ => return Err(USAGE.into()),
     };
@@ -2005,6 +2017,66 @@ fn run_anet_sync(args: &[String]) -> Result<(), String> {
     }
 }
 
+fn run_connector(args: &[String]) -> Result<(), String> {
+    if args.len() < 4 || args[1].as_str() != "start" {
+        return Err(USAGE.into());
+    }
+    let allowed = &[
+        "--server-url",
+        "--connector-id",
+        "--connector-token",
+        "--projects-root",
+        "--state-root",
+        "--once",
+        "--max-messages",
+        "--codex-root",
+        "--app-server-socket",
+        "--cindy-root",
+        "--gateway-socket",
+        "--dsh-base-url",
+        "--dsh-root",
+        "--dsh-bin",
+        "--antigravity-root",
+        "--agy-bin",
+        "--zcode-root",
+        "--zcode-bin",
+    ];
+    let options = parse_key_value_pairs(&args[2..], allowed)?;
+    let server_url = options.get("--server-url").ok_or(USAGE)?.clone();
+    let connector_id = options
+        .get("--connector-id")
+        .cloned()
+        .unwrap_or_else(|| "conn-local".to_string());
+    let connector_token = options
+        .get("--connector-token")
+        .cloned()
+        .unwrap_or_else(|| "dev-token".to_string());
+    let projects_root = resolve_projects_root(&options)?;
+    let state_root = resolve_state_root(&options)?;
+    let rt = parse_runtime_options(&options)?;
+    let once = options
+        .get("--once")
+        .is_some_and(|v| v == "true" || v == "1");
+    let max_messages = options
+        .get("--max-messages")
+        .and_then(|v| v.parse::<usize>().ok());
+
+    let mut cfg = ConnectorConfig::new(
+        server_url,
+        connector_id,
+        connector_token,
+        projects_root,
+        state_root,
+    );
+    cfg.runtime_options = rt;
+    let out = run_connector_daemon(cfg, once, max_messages).map_err(|e| e.to_string())?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?
+    );
+    Ok(())
+}
+
 fn run() -> Result<(), String> {
     let args: Vec<_> = env::args().skip(1).collect();
     let Some(first) = args.first().map(String::as_str) else {
@@ -2020,6 +2092,7 @@ fn run() -> Result<(), String> {
         "hook" => run_hook(&args),
         "agents" => run_agents(&args),
         "anet-sync" => run_anet_sync(&args),
+        "connector" => run_connector(&args),
         "setup" => run_setup_or_doctor("setup", &args),
         "doctor" => run_setup_or_doctor("doctor", &args),
         "mcp" => run_mcp(&args),

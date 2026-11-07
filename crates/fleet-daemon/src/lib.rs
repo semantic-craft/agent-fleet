@@ -44,6 +44,19 @@ pub use observer::{
     NativeWriterLockGuard, ObserverCheckpoint, ObserverErrorRecord, ObserverScanReport,
     OpenAiDotsTimelineObserver, ZcodeTimelineObserver,
 };
+pub mod sandbox_fs;
+pub use sandbox_fs::{
+    validate_relative_workspace_path, SandboxDirEntry, SandboxExecOutput, SandboxFsError,
+    SandboxFsHandler, MAX_SANDBOX_READ_BYTES, MAX_SANDBOX_WRITE_BYTES,
+};
+pub mod connector_ws;
+pub use connector_ws::{
+    discover_local_runtime_providers, run_connector_daemon, ConnectorClient,
+    ConnectorConcurrencyGate, ConnectorConfig, ConnectorError, ConnectorRpcHandler,
+    CountingSemaphore, GenerationFence, RuntimeProviderDescriptor, SemaphorePermit,
+    TimelineEmitOutcome, TimelineEmitTransport, CRITICAL_SEMAPHORE_CAPACITY,
+    STANDARD_SEMAPHORE_CAPACITY,
+};
 mod relay_self_dev;
 pub use relay_self_dev::{
     run_host_poteto_relay, HostRelayClosureReceipt, HostRuntimeOptions,
