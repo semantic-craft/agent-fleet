@@ -3,8 +3,8 @@
 
 Pipeline (each step must pass before the next runs):
   1. `scripts/check`            — full offline gate (cargo + fixtures + npm)
-  2. `cargo build --release -p fleet-cli`
-  3. atomic install to ~/.local/bin/fleet-cli
+  2. `cargo build --release -p fleet-cli -p fleet-workbench-server`
+  3. atomic install to ~/.local/bin/fleet-cli and ~/.local/bin/fleet-workbench-server
   4. MCP smoke against the INSTALLED binary over stdio JSON-RPC 2.0:
      initialize -> tools/list -> tools/call list_team
   5. optional live dispatch smoke (--dispatch-smoke): send a marker probe to the
@@ -123,27 +123,43 @@ def main() -> int:
             print(json.dumps(receipt, indent=1))
             return 1
 
-    # 2. Release build
-    build = run(["cargo", "build", "--release", "-p", "fleet-cli"], cwd=ROOT)
-    receipt["steps"].append({"step": "build-release", "exit": build.returncode})
-    if build.returncode != 0:
-        receipt["ok"] = False
-        print(json.dumps(receipt, indent=1))
-        return 1
-
-    built = ROOT / "target" / "release" / "fleet-cli"
-    new_hash = sha256(built)
-
-    # 3. Atomic install
+    # 2. Release build and 3. Atomic install (in an isolated target dir)
     args.install_path.parent.mkdir(parents=True, exist_ok=True)
-    old_hash = sha256(args.install_path) if args.install_path.exists() else None
-    with tempfile.TemporaryDirectory(dir=args.install_path.parent) as tmp:
-        staged = Path(tmp) / "fleet-cli"
-        shutil.copy2(built, staged)
-        os.chmod(staged, 0o755)
-        os.replace(staged, args.install_path)
+    server_install_path = args.install_path.parent / "fleet-workbench-server"
+    with tempfile.TemporaryDirectory(prefix="fleet-release-target-") as target_dir:
+        env = dict(os.environ, CARGO_TARGET_DIR=target_dir)
+        build = run(
+            ["cargo", "build", "--release", "-p", "fleet-cli", "-p", "fleet-workbench-server"],
+            cwd=ROOT,
+            env=env,
+        )
+        receipt["steps"].append({"step": "build-release", "exit": build.returncode})
+        if build.returncode != 0:
+            receipt["ok"] = False
+            print(json.dumps(receipt, indent=1))
+            return 1
+
+        built = Path(target_dir) / "release" / "fleet-cli"
+        built_server = Path(target_dir) / "release" / "fleet-workbench-server"
+        new_hash = sha256(built)
+        new_server_hash = sha256(built_server)
+
+        old_hash = sha256(args.install_path) if args.install_path.exists() else None
+        old_server_hash = sha256(server_install_path) if server_install_path.exists() else None
+        with tempfile.TemporaryDirectory(dir=args.install_path.parent) as tmp:
+            staged = Path(tmp) / "fleet-cli"
+            shutil.copy2(built, staged)
+            os.chmod(staged, 0o755)
+            os.replace(staged, args.install_path)
+
+            staged_server = Path(tmp) / "fleet-workbench-server"
+            shutil.copy2(built_server, staged_server)
+            os.chmod(staged_server, 0o755)
+            os.replace(staged_server, server_install_path)
+
     installed_hash = sha256(args.install_path)
-    if installed_hash != new_hash:
+    installed_server_hash = sha256(server_install_path)
+    if installed_hash != new_hash or installed_server_hash != new_server_hash:
         receipt["ok"] = False
         print(json.dumps(receipt, indent=1))
         return 1
@@ -153,6 +169,10 @@ def main() -> int:
         "old_sha256": old_hash,
         "new_sha256": installed_hash,
         "changed": old_hash != installed_hash,
+        "server_path": str(server_install_path),
+        "server_old_sha256": old_server_hash,
+        "server_new_sha256": installed_server_hash,
+        "server_changed": old_server_hash != installed_server_hash,
     })
 
     # 4. MCP smoke against the installed binary
