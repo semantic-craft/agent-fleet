@@ -406,3 +406,28 @@ test('main adapter passes exact continuation parameters and validates receipts',
   assert.equal(sent.run.taskId, 'cindy-task');
   assert.equal(sent.run.runId, 'run2');
 });
+
+test('create clears CREATE_OUTCOME_UNKNOWN error and treats reconciling and stopping as active run statuses', async () => {
+  const official = task('anet-task', [user('req1', 'request 1')], { state: 'TASK_STATE_SUBMITTED' });
+  const h = setup({ official: () => official });
+  // Tick 1: discovers submitted task and executes create -> phase: running, error cleared to null
+  await tick(h.worker);
+  assert.equal(h.rec.phase, 'running');
+  assert.equal(h.rec.error, null);
+  assert.equal(h.rec.cindyTaskId, 'cindy-task');
+  assert.equal(h.rec.runId, 'run1');
+
+  // Tick 3: Cindy 0.1.126 returns status: 'reconciling' during turn transition -> stays running
+  h.setRuns({ run1: { status: 'reconciling' } });
+  h.rec.lastCheck = 0;
+  await tick(h.worker);
+  assert.equal(h.rec.phase, 'running');
+  assert.equal(h.rec.error, null);
+
+  // Tick 4: status: 'stopping' during cancellation transition -> stays running
+  h.setRuns({ run1: { status: 'stopping' } });
+  h.rec.lastCheck = 0;
+  await tick(h.worker);
+  assert.equal(h.rec.phase, 'running');
+  assert.equal(h.rec.error, null);
+});

@@ -61,6 +61,7 @@ let mcp = null;
 function startMcp() {
   if (!config || mcp) return;
   const env = {}; for (const k of ['PATH', 'HOME', 'LANG', 'TMPDIR']) if (process.env[k]) env[k] = process.env[k];
+  env.ANET_DATA_DIR = process.env.ANET_DATA_DIR || path.join(HOME, '.anet');
   const child = spawn(config.anetBin, ['--id', config.anetId, 'mcp'], { env, stdio: ['pipe', 'pipe', 'pipe'] });
   const m = { child, nextId: 0, waits: new Map(), ready: null, buf: '' };
   mcp = m;
@@ -428,7 +429,7 @@ function pickOutput(st) {
 const officialState = (task) => String(task?.status?.state || '').replace(/^TASK_STATE_/, '').toLowerCase().replaceAll('_', '-');
 const OFFICIAL_TERMINAL = new Set(['completed', 'failed', 'rejected', 'canceled']);
 const TERMINAL = new Set(['completed', 'failed', 'cancelled', 'interrupted']);
-const ACTIVE_RUN_STATUSES = new Set(['running', 'working', 'queued', 'pending']);
+const ACTIVE_RUN_STATUSES = new Set(['running', 'working', 'queued', 'pending', 'reconciling', 'stopping']);
 const KNOWN_RUN_STATUSES = new Set([...ACTIVE_RUN_STATUSES, ...TERMINAL]);
 
 let busy = false;
@@ -516,7 +517,7 @@ async function tick() {
         const r = await runJob({ kind: 'create', requestKey: 'anet-' + aid.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 100), title: ('Agent Network: ' + text.replace(/\s+/g, ' ')).slice(0, 100), text: envelope.text,
           ...(envelope.route ? { route: envelope.route } : {}) }, 90000);
         if (r && r.ok) {
-          Object.assign(rec, { phase: 'running', officialTaskId: aid, cindyTaskId: r.taskId, runId: r.runId, acceptedAt: new Date().toISOString() }); saveState();
+          Object.assign(rec, { phase: 'running', officialTaskId: aid, cindyTaskId: r.taskId, runId: r.runId, acceptedAt: new Date().toISOString(), error: null }); saveState();
           await tool('reply_task', { task_id: aid, state: 'working',
             text: 'Accepted by \u007b\u007bPERSON_bee7cl5q\u007d\u007d; working on it.' }).catch((e) => log('working reply failed', e.message));
         } else {

@@ -1227,7 +1227,7 @@ pub fn read_dsh_native_session(
     })
 }
 
-/// Runs `dsh --profile headless [--session-id <id>] [--model <model>] --json <prompt>` in `cwd` and returns `(session_id, turn_id)`.
+/// Runs `dsh --profile headless [--session-id <id>] [--patch ...] --json <prompt>` in `cwd` and returns `(session_id, turn_id)`.
 pub fn run_dsh_headless_command(
     dsh_root: &Path,
     dsh_bin: &Path,
@@ -1248,36 +1248,58 @@ pub fn run_dsh_headless_command(
         cwd.display()
     );
 
-    let build_cmd = |include_model_arg: bool| {
-        let mut cmd = Command::new(dsh_bin);
-        cmd.current_dir(cwd)
-            .env("DSH_HOME", dsh_root)
-            .env("DSH_PERMISSION_MODE", "danger-full-access");
-        if let Some(m) = model {
-            cmd.env("DSH_MODEL", m);
-            cmd.env("MODEL", m);
-        }
-        cmd.arg("--profile").arg("headless");
-        if include_model_arg {
-            if let Some(m) = model {
-                cmd.arg("--model").arg(m);
-            }
-        }
-        if let Some(sid) = session_id {
-            cmd.arg("--session-id").arg(sid);
-        }
-        cmd.arg("--json").arg(prompt);
-        cmd
+    let session_search_patch = PathBuf::from(
+        "/Applications/DeepSeek Harness.app/Contents/Resources/app/dsh/node_modules/@deepseek-ai/dsh-experimental-session-search/cordis.patch.yml",
+    );
+    let temp_model_patch = if let Some(m) = model.map(str::trim).filter(|s| !s.is_empty()) {
+        let (provider, model_id) = match m.split_once('/') {
+            Some((p, id)) if !p.is_empty() && !id.is_empty() => (p, id),
+            _ => ("deepseek", m),
+        };
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let patch_path = std::env::temp_dir().join(format!(
+            "fleet-dsh-model-{}-{nanos}.patch.yml",
+            std::process::id()
+        ));
+        let yaml = format!(
+            "- id: agent-default-model\n  config:\n    provider: {provider}\n    model: {model_id}\n"
+        );
+        let _ = fs::write(&patch_path, yaml);
+        Some(patch_path)
+    } else {
+        None
     };
 
-    let mut output = build_cmd(model.is_some()).output()?;
-    if !output.status.success() && model.is_some() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        if stderr.contains("unknown option '--model'") || stdout.contains("unknown option '--model'") {
-            output = build_cmd(false).output()?;
+    let mut cmd = Command::new(dsh_bin);
+    cmd.current_dir(cwd)
+        .env("DSH_HOME", dsh_root)
+        .env("DSH_PERMISSION_MODE", "danger-full-access");
+    if let Some(m) = model {
+        cmd.env("DSH_MODEL", m);
+        cmd.env("MODEL", m);
+    }
+    cmd.arg("--profile").arg("headless");
+    if session_search_patch.is_file() {
+        cmd.arg("--patch").arg(&session_search_patch);
+    }
+    if let Some(ref patch_path) = temp_model_patch {
+        if patch_path.is_file() {
+            cmd.arg("--patch").arg(patch_path);
         }
     }
+    if let Some(sid) = session_id {
+        cmd.arg("--session-id").arg(sid);
+    }
+    cmd.arg("--json").arg(prompt);
+
+    let output = cmd.output();
+    if let Some(patch_path) = temp_model_patch {
+        let _ = fs::remove_file(patch_path);
+    }
+    let output = output?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -1501,6 +1523,8 @@ pub struct CindyRuntimeConfig {
     pub cindy_root: PathBuf,
     pub gateway_socket: PathBuf,
     pub timeout: Duration,
+    pub anet_bridge_dir: Option<PathBuf>,
+    pub anet_bin: Option<PathBuf>,
 }
 
 impl CindyRuntimeConfig {
@@ -1509,12 +1533,300 @@ impl CindyRuntimeConfig {
             cindy_root,
             gateway_socket,
             timeout: Duration::from_secs(5),
+            anet_bridge_dir: None,
+            anet_bin: None,
         }
+    }
+
+    pub fn new_anet_bridge(
+        cindy_root: PathBuf,
+        anet_bridge_dir: PathBuf,
+        anet_bin: PathBuf,
+    ) -> Self {
+        let gateway_socket = cindy_root.join("cindy-gateway.sock");
+        Self {
+            cindy_root,
+            gateway_socket,
+            timeout: Duration::from_secs(90),
+            anet_bridge_dir: Some(anet_bridge_dir),
+            anet_bin: Some(anet_bin),
+        }
+    }
+
+    pub fn is_anet_bridge(&self) -> bool {
+        self.anet_bridge_dir.is_some() && !self.gateway_socket.exists()
     }
 
     pub fn transcripts_dir(&self) -> PathBuf {
         self.cindy_root.join("transcripts")
     }
+}
+
+pub(crate) fn dispatch_cindy_via_anet_bridge(
+    runtime: &CindyRuntimeConfig,
+    project_dir: &Path,
+    existing_session_id: Option<&str>,
+    prompt: &str,
+) -> Result<(String, String, DeliveryTier), HostAdapterError> {
+    let bridge_dir = runtime.anet_bridge_dir.as_ref().ok_or_else(|| {
+        HostAdapterError::CindyProtocol("Cindy ANet bridge directory is not configured".into())
+    })?;
+    let anet_bin = runtime.anet_bin.as_ref().ok_or_else(|| {
+        HostAdapterError::CindyProtocol("Cindy ANet binary path is not configured".into())
+    })?;
+    let config_path = bridge_dir.join("config.json");
+    let config_raw = fs::read_to_string(&config_path).map_err(|e| {
+        HostAdapterError::CindyProtocol(format!(
+            "failed to read Cindy ANet bridge config {}: {e}",
+            config_path.display()
+        ))
+    })?;
+    let config_val: Value = serde_json::from_str(&config_raw).map_err(|e| {
+        HostAdapterError::CindyProtocol(format!(
+            "invalid JSON in Cindy ANet bridge config {}: {e}",
+            config_path.display()
+        ))
+    })?;
+    let cindy_anet_id = config_val
+        .get("anetId")
+        .and_then(Value::as_str)
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or("cindy")
+        .to_string();
+    let allow_peers: Vec<String> = config_val
+        .get("allowPeers")
+        .and_then(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let home_dir = std::env::var("HOME")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/"));
+    let anet_data_dir = std::env::var("ANET_DATA_DIR")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home_dir.join(".anet"));
+
+    let run_anet = |args: &[&str]| -> Result<std::process::Output, HostAdapterError> {
+        Command::new(anet_bin)
+            .env_remove("ANET_HOME")
+            .env("ANET_DATA_DIR", &anet_data_dir)
+            .args(args)
+            .output()
+            .map_err(|e| {
+                HostAdapterError::CindyProtocol(format!(
+                    "failed to execute {} {:?}: {e}",
+                    anet_bin.display(),
+                    args
+                ))
+            })
+    };
+
+    // Resolve Cindy's target AID
+    let cindy_id_out = run_anet(&["--id", &cindy_anet_id, "identity", "status", "--json"])?;
+    if !cindy_id_out.status.success() {
+        return Err(HostAdapterError::CindyProtocol(format!(
+            "anet identity status for `{cindy_anet_id}` failed: {}",
+            String::from_utf8_lossy(&cindy_id_out.stderr).trim()
+        )));
+    }
+    let cindy_id_val: Value = serde_json::from_slice(&cindy_id_out.stdout).map_err(|e| {
+        HostAdapterError::CindyProtocol(format!(
+            "invalid JSON from anet identity status for `{cindy_anet_id}`: {e}"
+        ))
+    })?;
+    let cindy_aid = cindy_id_val
+        .get("aid")
+        .and_then(Value::as_str)
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| {
+            HostAdapterError::CindyProtocol("anet identity status omitted `aid`".into())
+        })?
+        .to_string();
+
+    // Resolve local sender identity allowed by Cindy's allowPeers
+    let mut sender_id = std::env::var("FLEET_ANET_SENDER_ID")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_default();
+    if sender_id.is_empty() {
+        for cand in ["turing", "default", "dsh"] {
+            if let Ok(out) = run_anet(&["--id", cand, "identity", "status", "--json"]) {
+                if out.status.success() {
+                    if let Ok(v) = serde_json::from_slice::<Value>(&out.stdout) {
+                        if let Some(aid) = v.get("aid").and_then(Value::as_str) {
+                            if allow_peers.is_empty() || allow_peers.iter().any(|p| p == aid) {
+                                sender_id = cand.to_string();
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if sender_id.is_empty() {
+        sender_id = "turing".to_string();
+    }
+
+    // Ensure sender daemon is up
+    let _ = run_anet(&["--id", &sender_id, "up"]);
+
+    let effective_prompt = if prompt.contains(&project_dir.display().to_string()) {
+        prompt.to_string()
+    } else {
+        format!("[Workspace: {}]\n\n{prompt}", project_dir.display())
+    };
+
+    let state_path = bridge_dir.join("state.json");
+
+    // If continuing an active running ANet task for `existing_session_id`, try `anet message`
+    if let Some(sid) = existing_session_id {
+        if let Ok(raw_state) = fs::read_to_string(&state_path) {
+            if let Ok(state_val) = serde_json::from_str::<Value>(&raw_state) {
+                if let Some(tasks_obj) = state_val.get("tasks").and_then(Value::as_object) {
+                    if let Some((aid, rec)) = tasks_obj.iter().find(|(k, v)| {
+                        *k == sid
+                            || v.get("cindyTaskId").and_then(Value::as_str) == Some(sid)
+                    }) {
+                        if rec.get("phase").and_then(Value::as_str) == Some("running") {
+                            let prev_run_id = rec
+                                .get("runId")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default()
+                                .to_string();
+                            let msg_out =
+                                run_anet(&["--id", &sender_id, "message", aid, &effective_prompt])?;
+                            if msg_out.status.success() {
+                                let start = std::time::Instant::now();
+                                while start.elapsed() < runtime.timeout {
+                                    if let Ok(s) = fs::read_to_string(&state_path) {
+                                        if let Ok(sv) = serde_json::from_str::<Value>(&s) {
+                                            if let Some(r) = sv
+                                                .pointer(&format!("/tasks/{aid}"))
+                                            {
+                                                let cur_run = r
+                                                    .get("runId")
+                                                    .and_then(Value::as_str)
+                                                    .unwrap_or_default();
+                                                let phase = r
+                                                    .get("phase")
+                                                    .and_then(Value::as_str)
+                                                    .unwrap_or_default();
+                                                if !cur_run.is_empty() && cur_run != prev_run_id {
+                                                    let tier = if matches!(
+                                                        phase,
+                                                        "replied" | "delivery-state-observed"
+                                                    ) {
+                                                        DeliveryTier::Completed
+                                                    } else {
+                                                        DeliveryTier::Running
+                                                    };
+                                                    return Ok((
+                                                        sid.to_string(),
+                                                        cur_run.to_string(),
+                                                        tier,
+                                                    ));
+                                                }
+                                            }
+                                        }
+                                    }
+                                    std::thread::sleep(Duration::from_millis(500));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let del_out = run_anet(&["--id", &sender_id, "delegate", &cindy_aid, &effective_prompt])?;
+    if !del_out.status.success() {
+        return Err(HostAdapterError::CindyProtocol(format!(
+            "anet delegate to `{cindy_anet_id}` ({cindy_aid}) failed: {}",
+            String::from_utf8_lossy(&del_out.stderr).trim()
+        )));
+    }
+    let del_val: Value = serde_json::from_slice(&del_out.stdout).map_err(|e| {
+        HostAdapterError::CindyProtocol(format!("invalid JSON from anet delegate: {e}"))
+    })?;
+    let ix_id = del_val
+        .pointer("/task/id")
+        .or_else(|| del_val.get("id"))
+        .and_then(Value::as_str)
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| {
+            HostAdapterError::CindyProtocol("anet delegate output omitted task id".into())
+        })?
+        .to_string();
+
+    let start = std::time::Instant::now();
+    let mut observed_task_id: Option<String> = None;
+    let mut observed_run_id: Option<String> = None;
+    while start.elapsed() < runtime.timeout {
+        if let Ok(raw_state) = fs::read_to_string(&state_path) {
+            if let Ok(state_val) = serde_json::from_str::<Value>(&raw_state) {
+                if let Some(rec) = state_val
+                    .get("tasks")
+                    .and_then(Value::as_object)
+                    .and_then(|t| t.get(&ix_id))
+                {
+                    let phase = rec
+                        .get("phase")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    if let Some(tid) = rec
+                        .get("cindyTaskId")
+                        .and_then(Value::as_str)
+                        .filter(|s| !s.is_empty())
+                    {
+                        observed_task_id = Some(tid.to_string());
+                    }
+                    if let Some(rid) = rec
+                        .get("runId")
+                        .and_then(Value::as_str)
+                        .filter(|s| !s.is_empty())
+                    {
+                        observed_run_id = Some(rid.to_string());
+                    }
+                    if matches!(phase, "replied" | "delivery-state-observed") {
+                        if let (Some(tid), Some(rid)) =
+                            (observed_task_id.clone(), observed_run_id.clone())
+                        {
+                            return Ok((tid, rid, DeliveryTier::Completed));
+                        }
+                    } else if matches!(phase, "failed" | "rejected" | "unverified") {
+                        let code = rec
+                            .pointer("/error/code")
+                            .and_then(Value::as_str)
+                            .unwrap_or(phase);
+                        return Err(HostAdapterError::CindyProtocol(format!(
+                            "Cindy ANet bridge task {ix_id} entered `{phase}` ({code})"
+                        )));
+                    }
+                }
+            }
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+
+    if let (Some(tid), Some(rid)) = (observed_task_id, observed_run_id) {
+        return Ok((tid, rid, DeliveryTier::Running));
+    }
+
+    Err(HostAdapterError::CindyProtocol(format!(
+        "timed out waiting for Cindy ANet bridge ({}) to accept task {ix_id}",
+        state_path.display()
+    )))
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

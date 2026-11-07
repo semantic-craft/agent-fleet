@@ -85,3 +85,11 @@
 - 起因与后果：`attach_zcode_session_to_tasks_index` 此前未写 `provider` 列（留空为 `NULL`），且在真实 `zcode` CLI 已写入完整消息与 `part` 行后又额外插入无 `part` 行的 `message` 记录，导致会话在 ZCode Desktop 侧栏被 `WHERE provider='glm'` 完全过滤，点开时还会多出空白消息气泡；DSH Desktop 则因 `SingleJsonUnit` 只认内存态，仅改磁盘 `workspace.json` 不会刷新已打开的桌面侧栏。
 - 正确做法：`crates/fleet-daemon/src/tri_hosts.rs` 写入 ZCode `tasks` 表时固定填齐 `provider = 'glm'`、`title_overridden = 1`、`cli_deleted = 0` 与 `meta_json`（并将写入列全部纳入 `doctor.rs` 的 `schema_expectations`），仅在无真实 CLI `part` 行时才补写 fallback `message` + `part`；写入 DSH 实机 `~/.dsh` 时通过 `127.0.0.1:9230` 调用 `ctx.workspaceRegistry` 与 `ctx.emit('api-session/added', item)`；`scripts/herdr-dispatch.sh` 在 `set -o pipefail` 下用变量捕获 `herdr status server` 输出再做字符串匹配，禁止管道接 `grep -q` 触发 SIGPIPE 误判服务未运行。
 - 复发记录：Seen 1x (2026-11-07)。
+
+### Cindy 0.1.126 与 DSH 0.2.1-rc.5 实机派活状态集与 CLI 参数边界（2026-11-07）
+
+**Cindy `0.1.126` 的 `cindy.tasks.getRun` 在轮次切换或重启恢复窗口会返回 `status: "reconciling"`、取消中返回 `"stopping"`；DSH `0.2.1-rc.5` 的 `dsh --profile headless` 无 `--model` 命令行参数，模型与实验插件需经 `--patch` 注入。**
+
+- 起因与后果：`plugins/agent-network-cindy/node/worker.cjs` 的 `ACTIVE_RUN_STATUSES` 原本只列了 `running/working/queued/pending`，漏掉 `reconciling` 与 `stopping`，且 `create` 成功后未把预设的 `error: { code: 'CREATE_OUTCOME_UNKNOWN' }` 清零，导致实机派活在 `reconciling` 瞬间被误锁入 `phase: 'unverified', error: { code: 'UNKNOWN_RUN_STATUS' }`；同时 `CindyAdapter` 在无本地 Unix socket 时缺少对 `~/Library/Application Support/CindyGlobal/agent-network-cindy` 桥接目录的原生调用；`run_dsh_headless_command` 传入不存在的 `--model` 标志导致每次带模型派活都先报错退出再回退重试。
+- 正确做法：`worker.cjs` 将 `reconciling`、`stopping` 纳入 `ACTIVE_RUN_STATUSES` 并在 `create` 成功时设 `error: null`；`CindyRuntimeConfig` 与 `CindyAdapter` 在无本地 gateway socket 时自动探测并调用本机 `agent-network-cindy`（清理 `ANET_HOME`、固定 `ANET_DATA_DIR=$HOME/.anet`、不传 `anet delegate` 不支持的 `--json`），从 `state.json` 回读真实 `cindyTaskId` 与 `runId`；`run_dsh_headless_command` 改用临时 Cordis `--patch` 文件注入 `agent-default-model` 并自动挂载 `dsh-experimental-session-search/cordis.patch.yml`。
+- 复发记录：Seen 1x (2026-11-07)。

@@ -627,11 +627,11 @@ pub fn probe_host_live_contract(host: DesktopHostKind, home: &Path) -> Value {
                 }
             }
             let sock_opt = candidate_sockets.into_iter().find(|p| p.exists());
-            // Cindy 0.1.126 ships no local gateway socket and no owned SQL surface; direct
-            // sidebar dispatch is unsupported until Cindy exposes one. `ready` here means
-            // "directly dispatchable", so it is false without a socket even while the app
-            // runs; inbound dispatch routes via the ANet `cindy` identity instead.
-            let ready = root.is_dir() && sock_opt.is_some();
+            let anet_bridge_cfg =
+                home.join("Library/Application Support/CindyGlobal/agent-network-cindy/config.json");
+            let anet_bridge_present = anet_bridge_cfg.is_file();
+            let ready =
+                root.is_dir() && (sock_opt.is_some() || (anet_bridge_present && process_running));
             let schema_status = if !root.is_dir() {
                 "missing"
             } else if sock_opt.is_some() {
@@ -645,6 +645,7 @@ pub fn probe_host_live_contract(host: DesktopHostKind, home: &Path) -> Value {
                 "root_dir": root,
                 "socket_path": sock_opt,
                 "socket_connected": sock_opt.is_some(),
+                "anet_bridge_config": anet_bridge_present.then_some(anet_bridge_cfg),
                 "process_running": process_running,
                 "dispatch_channel": if sock_opt.is_some() { "desktop-gateway" } else { "anet" },
                 "schema_status": schema_status,

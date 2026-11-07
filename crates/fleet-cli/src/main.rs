@@ -1776,12 +1776,31 @@ fn run_anet_sync_once(
         BTreeSet::new()
     };
 
+    let anet_data_dir = env::var("ANET_DATA_DIR")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            env::var("HOME")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+                .map(|h| PathBuf::from(h).join(".anet"))
+        });
+    let build_anet_cmd = |args: &[&str]| {
+        let mut cmd = Command::new(anet_bin);
+        cmd.env_remove("ANET_HOME");
+        if let Some(ref dir) = anet_data_dir {
+            cmd.env("ANET_DATA_DIR", dir);
+        }
+        cmd.args(args);
+        cmd
+    };
+
     let inbox_val: Value = if let Some(tasks_file) = tasks_json_opt {
         let raw = fs::read_to_string(tasks_file).map_err(|e| e.to_string())?;
         serde_json::from_str(&raw).map_err(|e| e.to_string())?
     } else {
-        let output = Command::new(anet_bin)
-            .args(["--id", identity, "inbox", "--pending"])
+        let output = build_anet_cmd(&["--id", identity, "inbox", "--pending"])
             .output()
             .map_err(|e| format!("failed to run {}: {e}", anet_bin.display()))?;
         if !output.status.success() {
@@ -1877,12 +1896,10 @@ fn run_anet_sync_once(
         };
 
         let (anet_replied, anet_completed) = if tasks_json_opt.is_none() {
-            let msg_out = Command::new(anet_bin)
-                .args(["--id", identity, "message", &task_id, &reply_text])
+            let msg_out = build_anet_cmd(&["--id", identity, "message", &task_id, &reply_text])
                 .output()
                 .map_err(|e| format!("failed to run anet message: {e}"))?;
-            let end_out = Command::new(anet_bin)
-                .args(["--id", identity, "end", &task_id])
+            let end_out = build_anet_cmd(&["--id", identity, "end", &task_id])
                 .output()
                 .map_err(|e| format!("failed to run anet end: {e}"))?;
             (msg_out.status.success(), end_out.status.success())

@@ -1494,3 +1494,118 @@ print("FLEET_TIER: completed")
 
     let _ = fs::remove_dir_all(&root);
 }
+
+#[test]
+fn cindy_anet_bridge_dispatches_and_correlates_host_task_and_run_id() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = std::env::temp_dir().join(format!(
+        "fleet-cindy-anet-bridge-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let projects_root = root.join("Projects");
+    let state_root = root.join("state");
+    let cindy_root = root.join(".cindy");
+    let bridge_dir = root.join("Library/Application Support/CindyGlobal/agent-network-cindy");
+    fs::create_dir_all(&projects_root).unwrap();
+    fs::create_dir_all(&state_root).unwrap();
+    fs::create_dir_all(&cindy_root).unwrap();
+    fs::create_dir_all(&bridge_dir).unwrap();
+
+    let mock_anet = root.join("mock_anet.py");
+    let state_json_path = bridge_dir.join("state.json");
+    let script = format!(
+        r#"#!/usr/bin/env python3
+import json, os, sys
+
+# Must scrub ANET_HOME and pass ANET_DATA_DIR
+assert "ANET_HOME" not in os.environ, "ANET_HOME must be scrubbed"
+assert os.environ.get("ANET_DATA_DIR"), "ANET_DATA_DIR must be set"
+
+args = sys.argv[1:]
+ident = "default"
+for i, a in enumerate(args):
+    if a == "--id" and i + 1 < len(args):
+        ident = args[i + 1]
+
+if "identity" in args and "status" in args:
+    aid = "bafyreicindy" if ident == "cindy" else "bafyreituring"
+    print(json.dumps({{"aid": aid, "name": ident, "state": "ok"}}))
+    sys.exit(0)
+
+if "up" in args:
+    sys.exit(0)
+
+if "delegate" in args:
+    assert "--json" not in args, "anet delegate must not pass unknown --json flag"
+    state_file = {state_json:?}
+    doc = {{
+        "version": 1,
+        "outgoing": {{}},
+        "tasks": {{
+            "ix_bridge_test_0001": {{
+                "phase": "replied",
+                "officialTaskId": "ix_bridge_test_0001",
+                "cindyTaskId": "cindy-task-bridge-0001",
+                "runId": "cindy-run-bridge-0001"
+            }}
+        }}
+    }}
+    with open(state_file, "w") as f:
+        json.dump(doc, f)
+    print(json.dumps({{"task": {{"id": "ix_bridge_test_0001"}}}}))
+    sys.exit(0)
+
+sys.exit(1)
+"#,
+        state_json = state_json_path.display().to_string()
+    );
+    fs::write(&mock_anet, script).unwrap();
+    let mut perms = fs::metadata(&mock_anet).unwrap().permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&mock_anet, perms).unwrap();
+
+    fs::write(
+        bridge_dir.join("config.json"),
+        serde_json::to_vec_pretty(&json!({
+            "anetId": "cindy",
+            "peerAid": "bafyreituring",
+            "allowPeers": ["bafyreituring"],
+            "anetBin": mock_anet,
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let detected = fleet_daemon::detect_cindy_runtime(&root).expect("should detect Cindy ANet bridge");
+    assert!(detected.is_anet_bridge());
+
+    let mut adapter = CindyAdapter::with_runtime(
+        projects_root.clone(),
+        state_root,
+        detected,
+    )
+    .unwrap();
+    let binding = adapter
+        .ensure_sidebar_project("pstack-cindy", Some("pstack-cindy"))
+        .unwrap();
+    let receipt = adapter
+        .create_session(&CreateSessionRequest {
+            delivery_id: "cindy-anet-deliv-1".into(),
+            project_id: binding.project_id.clone(),
+            project_dir: binding.project_dir.clone(),
+            title: "Cindy ANet Bridge Test".into(),
+            prompt: "Verify Cindy ANet bridge dispatch.".into(),
+            model: None,
+        })
+        .unwrap();
+    assert_eq!(receipt.host, DesktopHostKind::Cindy);
+    assert_eq!(receipt.session_id, "cindy-task-bridge-0001");
+    assert_eq!(receipt.turn_id, "cindy-run-bridge-0001");
+    assert_eq!(receipt.tier, DeliveryTier::Completed);
+
+    let _ = fs::remove_dir_all(&root);
+}

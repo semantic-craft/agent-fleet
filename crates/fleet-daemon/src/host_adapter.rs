@@ -1875,6 +1875,9 @@ impl DesktopHostAdapter for CindyAdapter {
         let Some(runtime) = self.runtime.clone() else {
             return self.core.ensure_sidebar_project(slug, title);
         };
+        if runtime.is_anet_bridge() {
+            return self.core.ensure_sidebar_project(slug, title);
+        }
         if let Some(existing_id) = self.core.state.slug_to_project_id.get(slug).cloned() {
             if self.core.state.projects.contains_key(&existing_id) {
                 return self.core.ensure_sidebar_project_with_override(
@@ -1926,6 +1929,22 @@ impl DesktopHostAdapter for CindyAdapter {
                 DeliveryTier::Accepted,
             );
         };
+        if runtime.is_anet_bridge() {
+            let (session_key, turn_id, tier) = crate::tri_hosts::dispatch_cindy_via_anet_bridge(
+                &runtime,
+                &project.project_dir,
+                None,
+                &request.prompt,
+            )?;
+            return self.core.commit_created_session(
+                request,
+                project,
+                Some(session_key),
+                Some(turn_id),
+                None,
+                tier,
+            );
+        }
         let mut client = crate::tri_hosts::CindyGatewayClient::connect(&runtime)?;
         let created = client.request(
             "sessions.create",
@@ -2006,6 +2025,21 @@ impl DesktopHostAdapter for CindyAdapter {
                 DeliveryTier::Accepted,
             );
         };
+        if runtime.is_anet_bridge() {
+            let (_session_key, turn_id, tier) = crate::tri_hosts::dispatch_cindy_via_anet_bridge(
+                &runtime,
+                &project.project_dir,
+                Some(&request.session_id),
+                &request.prompt,
+            )?;
+            return self.core.commit_delivered_turn(
+                request,
+                project,
+                Some(turn_id),
+                None,
+                tier,
+            );
+        }
         let mut client = crate::tri_hosts::CindyGatewayClient::connect(&runtime)?;
         let mut send_params = serde_json::json!({
             "sessionKey": request.session_id,
@@ -2451,14 +2485,40 @@ pub fn detect_cindy_runtime(home: &Path) -> Option<crate::tri_hosts::CindyRuntim
     candidate_sockets.push(default_root.join("gateway.sock"));
     candidate_sockets.push(home.join("Library/Application Support/Cindy/gateway.sock"));
     candidate_sockets.push(home.join("Library/Application Support/CindyGlobal/gateway.sock"));
-    let sock = candidate_sockets
+    if let Some(sock) = candidate_sockets
         .into_iter()
-        .find(|p| fs::metadata(p).is_ok())?;
-    let resolved_sock = fs::canonicalize(&sock).unwrap_or(sock);
-    Some(crate::tri_hosts::CindyRuntimeConfig::new(
-        default_root,
-        resolved_sock,
-    ))
+        .find(|p| fs::metadata(p).is_ok())
+    {
+        let resolved_sock = fs::canonicalize(&sock).unwrap_or(sock);
+        return Some(crate::tri_hosts::CindyRuntimeConfig::new(
+            default_root,
+            resolved_sock,
+        ));
+    }
+
+    let bridge_dir = home.join("Library/Application Support/CindyGlobal/agent-network-cindy");
+    let config_path = bridge_dir.join("config.json");
+    if config_path.is_file() {
+        let mut candidate_bins = Vec::new();
+        if let Ok(raw) = fs::read_to_string(&config_path) {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&raw) {
+                if let Some(b) = val.get("anetBin").and_then(serde_json::Value::as_str) {
+                    if !b.trim().is_empty() {
+                        candidate_bins.push(PathBuf::from(b));
+                    }
+                }
+            }
+        }
+        candidate_bins.push(home.join(".local/bin/anet"));
+        if let Some(anet_bin) = candidate_bins.into_iter().find(|p| p.is_file()) {
+            return Some(crate::tri_hosts::CindyRuntimeConfig::new_anet_bridge(
+                default_root,
+                bridge_dir,
+                anet_bin,
+            ));
+        }
+    }
+    None
 }
 
 /// Auto-detects the local DeepSeek Harness (`deepseek-harness`) runtime from `home` and environment variables.
