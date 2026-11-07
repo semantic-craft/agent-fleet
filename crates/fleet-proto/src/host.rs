@@ -169,12 +169,20 @@ pub fn resolve_project_dir_in_root(
             }
             Component::Normal(part) => {
                 let s = part.to_string_lossy();
-                if matches!(s.as_ref(), ".cache" | ".anet") {
+                if matches!(s.as_ref(), ".cache" | ".anet" | "PRIVATE") {
                     return Err(ProjectPathError::CacheOrHiddenSegment(s.into_owned()));
                 }
             }
             _ => {}
         }
+    }
+    if std::fs::symlink_metadata(projects_root)
+        .is_ok_and(|meta| meta.file_type().is_symlink())
+    {
+        return Err(ProjectPathError::OutsideProjectsRoot {
+            root: projects_root.to_path_buf(),
+            candidate: projects_root.to_path_buf(),
+        });
     }
     let validated_slug = validate_project_slug(slug)?;
     let candidate = projects_root.join(validated_slug);
@@ -184,7 +192,69 @@ pub fn resolve_project_dir_in_root(
             candidate,
         });
     }
+    if std::fs::symlink_metadata(&candidate).is_ok_and(|meta| meta.file_type().is_symlink()) {
+        return Err(ProjectPathError::OutsideProjectsRoot {
+            root: projects_root.to_path_buf(),
+            candidate,
+        });
+    }
     Ok(candidate)
+}
+
+/// Validates a relative path inside `<projects_root>/<slug>` for remote workbench file access,
+/// rejecting traversal (`..`), absolute paths, hidden credential/cache segments (`.anet`, `.cache`,
+/// `.ssh`, `PRIVATE`), and symlinks on disk.
+pub fn resolve_workbench_file_path(
+    projects_root: &Path,
+    slug: &str,
+    relative_path: &str,
+) -> Result<PathBuf, ProjectPathError> {
+    let project_dir = resolve_project_dir_in_root(projects_root, slug)?;
+    let trimmed = relative_path.trim();
+    if trimmed.is_empty()
+        || trimmed.starts_with('/')
+        || trimmed.starts_with('\\')
+        || trimmed.contains('\\')
+        || trimmed.chars().any(char::is_control)
+    {
+        return Err(ProjectPathError::PathTraversal(relative_path.to_string()));
+    }
+    let rel = Path::new(trimmed);
+    let mut current = project_dir.clone();
+    for component in rel.components() {
+        match component {
+            Component::Normal(part) => {
+                let s = part.to_string_lossy();
+                if s.is_empty() || s == "." || s == ".." {
+                    return Err(ProjectPathError::PathTraversal(relative_path.to_string()));
+                }
+                let lowered = s.to_ascii_lowercase();
+                if matches!(
+                    lowered.as_str(),
+                    ".cache" | "caches" | ".anet" | ".ssh" | "private" | "_private" | ".git"
+                ) {
+                    return Err(ProjectPathError::CacheOrHiddenSegment(s.into_owned()));
+                }
+                current.push(part);
+                if std::fs::symlink_metadata(&current)
+                    .is_ok_and(|meta| meta.file_type().is_symlink())
+                {
+                    return Err(ProjectPathError::OutsideProjectsRoot {
+                        root: project_dir,
+                        candidate: current,
+                    });
+                }
+            }
+            _ => return Err(ProjectPathError::PathTraversal(relative_path.to_string())),
+        }
+    }
+    if !current.starts_with(&project_dir) || current == project_dir {
+        return Err(ProjectPathError::OutsideProjectsRoot {
+            root: project_dir,
+            candidate: current,
+        });
+    }
+    Ok(current)
 }
 
 pub fn validate_nonempty_id(field: &str, value: &str) -> Result<(), ProjectPathError> {
