@@ -254,11 +254,11 @@ Slice B 已将 Cargo 编译与 session directory 隔离行为测试接入同一�
 - **Done Predicate**: `fleet-cli doctor --workbench https://<aliyun-host> --gate` 退出码 `0`（若无线上凭据则通过本机 TLS/反向代理全真模拟网关与 `unified_workbench_e2e` 验证完整切换契约）；`scripts/check` 绿灯。
 - **Evidence**: 27c0b641377b83e7be248c2403c26289d098ec2c;~/.local/bin/fleet-cli;~/.local/bin/fleet-workbench-server;.scratch/pstack-relay/checks/20261108T013919.234637Z/receipt.json;~/Projects/_status/agent-fleet-verify-20261108-1/result.json
 
-### [ ] Slice AD: 将 6 宿主探测、路径模板与增量游标收敛为声明式 `HostSpec` 驱动表
+### [x] Slice AD: 将 6 宿主探测、路径模板与增量游标收敛为声明式 `HostSpec` 驱动表
 - **Playbook**: `Refactoring`
 - **Outcome**: 在受控单会话上下文预算 (`<= 5` 个工作集文件：`crates/fleet-proto/src/host.rs`、`crates/fleet-daemon/src/doctor.rs`、`crates/fleet-daemon/src/observer.rs`、`crates/fleet-daemon/src/host_adapter.rs`、`crates/fleet-daemon/src/desktop.rs`) 内，将 6 个宿主 (`openai-dots`、`cindy`、`deepseek-harness`、`antigravity-desktop`、`zcode`、`grokbot`) 的存储路径模板、SQLite/JSON Schema 期望签名、派活通道枚举与增量回读游标提取器统一收敛为声明式 `HostSpec` 静态表，消除跨文件重复分支。
 - **Done Predicate**: `cargo test -p fleet-daemon schema_contract`、`cargo test -p fleet-daemon --test timeline_observer` 与 `scripts/check` 退出码 `0`；`fleet-cli doctor --gate` 退出码 `0`。
-- **Evidence**: PENDING
+- **Evidence**: d8609456844a3786bd3041aa3567bec3b27e9a56;~/.local/bin/fleet-cli;~/.local/bin/fleet-workbench-server;.scratch/pstack-relay/checks/20261108T023129.624229Z/receipt.json;~/Projects/_status/agent-fleet-verify-20261108-2/result.json
 
 ### [ ] Slice AE: 为 `(OrderSeq, UpdatedSeq)` 序列器、33ms 合并器与代际租约补齐状态机属性测试
 - **Playbook**: `Feature`
