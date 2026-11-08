@@ -385,7 +385,7 @@ impl HostLifecycleCore {
                 .slug_to_project_id
                 .get(slug)
                 .cloned()
-                .unwrap_or_else(|| format!("proj-{}-{slug}", self.host.as_str())),
+                .unwrap_or_else(|| self.host.spec().default_project_id(slug)),
         };
         validate_nonempty_id("project_id", &project_id)?;
         validate_sidebar_project_id(&project_id)?;
@@ -2566,35 +2566,12 @@ impl DesktopHostAdapter for AntigravityDesktopAdapter {
 pub fn detect_openai_dots_runtime(
     home: &Path,
 ) -> Option<crate::tri_hosts::OpenAiDotsRuntimeConfig> {
-    let default_root = std::env::var("CODEX_HOME")
-        .ok()
-        .filter(|s| !s.trim().is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.join(".codex"));
+    let spec = DesktopHostKind::OpenaiDots.spec();
+    let default_root = spec.resolve_root_dir(home);
     if !default_root.is_dir() {
         return None;
     }
-    let mut candidate_sockets = Vec::new();
-    if let Ok(sock) = std::env::var("CODEX_APP_SERVER_SOCKET") {
-        if !sock.trim().is_empty() {
-            candidate_sockets.push(PathBuf::from(sock));
-        }
-    }
-    candidate_sockets.push(default_root.join("app-server.sock"));
-    candidate_sockets.push(
-        default_root
-            .join("app-server-control")
-            .join("app-server-control.sock"),
-    );
-    candidate_sockets.push(default_root.join("ipc").join("ipc.sock"));
-    candidate_sockets.push(
-        default_root
-            .join("app-server-daemon")
-            .join("daemon-updater.sock"),
-    );
-    let sock = candidate_sockets
-        .into_iter()
-        .find(|p| fs::metadata(p).is_ok())?;
+    let sock = spec.resolve_socket_path(home, &default_root)?;
     let resolved_sock = fs::canonicalize(&sock).unwrap_or(sock);
     Some(crate::tri_hosts::OpenAiDotsRuntimeConfig::new(
         default_root,
@@ -2604,28 +2581,12 @@ pub fn detect_openai_dots_runtime(
 
 /// Auto-detects the local Cindy (`cindy`) runtime from `home` and environment variables.
 pub fn detect_cindy_runtime(home: &Path) -> Option<crate::tri_hosts::CindyRuntimeConfig> {
-    let default_root = std::env::var("CINDY_HOME")
-        .ok()
-        .filter(|s| !s.trim().is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.join(".cindy"));
+    let spec = DesktopHostKind::Cindy.spec();
+    let default_root = spec.resolve_root_dir(home);
     if !default_root.is_dir() {
         return None;
     }
-    let mut candidate_sockets = Vec::new();
-    if let Ok(sock) = std::env::var("CINDY_GATEWAY_SOCKET") {
-        if !sock.trim().is_empty() {
-            candidate_sockets.push(PathBuf::from(sock));
-        }
-    }
-    candidate_sockets.push(default_root.join("cindy-gateway.sock"));
-    candidate_sockets.push(default_root.join("gateway.sock"));
-    candidate_sockets.push(home.join("Library/Application Support/Cindy/gateway.sock"));
-    candidate_sockets.push(home.join("Library/Application Support/CindyGlobal/gateway.sock"));
-    if let Some(sock) = candidate_sockets
-        .into_iter()
-        .find(|p| fs::metadata(p).is_ok())
-    {
+    if let Some(sock) = spec.resolve_socket_path(home, &default_root) {
         let resolved_sock = fs::canonicalize(&sock).unwrap_or(sock);
         return Some(crate::tri_hosts::CindyRuntimeConfig::new(
             default_root,
@@ -2633,8 +2594,8 @@ pub fn detect_cindy_runtime(home: &Path) -> Option<crate::tri_hosts::CindyRuntim
         ));
     }
 
-    let bridge_dir = home.join("Library/Application Support/CindyGlobal/agent-network-cindy");
-    let config_path = bridge_dir.join("config.json");
+    let bridge_dir = spec.resolve_aux_path_in_home(home, "anet_bridge_dir")?;
+    let config_path = spec.resolve_aux_path_in_home(home, "anet_bridge_config")?;
     if config_path.is_file() {
         let mut candidate_bins = Vec::new();
         if let Ok(raw) = fs::read_to_string(&config_path) {
@@ -2660,26 +2621,12 @@ pub fn detect_cindy_runtime(home: &Path) -> Option<crate::tri_hosts::CindyRuntim
 
 /// Auto-detects the local DeepSeek Harness (`deepseek-harness`) runtime from `home` and environment variables.
 pub fn detect_dsh_runtime(home: &Path) -> Option<crate::tri_hosts::DshRuntimeConfig> {
+    let spec = DesktopHostKind::DeepseekHarness.spec();
     let base_url = std::env::var("DSH_BASE_URL")
         .ok()
         .filter(|s| !s.trim().is_empty());
-    let default_root = std::env::var("DSH_HOME")
-        .ok()
-        .filter(|s| !s.trim().is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.join(".dsh"));
-    let mut candidate_bins = Vec::new();
-    if let Ok(bin) = std::env::var("DSH_BIN") {
-        if !bin.trim().is_empty() {
-            candidate_bins.push(PathBuf::from(bin));
-        }
-    }
-    candidate_bins.push(home.join(".local").join("bin").join("dsh"));
-    candidate_bins.push(home.join("bin").join("dsh"));
-    candidate_bins.push(PathBuf::from(
-        "/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh",
-    ));
-    let bin_opt = candidate_bins.into_iter().find(|p| p.is_file());
+    let default_root = spec.resolve_root_dir(home);
+    let bin_opt = spec.resolve_bin_path(home);
 
     if default_root.is_dir() && bin_opt.is_some() {
         let mut cfg = crate::tri_hosts::DshRuntimeConfig::new_native(
@@ -2701,26 +2648,15 @@ pub fn detect_dsh_runtime(home: &Path) -> Option<crate::tri_hosts::DshRuntimeCon
 pub fn detect_antigravity_runtime(
     home: &Path,
 ) -> Option<crate::antigravity::AntigravityRuntimeConfig> {
-    let default_root = std::env::var("ANTIGRAVITY_DATA_DIR")
-        .ok()
-        .filter(|s| !s.trim().is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.join(".gemini").join("antigravity"));
-    if !default_root.join("conversation_summaries.db").is_file() {
+    let spec = DesktopHostKind::AntigravityDesktop.spec();
+    let default_root = spec.resolve_root_dir(home);
+    if !spec
+        .resolve_db_path(&default_root, "conversation_summaries")?
+        .is_file()
+    {
         return None;
     }
-    let mut candidate_bins = Vec::new();
-    if let Ok(bin) = std::env::var("AGY_BIN") {
-        if !bin.trim().is_empty() {
-            candidate_bins.push(PathBuf::from(bin));
-        }
-    }
-    candidate_bins.push(home.join(".local").join("bin").join("agy"));
-    candidate_bins.push(PathBuf::from(
-        "/Applications/Antigravity.app/Contents/Resources/app/bin/agy",
-    ));
-    candidate_bins.push(home.join(".local").join("libexec").join("agy").join("agy"));
-    let bin = candidate_bins.into_iter().find(|p| p.is_file())?;
+    let bin = spec.resolve_bin_path(home)?;
     Some(crate::antigravity::AntigravityRuntimeConfig::new(
         default_root,
         bin,
@@ -2729,26 +2665,12 @@ pub fn detect_antigravity_runtime(
 
 /// Auto-detects the local ZCode (`zcode`) runtime from `home` and environment variables.
 pub fn detect_zcode_runtime(home: &Path) -> Option<crate::tri_hosts::ZcodeRuntimeConfig> {
-    let default_root = std::env::var("ZCODE_HOME")
-        .ok()
-        .filter(|s| !s.trim().is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.join(".zcode"));
+    let spec = DesktopHostKind::Zcode.spec();
+    let default_root = spec.resolve_root_dir(home);
     if !default_root.is_dir() {
         return None;
     }
-    let mut candidate_bins = Vec::new();
-    if let Ok(bin) = std::env::var("ZCODE_BIN") {
-        if !bin.trim().is_empty() {
-            candidate_bins.push(PathBuf::from(bin));
-        }
-    }
-    candidate_bins.push(home.join("bin").join("zcode"));
-    candidate_bins.push(home.join(".local").join("bin").join("zcode"));
-    candidate_bins.push(PathBuf::from(
-        "/Applications/ZCode.app/Contents/Resources/cli/zcode",
-    ));
-    let bin = candidate_bins.into_iter().find(|p| p.is_file())?;
+    let bin = spec.resolve_bin_path(home)?;
     Some(crate::tri_hosts::ZcodeRuntimeConfig::new(default_root, bin))
 }
 
@@ -3651,16 +3573,21 @@ pub fn wire_agent_configs(
     let mut reports = Vec::new();
 
     // 1. GrokBot / Grok CLI (.grok/config.toml + .grok/hooks/agent-fleet.json)
-    let grok_dir = config_home.join(".grok");
-    fs::create_dir_all(grok_dir.join("hooks"))?;
-    let grok_toml_path = grok_dir.join("config.toml");
+    let grok_spec = &DesktopHostKind::ALL_SPECS[5];
+    let grok_paths = grok_spec.resolve_wiring_config_paths(config_home);
+    let grok_toml_path = grok_paths[0].clone();
+    let grok_hooks_path = grok_paths[1].clone();
+    if let Some(parent) = grok_hooks_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
     let grok_toml = format!(
-        "# Managed by agent-fleet setup\n[mcp_servers.agent-fleet]\ncommand = \"{exe_str}\"\nargs = [\"mcp\", \"--projects-root\", \"{proj_str}\", \"--state-root\", \"{state_str}\"]\nenabled = true\ntool_timeout_sec = 660\n\n[mcp_servers.agent-fleet.env]\nFLEET_AGENT = \"grokbot\"\n"
+        "# Managed by agent-fleet setup\n[mcp_servers.agent-fleet]\ncommand = \"{exe_str}\"\nargs = [\"mcp\", \"--projects-root\", \"{proj_str}\", \"--state-root\", \"{state_str}\"]\nenabled = true\ntool_timeout_sec = 660\n\n[mcp_servers.agent-fleet.env]\nFLEET_AGENT = \"{}\"\n",
+        grok_spec.id
     );
     fs::write(&grok_toml_path, grok_toml)?;
-    let grok_hooks_path = grok_dir.join("hooks/agent-fleet.json");
     let grok_hook_cmd = format!(
-        "'{exe_str}' hook grokbot stop --state-root '{state_str}'"
+        "'{exe_str}' hook {} stop --state-root '{state_str}'",
+        grok_spec.id
     );
     write_atomic_json(
         &grok_hooks_path,
@@ -3673,85 +3600,95 @@ pub fn wire_agent_configs(
         }),
     )?;
     reports.push(AgentWiringReport {
-        agent: "grokbot".into(),
-        config_files: vec![grok_toml_path, grok_hooks_path],
+        agent: grok_spec.id.into(),
+        config_files: grok_paths,
         wired: true,
     });
 
     // 2. Antigravity Desktop (.gemini/config/mcp_config.json + .gemini/config/hooks.json)
-    let agy_dir = config_home.join(".gemini/config");
-    let agy_mcp_path = agy_dir.join("mcp_config.json");
-    let agy_hooks_path = agy_dir.join("hooks.json");
+    let agy_spec = DesktopHostKind::AntigravityDesktop.spec();
+    let agy_paths = agy_spec.resolve_wiring_config_paths(config_home);
+    let agy_mcp_path = &agy_paths[0];
+    let agy_hooks_path = &agy_paths[1];
     write_atomic_json(
-        &agy_mcp_path,
+        agy_mcp_path,
         &serde_json::json!({
             "mcpServers": {
                 "agent-fleet": {
                     "command": exe_str,
                     "args": ["mcp", "--projects-root", proj_str, "--state-root", state_str],
-                    "env": { "FLEET_AGENT": "antigravity-desktop" }
+                    "env": { "FLEET_AGENT": agy_spec.id }
                 }
             }
         }),
     )?;
     write_atomic_json(
-        &agy_hooks_path,
+        agy_hooks_path,
         &serde_json::json!({
             "agent-fleet": {
                 "enabled": true,
-                "SessionStart": [{ "type": "command", "command": format!("'{exe_str}' hook antigravity-desktop session-start --state-root '{state_str}'"), "timeout": 15 }],
-                "Stop": [{ "type": "command", "command": format!("'{exe_str}' hook antigravity-desktop stop --state-root '{state_str}'"), "timeout": 15 }]
+                "SessionStart": [{ "type": "command", "command": format!("'{exe_str}' hook {} session-start --state-root '{state_str}'", agy_spec.id), "timeout": 15 }],
+                "Stop": [{ "type": "command", "command": format!("'{exe_str}' hook {} stop --state-root '{state_str}'", agy_spec.id), "timeout": 15 }]
             }
         }),
     )?;
     reports.push(AgentWiringReport {
-        agent: "antigravity-desktop".into(),
-        config_files: vec![agy_mcp_path, agy_hooks_path],
+        agent: agy_spec.id.into(),
+        config_files: agy_paths,
         wired: true,
     });
 
     // 3. Codex Desktop (.codex/config.toml + .codex/hooks.json)
-    let codex_dir = config_home.join(".codex");
-    fs::create_dir_all(&codex_dir)?;
-    let codex_toml_path = codex_dir.join("config.toml");
+    let codex_spec = DesktopHostKind::OpenaiDots.spec();
+    let codex_paths = codex_spec.resolve_wiring_config_paths(config_home);
+    let codex_toml_path = &codex_paths[0];
+    let codex_hooks_path = &codex_paths[1];
+    if let Some(parent) = codex_toml_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
     let codex_toml = format!(
-        "# Managed by agent-fleet setup\n[mcp_servers.agent-fleet]\ncommand = \"{exe_str}\"\nargs = [\"mcp\", \"--projects-root\", \"{proj_str}\", \"--state-root\", \"{state_str}\"]\ntool_timeout_sec = 660\ndefault_tools_approval_mode = \"approve\"\n\n[mcp_servers.agent-fleet.env]\nFLEET_AGENT = \"openai-dots\"\n"
+        "# Managed by agent-fleet setup\n[mcp_servers.agent-fleet]\ncommand = \"{exe_str}\"\nargs = [\"mcp\", \"--projects-root\", \"{proj_str}\", \"--state-root\", \"{state_str}\"]\ntool_timeout_sec = 660\ndefault_tools_approval_mode = \"approve\"\n\n[mcp_servers.agent-fleet.env]\nFLEET_AGENT = \"{}\"\n",
+        codex_spec.id
     );
-    fs::write(&codex_toml_path, codex_toml)?;
-    let codex_hooks_path = codex_dir.join("hooks.json");
+    fs::write(codex_toml_path, codex_toml)?;
     write_atomic_json(
-        &codex_hooks_path,
+        codex_hooks_path,
         &serde_json::json!({
             "hooks": {
-                "SessionStart": [{ "matcher": "*", "hooks": [{ "type": "command", "command": format!("'{exe_str}' hook openai-dots session-start --state-root '{state_str}'"), "timeout": 10 }] }],
-                "Stop": [{ "hooks": [{ "type": "command", "command": format!("'{exe_str}' hook openai-dots stop --state-root '{state_str}'"), "timeout": 10 }] }]
+                "SessionStart": [{ "matcher": "*", "hooks": [{ "type": "command", "command": format!("'{exe_str}' hook {} session-start --state-root '{state_str}'", codex_spec.id), "timeout": 10 }] }],
+                "Stop": [{ "hooks": [{ "type": "command", "command": format!("'{exe_str}' hook {} stop --state-root '{state_str}'", codex_spec.id), "timeout": 10 }] }]
             }
         }),
     )?;
     reports.push(AgentWiringReport {
-        agent: "openai-dots".into(),
-        config_files: vec![codex_toml_path, codex_hooks_path],
+        agent: codex_spec.id.into(),
+        config_files: codex_paths,
         wired: true,
     });
 
     // 4. DeepSeek Harness (.dsh/cordis.patch.yml)
-    let dsh_dir = config_home.join(".dsh");
-    fs::create_dir_all(&dsh_dir)?;
-    let dsh_patch_path = dsh_dir.join("cordis.patch.yml");
+    let dsh_spec = DesktopHostKind::DeepseekHarness.spec();
+    let dsh_paths = dsh_spec.resolve_wiring_config_paths(config_home);
+    let dsh_patch_path = &dsh_paths[0];
+    if let Some(parent) = dsh_patch_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
     let dsh_yaml = format!(
-        "# === agent-fleet MCP BEGIN ===\n- insert:\n    - id: mcp-agent-fleet\n      name: '@deepseek-ai/dsh-mcp-client'\n      config:\n        serverName: agent-fleet\n        transport: stdio\n        command: '{exe_str}'\n        args:\n          - mcp\n          - --projects-root\n          - '{proj_str}'\n          - --state-root\n          - '{state_str}'\n        env:\n          FLEET_AGENT: deepseek-harness\n        toolCallTimeoutMs: 660000\n# === agent-fleet MCP END ===\n"
+        "# === agent-fleet MCP BEGIN ===\n- insert:\n    - id: mcp-agent-fleet\n      name: '@deepseek-ai/dsh-mcp-client'\n      config:\n        serverName: agent-fleet\n        transport: stdio\n        command: '{exe_str}'\n        args:\n          - mcp\n          - --projects-root\n          - '{proj_str}'\n          - --state-root\n          - '{state_str}'\n        env:\n          FLEET_AGENT: {}\n        toolCallTimeoutMs: 660000\n# === agent-fleet MCP END ===\n",
+        dsh_spec.id
     );
-    fs::write(&dsh_patch_path, dsh_yaml)?;
+    fs::write(dsh_patch_path, dsh_yaml)?;
     reports.push(AgentWiringReport {
-        agent: "deepseek-harness".into(),
-        config_files: vec![dsh_patch_path],
+        agent: dsh_spec.id.into(),
+        config_files: dsh_paths,
         wired: true,
     });
 
     // 5. ZCode Desktop (.zcode/cli/config.json)
-    let zcode_cfg_path = config_home.join(".zcode/cli/config.json");
+    let zcode_spec = DesktopHostKind::Zcode.spec();
+    let zcode_paths = zcode_spec.resolve_wiring_config_paths(config_home);
     write_atomic_json(
-        &zcode_cfg_path,
+        &zcode_paths[0],
         &serde_json::json!({
             "mcp": {
                 "servers": {
@@ -3759,35 +3696,36 @@ pub fn wire_agent_configs(
                         "type": "stdio",
                         "command": exe_str,
                         "args": ["mcp", "--projects-root", proj_str, "--state-root", state_str],
-                        "env": { "FLEET_AGENT": "zcode" }
+                        "env": { "FLEET_AGENT": zcode_spec.id }
                     }
                 }
             }
         }),
     )?;
     reports.push(AgentWiringReport {
-        agent: "zcode".into(),
-        config_files: vec![zcode_cfg_path],
+        agent: zcode_spec.id.into(),
+        config_files: zcode_paths,
         wired: true,
     });
 
     // 6. Cindy Desktop (.cindy/mcp.json)
-    let cindy_cfg_path = config_home.join(".cindy/mcp.json");
+    let cindy_spec = DesktopHostKind::Cindy.spec();
+    let cindy_paths = cindy_spec.resolve_wiring_config_paths(config_home);
     write_atomic_json(
-        &cindy_cfg_path,
+        &cindy_paths[0],
         &serde_json::json!({
             "mcpServers": {
                 "agent-fleet": {
                     "command": exe_str,
                     "args": ["mcp", "--projects-root", proj_str, "--state-root", state_str],
-                    "env": { "FLEET_AGENT": "cindy" }
+                    "env": { "FLEET_AGENT": cindy_spec.id }
                 }
             }
         }),
     )?;
     reports.push(AgentWiringReport {
-        agent: "cindy".into(),
-        config_files: vec![cindy_cfg_path],
+        agent: cindy_spec.id.into(),
+        config_files: cindy_paths,
         wired: true,
     });
 

@@ -95,98 +95,15 @@ pub struct SchemaExpectation {
 /// Adapter-pinned column expectations per host DB. Run `fleet-cli doctor --gate` after any
 /// host desktop app upgrade; a `diverged` schema fails the gate with the missing columns.
 pub fn schema_expectations(host: DesktopHostKind) -> Vec<SchemaExpectation> {
-    match host {
-        DesktopHostKind::AntigravityDesktop => vec![SchemaExpectation {
-            db: "conversation_summaries",
-            table: "conversation_summaries",
-            columns: &[
-                "conversation_id",
-                "title",
-                "preview",
-                "step_count",
-                "last_modified_time",
-                "workspace_uris",
-                "status",
-                "project_id",
-            ],
-        }],
-        DesktopHostKind::Zcode => vec![
-            SchemaExpectation {
-                db: "tasks-index",
-                table: "tasks",
-                columns: &[
-                    "workspace_key",
-                    "workspace_path",
-                    "task_id",
-                    "title",
-                    "title_overridden",
-                    "project_id",
-                    "task_status",
-                    "provider",
-                    "mode",
-                    "meta_json",
-                    "host_id",
-                    "root_path",
-                    "cli_title",
-                    "cli_title_source",
-                    "cli_created_at",
-                    "cli_updated_at",
-                    "cli_last_outcome",
-                    "cli_deleted",
-                ],
-            },
-            SchemaExpectation {
-                db: "tasks-index",
-                table: "projects",
-                columns: &["project_id", "host_id", "name"],
-            },
-            SchemaExpectation {
-                db: "tasks-index",
-                table: "project_roots",
-                columns: &["project_id", "root_path"],
-            },
-            SchemaExpectation {
-                db: "tasks-index",
-                table: "hosts",
-                columns: &["host_id", "kind"],
-            },
-            SchemaExpectation {
-                db: "cli-db",
-                table: "session",
-                columns: &["id", "project_id", "slug", "directory", "title"],
-            },
-            SchemaExpectation {
-                db: "cli-db",
-                table: "message",
-                columns: &["id", "session_id", "data", "sequence"],
-            },
-            SchemaExpectation {
-                db: "cli-db",
-                table: "part",
-                columns: &["id", "message_id", "session_id", "data"],
-            },
-        ],
-        DesktopHostKind::OpenaiDots => vec![
-            SchemaExpectation {
-                db: "state_5",
-                table: "threads",
-                columns: &["id", "cwd", "title", "project_id"],
-            },
-            SchemaExpectation {
-                db: "state_5",
-                table: "projects",
-                columns: &["id"],
-            },
-            SchemaExpectation {
-                db: "state_5",
-                table: "project_roots",
-                columns: &["project_id", "path"],
-            },
-        ],
-        // DSH persists JSON storages (workspace.json + session_projcache); Cindy 0.1.126
-        // has no local gateway or SQL surface we own, so neither carries SQL expectations.
-        DesktopHostKind::DeepseekHarness | DesktopHostKind::Cindy => Vec::new(),
-    }
+    host.spec()
+        .sqlite_tables
+        .iter()
+        .map(|exp| SchemaExpectation {
+            db: exp.db,
+            table: exp.table,
+            columns: exp.columns,
+        })
+        .collect()
 }
 
 /// Evaluates doctor host reports and returns human-readable gate failures. A failure means
@@ -301,32 +218,21 @@ fn check_sqlite_expectations(
 /// Probes the real, read-only live contract for a canonical desktop host.
 pub fn probe_host_live_contract(host: DesktopHostKind, home: &Path) -> Value {
     let sqlite3_bin = PathBuf::from("/usr/bin/sqlite3");
+    let spec = host.spec();
+    let root = spec.resolve_root_dir(home);
+    let bin_opt = spec.resolve_bin_path(home);
+    let sock_opt = spec.resolve_socket_path(home, &root);
+    let process_running = is_process_running(spec.process_grep_pattern);
+    let expectations = schema_expectations(host);
 
     match host {
         DesktopHostKind::AntigravityDesktop => {
-            let root = std::env::var("ANTIGRAVITY_DATA_DIR")
-                .ok()
-                .filter(|s| !s.trim().is_empty())
-                .map(PathBuf::from)
-                .unwrap_or_else(|| home.join(".gemini").join("antigravity"));
-            let db_path = root.join("conversation_summaries.db");
-            let mut candidate_bins = vec![
-                home.join(".local").join("bin").join("agy"),
-                PathBuf::from("/Applications/Antigravity.app/Contents/Resources/app/bin/agy"),
-                home.join(".local").join("libexec").join("agy").join("agy"),
-            ];
-            if let Ok(b) = std::env::var("AGY_BIN") {
-                if !b.trim().is_empty() {
-                    candidate_bins.insert(0, PathBuf::from(b));
-                }
-            }
-            let bin_opt = candidate_bins.into_iter().find(|p| p.is_file());
-            let process_running = is_process_running("Antigravity.app|bin/agy");
-
-            let hub_port_file = root
-                .join("daemon")
-                .read_dir()
-                .ok()
+            let db_path = spec
+                .resolve_db_path(&root, "conversation_summaries")
+                .expect("antigravity conversation_summaries db path in HostSpec");
+            let hub_port_file = spec
+                .resolve_aux_path_in_root(&root, "daemon_dir")
+                .and_then(|dir| dir.read_dir().ok())
                 .and_then(|entries| {
                     entries
                         .filter_map(|e| e.ok())
@@ -339,28 +245,29 @@ pub fn probe_host_live_contract(host: DesktopHostKind, home: &Path) -> Value {
                         })
                 });
 
-            let expectations = schema_expectations(DesktopHostKind::AntigravityDesktop);
             let exp = expectations
                 .first()
                 .expect("antigravity schema expectations must be non-empty");
-            let required_cols = exp.columns;
-
             let mut unreadable = false;
-            let (db_exists, cols_aligned, verified, missing) =
-                if db_path.is_file() {
-                    match read_sqlite_table_columns_with_retry(&sqlite3_bin, &db_path, exp.table) {
-                        Ok(actual) => {
-                            let (aligned, ver, miss) = check_columns_alignment(&actual, required_cols);
-                            (true, aligned, ver, miss.into_iter().map(String::from).collect::<Vec<_>>())
-                        }
-                        Err(_) => {
-                            unreadable = true;
-                            (true, false, Vec::new(), Vec::new())
-                        }
+            let (db_exists, cols_aligned, verified, missing) = if db_path.is_file() {
+                match read_sqlite_table_columns_with_retry(&sqlite3_bin, &db_path, exp.table) {
+                    Ok(actual) => {
+                        let (aligned, ver, miss) = check_columns_alignment(&actual, exp.columns);
+                        (
+                            true,
+                            aligned,
+                            ver,
+                            miss.into_iter().map(String::from).collect::<Vec<_>>(),
+                        )
                     }
-                } else {
-                    (false, false, Vec::new(), Vec::new())
-                };
+                    Err(_) => {
+                        unreadable = true;
+                        (true, false, Vec::new(), Vec::new())
+                    }
+                }
+            } else {
+                (false, false, Vec::new(), Vec::new())
+            };
 
             let schema_status = if !db_exists {
                 "missing"
@@ -389,70 +296,38 @@ pub fn probe_host_live_contract(host: DesktopHostKind, home: &Path) -> Value {
             })
         }
         DesktopHostKind::Zcode => {
-            let root = std::env::var("ZCODE_HOME")
-                .ok()
-                .filter(|s| !s.trim().is_empty())
-                .map(PathBuf::from)
-                .unwrap_or_else(|| home.join(".zcode"));
-            let tasks_db = root.join("v2").join("tasks-index.sqlite");
-            let cli_db = root.join("cli").join("db").join("db.sqlite");
-            let mut candidate_bins = vec![
-                home.join("bin").join("zcode"),
-                home.join(".local").join("bin").join("zcode"),
-                PathBuf::from("/Applications/ZCode.app/Contents/Resources/cli/zcode"),
-            ];
-            if let Ok(b) = std::env::var("ZCODE_BIN") {
-                if !b.trim().is_empty() {
-                    candidate_bins.insert(0, PathBuf::from(b));
-                }
-            }
-            let bin_opt = candidate_bins.into_iter().find(|p| p.is_file());
-            let process_running = is_process_running("ZCode.app|bin/zcode");
+            let tasks_db = spec
+                .resolve_db_path(&root, "tasks-index")
+                .expect("zcode tasks-index db path in HostSpec");
+            let cli_db = spec
+                .resolve_db_path(&root, "cli-db")
+                .expect("zcode cli-db path in HostSpec");
 
             let mut verified_tables = BTreeMap::new();
             let mut missing_columns = Vec::new();
             let mut unreadable_tables = Vec::new();
             let mut all_aligned = tasks_db.is_file() && cli_db.is_file();
-            let expectations = schema_expectations(DesktopHostKind::Zcode);
 
-            if tasks_db.is_file() {
-                let db_expectations: Vec<_> = expectations
-                    .iter()
-                    .filter(|e| e.db == "tasks-index")
-                    .cloned()
-                    .collect();
-                if !check_sqlite_expectations(
-                    &sqlite3_bin,
-                    &tasks_db,
-                    &db_expectations,
-                    &mut verified_tables,
-                    &mut missing_columns,
-                    &mut unreadable_tables,
-                ) {
+            for (label, db_path) in [("tasks-index", &tasks_db), ("cli-db", &cli_db)] {
+                if db_path.is_file() {
+                    let db_expectations: Vec<_> = expectations
+                        .iter()
+                        .filter(|e| e.db == label)
+                        .cloned()
+                        .collect();
+                    if !check_sqlite_expectations(
+                        &sqlite3_bin,
+                        db_path,
+                        &db_expectations,
+                        &mut verified_tables,
+                        &mut missing_columns,
+                        &mut unreadable_tables,
+                    ) {
+                        all_aligned = false;
+                    }
+                } else {
                     all_aligned = false;
                 }
-            } else {
-                all_aligned = false;
-            }
-
-            if cli_db.is_file() {
-                let db_expectations: Vec<_> = expectations
-                    .iter()
-                    .filter(|e| e.db == "cli-db")
-                    .cloned()
-                    .collect();
-                if !check_sqlite_expectations(
-                    &sqlite3_bin,
-                    &cli_db,
-                    &db_expectations,
-                    &mut verified_tables,
-                    &mut missing_columns,
-                    &mut unreadable_tables,
-                ) {
-                    all_aligned = false;
-                }
-            } else {
-                all_aligned = false;
             }
 
             let schema_status = if !tasks_db.is_file() && !cli_db.is_file() {
@@ -482,36 +357,21 @@ pub fn probe_host_live_contract(host: DesktopHostKind, home: &Path) -> Value {
             })
         }
         DesktopHostKind::DeepseekHarness => {
-            let root = std::env::var("DSH_HOME")
-                .ok()
-                .filter(|s| !s.trim().is_empty())
-                .map(PathBuf::from)
-                .unwrap_or_else(|| home.join(".dsh"));
-            let mut candidate_bins = vec![
-                home.join(".local").join("bin").join("dsh"),
-                home.join("bin").join("dsh"),
-                PathBuf::from("/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh"),
-            ];
-            if let Ok(b) = std::env::var("DSH_BIN") {
-                if !b.trim().is_empty() {
-                    candidate_bins.insert(0, PathBuf::from(b));
-                }
-            }
-            let bin_opt = candidate_bins.into_iter().find(|p| p.is_file());
-            let process_running = is_process_running("DeepSeek Harness|bin/dsh");
+            let workspace_file = spec
+                .resolve_aux_path_in_root(&root, "workspace_storage")
+                .expect("dsh workspace_storage path in HostSpec");
+            let session_cache_dir = spec
+                .resolve_aux_path_in_root(&root, "session_cache_dir")
+                .expect("dsh session_cache_dir path in HostSpec");
+            let sessions_dir = spec
+                .resolve_aux_path_in_root(&root, "sessions_dir")
+                .expect("dsh sessions_dir path in HostSpec");
 
-            let workspace_file = root.join("storages").join("workspace.json");
-            let session_cache_dir = root.join("storages").join("session_projcache").join("sessions");
-            let sessions_dir = root.join("sessions");
-
-            let workspace_valid = if workspace_file.is_file() {
-                fs::read_to_string(&workspace_file)
+            let workspace_valid = workspace_file.is_file()
+                && fs::read_to_string(&workspace_file)
                     .ok()
                     .and_then(|s| serde_json::from_str::<Value>(&s).ok())
-                    .is_some()
-            } else {
-                false
-            };
+                    .is_some();
 
             let storage_aligned = workspace_valid && session_cache_dir.is_dir();
             let schema_status = if !workspace_file.is_file() {
@@ -539,26 +399,9 @@ pub fn probe_host_live_contract(host: DesktopHostKind, home: &Path) -> Value {
             })
         }
         DesktopHostKind::OpenaiDots => {
-            let root = std::env::var("CODEX_HOME")
-                .ok()
-                .filter(|s| !s.trim().is_empty())
-                .map(PathBuf::from)
-                .unwrap_or_else(|| home.join(".codex"));
-            let db_path = root.join("state_5.sqlite");
-            let process_running = is_process_running("Codex.app|app-server");
-
-            let mut candidate_sockets = vec![
-                root.join("app-server.sock"),
-                root.join("app-server-control").join("app-server-control.sock"),
-                root.join("ipc").join("ipc.sock"),
-                root.join("app-server-daemon").join("daemon-updater.sock"),
-            ];
-            if let Ok(sock) = std::env::var("CODEX_APP_SERVER_SOCKET") {
-                if !sock.trim().is_empty() {
-                    candidate_sockets.insert(0, PathBuf::from(sock));
-                }
-            }
-            let sock_opt = candidate_sockets.into_iter().find(|p| p.exists());
+            let db_path = spec
+                .resolve_db_path(&root, "state_5")
+                .expect("openai-dots state_5 db path in HostSpec");
 
             let mut verified_tables = BTreeMap::new();
             let mut missing_columns = Vec::new();
@@ -566,7 +409,6 @@ pub fn probe_host_live_contract(host: DesktopHostKind, home: &Path) -> Value {
             let mut all_aligned = db_path.is_file();
 
             if db_path.is_file() {
-                let expectations = schema_expectations(DesktopHostKind::OpenaiDots);
                 if !check_sqlite_expectations(
                     &sqlite3_bin,
                     &db_path,
@@ -608,27 +450,9 @@ pub fn probe_host_live_contract(host: DesktopHostKind, home: &Path) -> Value {
             })
         }
         DesktopHostKind::Cindy => {
-            let root = std::env::var("CINDY_HOME")
-                .ok()
-                .filter(|s| !s.trim().is_empty())
-                .map(PathBuf::from)
-                .unwrap_or_else(|| home.join(".cindy"));
-            let process_running = is_process_running("Cindy.app|cindy");
-
-            let mut candidate_sockets = vec![
-                root.join("cindy-gateway.sock"),
-                root.join("gateway.sock"),
-                home.join("Library/Application Support/Cindy/gateway.sock"),
-                home.join("Library/Application Support/CindyGlobal/gateway.sock"),
-            ];
-            if let Ok(sock) = std::env::var("CINDY_GATEWAY_SOCKET") {
-                if !sock.trim().is_empty() {
-                    candidate_sockets.insert(0, PathBuf::from(sock));
-                }
-            }
-            let sock_opt = candidate_sockets.into_iter().find(|p| p.exists());
-            let anet_bridge_cfg =
-                home.join("Library/Application Support/CindyGlobal/agent-network-cindy/config.json");
+            let anet_bridge_cfg = spec
+                .resolve_aux_path_in_home(home, "anet_bridge_config")
+                .expect("cindy anet_bridge_config path in HostSpec");
             let anet_bridge_present = anet_bridge_cfg.is_file();
             let ready =
                 root.is_dir() && (sock_opt.is_some() || (anet_bridge_present && process_running));
@@ -639,6 +463,13 @@ pub fn probe_host_live_contract(host: DesktopHostKind, home: &Path) -> Value {
             } else {
                 "no-local-gateway"
             };
+            let dispatch_channel = if sock_opt.is_some() {
+                spec.primary_channel.as_str()
+            } else {
+                spec.fallback_channel
+                    .unwrap_or(spec.primary_channel)
+                    .as_str()
+            };
 
             json!({
                 "detected": root.is_dir(),
@@ -647,7 +478,7 @@ pub fn probe_host_live_contract(host: DesktopHostKind, home: &Path) -> Value {
                 "socket_connected": sock_opt.is_some(),
                 "anet_bridge_config": anet_bridge_present.then_some(anet_bridge_cfg),
                 "process_running": process_running,
-                "dispatch_channel": if sock_opt.is_some() { "desktop-gateway" } else { "anet" },
+                "dispatch_channel": dispatch_channel,
                 "schema_status": schema_status,
                 "missing_columns": Vec::<String>::new(),
                 "ready": ready,

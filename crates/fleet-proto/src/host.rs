@@ -17,6 +17,261 @@ pub enum DesktopHostKind {
     Zcode,
 }
 
+/// Primary or fallback task/turn dispatch transport channel for a host.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum HostDispatchChannel {
+    DesktopGateway,
+    CliProcess,
+    AnetBridge,
+    PeerMailbox,
+}
+
+impl HostDispatchChannel {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::DesktopGateway => "desktop-gateway",
+            Self::CliProcess => "cli-process",
+            Self::AnetBridge => "anet",
+            Self::PeerMailbox => "peer-mailbox",
+        }
+    }
+}
+
+/// Pinned SQLite table and column contract for a host database label.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct HostTableExpectation {
+    pub db: &'static str,
+    pub table: &'static str,
+    pub columns: &'static [&'static str],
+}
+
+/// Declarative storage paths and environment variable overrides for a host.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct HostStorageSpec {
+    pub root_env_var: Option<&'static str>,
+    pub default_root_rel_home: &'static str,
+    pub bin_env_var: Option<&'static str>,
+    pub candidate_bins: &'static [&'static str],
+    pub socket_env_var: Option<&'static str>,
+    pub candidate_sockets_rel_root: &'static [&'static str],
+    pub candidate_sockets_rel_home: &'static [&'static str],
+    pub sqlite_dbs: &'static [(&'static str, &'static str)],
+    pub transcript_rel_templates: &'static [&'static str],
+    pub auxiliary_paths_rel_root: &'static [(&'static str, &'static str)],
+    pub auxiliary_paths_rel_home: &'static [(&'static str, &'static str)],
+    pub wiring_configs_rel_home: &'static [&'static str],
+}
+
+/// Incremental readback cursor discipline used by timeline observers.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HostCursorMode {
+    SeekableJsonlByteOffset { requires_meta_digest: bool },
+    ArchiveSizeAndMtime,
+    SqliteMessageCountAndDigest,
+    MailboxCountAndDeliveredMask,
+}
+
+/// Declarative readback cursor and fallback binding parameters for a host.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct HostCursorSpec {
+    pub mode: HostCursorMode,
+    pub fallback_project_dir: &'static str,
+    pub fallback_slug: &'static str,
+    pub initial_order_seq: i32,
+    pub order_seq_step: i32,
+}
+
+/// Declarative static specification for one fleet host (`DesktopHostKind` or `grokbot`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct HostSpec {
+    pub id: &'static str,
+    pub desktop_kind: Option<DesktopHostKind>,
+    pub desktop_target: &'static str,
+    pub aliases: &'static [&'static str],
+    pub bundle_id: &'static str,
+    pub app_display_name: &'static str,
+    pub process_grep_pattern: &'static str,
+    pub primary_channel: HostDispatchChannel,
+    pub fallback_channel: Option<HostDispatchChannel>,
+    pub storage: HostStorageSpec,
+    pub sqlite_tables: &'static [HostTableExpectation],
+    pub cursor: HostCursorSpec,
+}
+
+impl HostSpec {
+    pub fn matches_alias(&self, raw: &str) -> bool {
+        let trimmed = raw.trim();
+        self.id.eq_ignore_ascii_case(trimmed)
+            || self.desktop_target.eq_ignore_ascii_case(trimmed)
+            || self
+                .aliases
+                .iter()
+                .any(|alias| alias.eq_ignore_ascii_case(trimmed))
+    }
+
+    pub fn resolve_root_dir(&self, home: &Path) -> PathBuf {
+        if let Some(env_key) = self.storage.root_env_var {
+            if let Ok(val) = std::env::var(env_key) {
+                let trimmed = val.trim();
+                if !trimmed.is_empty() {
+                    return PathBuf::from(trimmed);
+                }
+            }
+        }
+        home.join(self.storage.default_root_rel_home)
+    }
+
+    pub fn resolve_bin_path(&self, home: &Path) -> Option<PathBuf> {
+        if let Some(env_key) = self.storage.bin_env_var {
+            if let Ok(val) = std::env::var(env_key) {
+                let p = PathBuf::from(val.trim());
+                if p.is_file() {
+                    return Some(p);
+                }
+            }
+        }
+        for candidate in self.storage.candidate_bins {
+            let p = if candidate.starts_with('/') {
+                PathBuf::from(candidate)
+            } else {
+                home.join(candidate)
+            };
+            if p.is_file() {
+                return Some(p);
+            }
+        }
+        None
+    }
+
+    pub fn resolve_socket_path(&self, home: &Path, root: &Path) -> Option<PathBuf> {
+        if let Some(env_key) = self.storage.socket_env_var {
+            if let Ok(val) = std::env::var(env_key) {
+                let p = PathBuf::from(val.trim());
+                if p.exists() {
+                    return Some(p);
+                }
+            }
+        }
+        for rel in self.storage.candidate_sockets_rel_root {
+            let p = root.join(rel);
+            if p.exists() {
+                return Some(p);
+            }
+        }
+        for rel in self.storage.candidate_sockets_rel_home {
+            let p = home.join(rel);
+            if p.exists() {
+                return Some(p);
+            }
+        }
+        None
+    }
+
+    pub fn resolve_db_path(&self, root: &Path, label: &str) -> Option<PathBuf> {
+        self.storage
+            .sqlite_dbs
+            .iter()
+            .find(|(db_label, _)| *db_label == label)
+            .map(|(_, rel)| root.join(rel))
+    }
+
+    pub fn resolve_aux_path_in_root(&self, root: &Path, label: &str) -> Option<PathBuf> {
+        self.storage
+            .auxiliary_paths_rel_root
+            .iter()
+            .find(|(aux_label, _)| *aux_label == label)
+            .map(|(_, rel)| root.join(rel))
+    }
+
+    pub fn resolve_aux_path_in_home(&self, home: &Path, label: &str) -> Option<PathBuf> {
+        self.storage
+            .auxiliary_paths_rel_home
+            .iter()
+            .find(|(aux_label, _)| *aux_label == label)
+            .map(|(_, rel)| home.join(rel))
+    }
+
+    pub fn resolve_transcript_path(&self, root: &Path, session_id: &str) -> Option<PathBuf> {
+        for tmpl in self.storage.transcript_rel_templates {
+            let candidate = root.join(tmpl.replace("{session_id}", session_id));
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+        None
+    }
+
+    pub fn resolve_wiring_config_paths(&self, config_home: &Path) -> Vec<PathBuf> {
+        self.storage
+            .wiring_configs_rel_home
+            .iter()
+            .map(|rel| config_home.join(rel))
+            .collect()
+    }
+
+    pub fn checkpoint_key(&self, session_id: &str) -> String {
+        format!("{}:{session_id}", self.id)
+    }
+
+    pub fn default_project_id(&self, slug: &str) -> String {
+        format!("proj-{}-{slug}", self.id)
+    }
+
+    pub fn fallback_project_dir(&self) -> PathBuf {
+        PathBuf::from(self.cursor.fallback_project_dir)
+    }
+
+    pub fn is_checkpoint_unchanged(
+        &self,
+        existing_size: u64,
+        existing_mtime_ns: i128,
+        existing_offset: u64,
+        existing_digest: &str,
+        current_size: u64,
+        current_mtime_ns: i128,
+        current_digest: &str,
+    ) -> bool {
+        match self.cursor.mode {
+            HostCursorMode::SeekableJsonlByteOffset {
+                requires_meta_digest,
+            } => {
+                existing_size == current_size
+                    && existing_mtime_ns == current_mtime_ns
+                    && existing_offset == current_size
+                    && (!requires_meta_digest || existing_digest == current_digest)
+            }
+            HostCursorMode::ArchiveSizeAndMtime => {
+                existing_size == current_size && existing_mtime_ns == current_mtime_ns
+            }
+            HostCursorMode::SqliteMessageCountAndDigest
+            | HostCursorMode::MailboxCountAndDeliveredMask => {
+                existing_offset == current_size && existing_digest == current_digest
+            }
+        }
+    }
+
+    pub fn resume_cursor_window(
+        &self,
+        existing_size: u64,
+        existing_offset: u64,
+        existing_next_seq: i32,
+        current_size: u64,
+    ) -> (u64, i32) {
+        let byte_offset = if current_size >= existing_offset && existing_size > 0 {
+            existing_offset
+        } else {
+            0
+        };
+        let next_order_seq = if byte_offset > 0 && existing_next_seq > 0 {
+            existing_next_seq
+        } else {
+            self.cursor.initial_order_seq
+        };
+        (byte_offset, next_order_seq)
+    }
+}
+
 impl DesktopHostKind {
     pub const ALL: [Self; 5] = [
         Self::OpenaiDots,
@@ -26,47 +281,372 @@ impl DesktopHostKind {
         Self::Zcode,
     ];
 
-    pub fn as_str(&self) -> &'static str {
+    pub const ALL_SPECS: [HostSpec; 6] = [
+        HostSpec {
+            id: "openai-dots",
+            desktop_kind: Some(Self::OpenaiDots),
+            desktop_target: "codex",
+            aliases: &["openai dots", "codex", "codex-desktop"],
+            bundle_id: "com.openai.codex",
+            app_display_name: "ChatGPT",
+            process_grep_pattern: "Codex.app|app-server",
+            primary_channel: HostDispatchChannel::DesktopGateway,
+            fallback_channel: None,
+            storage: HostStorageSpec {
+                root_env_var: Some("CODEX_HOME"),
+                default_root_rel_home: ".codex",
+                bin_env_var: None,
+                candidate_bins: &[],
+                socket_env_var: Some("CODEX_APP_SERVER_SOCKET"),
+                candidate_sockets_rel_root: &[
+                    "app-server.sock",
+                    "app-server-control/app-server-control.sock",
+                    "ipc/ipc.sock",
+                    "app-server-daemon/daemon-updater.sock",
+                ],
+                candidate_sockets_rel_home: &[],
+                sqlite_dbs: &[("state_5", "state_5.sqlite")],
+                transcript_rel_templates: &[],
+                auxiliary_paths_rel_root: &[],
+                auxiliary_paths_rel_home: &[],
+                wiring_configs_rel_home: &[".codex/config.toml", ".codex/hooks.json"],
+            },
+            sqlite_tables: &[
+                HostTableExpectation {
+                    db: "state_5",
+                    table: "threads",
+                    columns: &["id", "cwd", "title", "project_id"],
+                },
+                HostTableExpectation {
+                    db: "state_5",
+                    table: "projects",
+                    columns: &["id"],
+                },
+                HostTableExpectation {
+                    db: "state_5",
+                    table: "project_roots",
+                    columns: &["project_id", "path"],
+                },
+            ],
+            cursor: HostCursorSpec {
+                mode: HostCursorMode::SeekableJsonlByteOffset {
+                    requires_meta_digest: true,
+                },
+                fallback_project_dir: "/fixture/Projects/codex",
+                fallback_slug: "codex",
+                initial_order_seq: 10,
+                order_seq_step: 10,
+            },
+        },
+        HostSpec {
+            id: "cindy",
+            desktop_kind: Some(Self::Cindy),
+            desktop_target: "cindy",
+            aliases: &["cindy-desktop"],
+            bundle_id: "com.xd.cindy",
+            app_display_name: "Cindy",
+            process_grep_pattern: "Cindy.app|cindy",
+            primary_channel: HostDispatchChannel::DesktopGateway,
+            fallback_channel: Some(HostDispatchChannel::AnetBridge),
+            storage: HostStorageSpec {
+                root_env_var: Some("CINDY_HOME"),
+                default_root_rel_home: ".cindy",
+                bin_env_var: None,
+                candidate_bins: &[],
+                socket_env_var: Some("CINDY_GATEWAY_SOCKET"),
+                candidate_sockets_rel_root: &["cindy-gateway.sock", "gateway.sock"],
+                candidate_sockets_rel_home: &[
+                    "Library/Application Support/Cindy/gateway.sock",
+                    "Library/Application Support/CindyGlobal/gateway.sock",
+                ],
+                sqlite_dbs: &[],
+                transcript_rel_templates: &["transcripts/{session_id}.jsonl", "sessions/{session_id}.jsonl"],
+                auxiliary_paths_rel_root: &[
+                    ("transcripts_dir", "transcripts"),
+                    ("sessions_dir", "sessions"),
+                ],
+                auxiliary_paths_rel_home: &[
+                    (
+                        "anet_bridge_dir",
+                        "Library/Application Support/CindyGlobal/agent-network-cindy",
+                    ),
+                    (
+                        "anet_bridge_config",
+                        "Library/Application Support/CindyGlobal/agent-network-cindy/config.json",
+                    ),
+                ],
+                wiring_configs_rel_home: &[".cindy/mcp.json"],
+            },
+            sqlite_tables: &[],
+            cursor: HostCursorSpec {
+                mode: HostCursorMode::SeekableJsonlByteOffset {
+                    requires_meta_digest: false,
+                },
+                fallback_project_dir: "/fixture/Projects/cindy",
+                fallback_slug: "cindy",
+                initial_order_seq: 10,
+                order_seq_step: 10,
+            },
+        },
+        HostSpec {
+            id: "deepseek-harness",
+            desktop_kind: Some(Self::DeepseekHarness),
+            desktop_target: "dsh",
+            aliases: &["deepseek harness", "dsh"],
+            bundle_id: "com.deepseek.dsh",
+            app_display_name: "DeepSeek Harness",
+            process_grep_pattern: "DeepSeek Harness|bin/dsh",
+            primary_channel: HostDispatchChannel::CliProcess,
+            fallback_channel: None,
+            storage: HostStorageSpec {
+                root_env_var: Some("DSH_HOME"),
+                default_root_rel_home: ".dsh",
+                bin_env_var: Some("DSH_BIN"),
+                candidate_bins: &[
+                    ".local/bin/dsh",
+                    "bin/dsh",
+                    "/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh",
+                ],
+                socket_env_var: None,
+                candidate_sockets_rel_root: &[],
+                candidate_sockets_rel_home: &[],
+                sqlite_dbs: &[],
+                transcript_rel_templates: &["sessions/{session_id}/turn_0000.txt"],
+                auxiliary_paths_rel_root: &[
+                    ("workspace_storage", "storages/workspace.json"),
+                    ("session_cache_dir", "storages/session_projcache/sessions"),
+                    ("sessions_dir", "sessions"),
+                ],
+                auxiliary_paths_rel_home: &[],
+                wiring_configs_rel_home: &[".dsh/cordis.patch.yml"],
+            },
+            sqlite_tables: &[],
+            cursor: HostCursorSpec {
+                mode: HostCursorMode::ArchiveSizeAndMtime,
+                fallback_project_dir: "/fixture/Projects/dsh",
+                fallback_slug: "dsh",
+                initial_order_seq: 10,
+                order_seq_step: 10,
+            },
+        },
+        HostSpec {
+            id: "antigravity-desktop",
+            desktop_kind: Some(Self::AntigravityDesktop),
+            desktop_target: "agy",
+            aliases: &["antigravity desktop", "agy", "antigravity"],
+            bundle_id: "com.google.antigravity",
+            app_display_name: "Antigravity",
+            process_grep_pattern: "Antigravity.app|bin/agy",
+            primary_channel: HostDispatchChannel::CliProcess,
+            fallback_channel: None,
+            storage: HostStorageSpec {
+                root_env_var: Some("ANTIGRAVITY_DATA_DIR"),
+                default_root_rel_home: ".gemini/antigravity",
+                bin_env_var: Some("AGY_BIN"),
+                candidate_bins: &[
+                    ".local/bin/agy",
+                    "/Applications/Antigravity.app/Contents/Resources/app/bin/agy",
+                    ".local/libexec/agy/agy",
+                ],
+                socket_env_var: None,
+                candidate_sockets_rel_root: &[],
+                candidate_sockets_rel_home: &[],
+                sqlite_dbs: &[("conversation_summaries", "conversation_summaries.db")],
+                transcript_rel_templates: &[
+                    "cascades/{session_id}.jsonl",
+                    "brain/{session_id}/.system_generated/logs/transcript.jsonl",
+                ],
+                auxiliary_paths_rel_root: &[("daemon_dir", "daemon")],
+                auxiliary_paths_rel_home: &[],
+                wiring_configs_rel_home: &[
+                    ".gemini/config/mcp_config.json",
+                    ".gemini/config/hooks.json",
+                ],
+            },
+            sqlite_tables: &[HostTableExpectation {
+                db: "conversation_summaries",
+                table: "conversation_summaries",
+                columns: &[
+                    "conversation_id",
+                    "title",
+                    "preview",
+                    "step_count",
+                    "last_modified_time",
+                    "workspace_uris",
+                    "status",
+                    "project_id",
+                ],
+            }],
+            cursor: HostCursorSpec {
+                mode: HostCursorMode::SeekableJsonlByteOffset {
+                    requires_meta_digest: true,
+                },
+                fallback_project_dir: "/fixture/Projects/antigravity",
+                fallback_slug: "antigravity",
+                initial_order_seq: 10,
+                order_seq_step: 10,
+            },
+        },
+        HostSpec {
+            id: "zcode",
+            desktop_kind: Some(Self::Zcode),
+            desktop_target: "zcode",
+            aliases: &["zcode-desktop"],
+            bundle_id: "dev.zcode.app",
+            app_display_name: "ZCode",
+            process_grep_pattern: "ZCode.app|bin/zcode",
+            primary_channel: HostDispatchChannel::CliProcess,
+            fallback_channel: None,
+            storage: HostStorageSpec {
+                root_env_var: Some("ZCODE_HOME"),
+                default_root_rel_home: ".zcode",
+                bin_env_var: Some("ZCODE_BIN"),
+                candidate_bins: &[
+                    "bin/zcode",
+                    ".local/bin/zcode",
+                    "/Applications/ZCode.app/Contents/Resources/cli/zcode",
+                ],
+                socket_env_var: None,
+                candidate_sockets_rel_root: &[],
+                candidate_sockets_rel_home: &[],
+                sqlite_dbs: &[
+                    ("tasks-index", "v2/tasks-index.sqlite"),
+                    ("cli-db", "cli/db/db.sqlite"),
+                ],
+                transcript_rel_templates: &[],
+                auxiliary_paths_rel_root: &[],
+                auxiliary_paths_rel_home: &[],
+                wiring_configs_rel_home: &[".zcode/cli/config.json"],
+            },
+            sqlite_tables: &[
+                HostTableExpectation {
+                    db: "tasks-index",
+                    table: "tasks",
+                    columns: &[
+                        "workspace_key",
+                        "workspace_path",
+                        "task_id",
+                        "title",
+                        "title_overridden",
+                        "project_id",
+                        "task_status",
+                        "provider",
+                        "mode",
+                        "meta_json",
+                        "host_id",
+                        "root_path",
+                        "cli_title",
+                        "cli_title_source",
+                        "cli_created_at",
+                        "cli_updated_at",
+                        "cli_last_outcome",
+                        "cli_deleted",
+                    ],
+                },
+                HostTableExpectation {
+                    db: "tasks-index",
+                    table: "projects",
+                    columns: &["project_id", "host_id", "name"],
+                },
+                HostTableExpectation {
+                    db: "tasks-index",
+                    table: "project_roots",
+                    columns: &["project_id", "root_path"],
+                },
+                HostTableExpectation {
+                    db: "tasks-index",
+                    table: "hosts",
+                    columns: &["host_id", "kind"],
+                },
+                HostTableExpectation {
+                    db: "cli-db",
+                    table: "session",
+                    columns: &["id", "project_id", "slug", "directory", "title"],
+                },
+                HostTableExpectation {
+                    db: "cli-db",
+                    table: "message",
+                    columns: &["id", "session_id", "data", "sequence"],
+                },
+                HostTableExpectation {
+                    db: "cli-db",
+                    table: "part",
+                    columns: &["id", "message_id", "session_id", "data"],
+                },
+            ],
+            cursor: HostCursorSpec {
+                mode: HostCursorMode::SqliteMessageCountAndDigest,
+                fallback_project_dir: "/fixture/Projects/zcode",
+                fallback_slug: "zcode",
+                initial_order_seq: 10,
+                order_seq_step: 10,
+            },
+        },
+        HostSpec {
+            id: "grokbot",
+            desktop_kind: None,
+            desktop_target: "grokbot",
+            aliases: &["grok", "grok-bot", "grok_bot", "grok-cli"],
+            bundle_id: GROKBOT_BUNDLE_ID,
+            app_display_name: GROKBOT_APP_DISPLAY_NAME,
+            process_grep_pattern: "grok",
+            primary_channel: HostDispatchChannel::PeerMailbox,
+            fallback_channel: None,
+            storage: HostStorageSpec {
+                root_env_var: None,
+                default_root_rel_home: ".grok",
+                bin_env_var: None,
+                candidate_bins: &[".local/bin/grok"],
+                socket_env_var: None,
+                candidate_sockets_rel_root: &[],
+                candidate_sockets_rel_home: &[],
+                sqlite_dbs: &[],
+                transcript_rel_templates: &[],
+                auxiliary_paths_rel_root: &[],
+                auxiliary_paths_rel_home: &[],
+                wiring_configs_rel_home: &[".grok/config.toml", ".grok/hooks/agent-fleet.json"],
+            },
+            sqlite_tables: &[],
+            cursor: HostCursorSpec {
+                mode: HostCursorMode::MailboxCountAndDeliveredMask,
+                fallback_project_dir: "/fixture/Projects/grokbot",
+                fallback_slug: "grokbot",
+                initial_order_seq: 10,
+                order_seq_step: 10,
+            },
+        },
+    ];
+
+    pub const fn spec(self) -> &'static HostSpec {
         match self {
-            Self::OpenaiDots => "openai-dots",
-            Self::Cindy => "cindy",
-            Self::DeepseekHarness => "deepseek-harness",
-            Self::AntigravityDesktop => "antigravity-desktop",
-            Self::Zcode => "zcode",
+            Self::OpenaiDots => &Self::ALL_SPECS[0],
+            Self::Cindy => &Self::ALL_SPECS[1],
+            Self::DeepseekHarness => &Self::ALL_SPECS[2],
+            Self::AntigravityDesktop => &Self::ALL_SPECS[3],
+            Self::Zcode => &Self::ALL_SPECS[4],
         }
+    }
+
+    pub fn spec_by_id(raw: &str) -> Option<&'static HostSpec> {
+        Self::ALL_SPECS.iter().find(|spec| spec.matches_alias(raw))
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        self.spec().id
     }
 
     pub fn bundle_id(&self) -> &'static str {
-        match self {
-            Self::OpenaiDots => "com.openai.codex",
-            Self::Cindy => "com.xd.cindy",
-            Self::DeepseekHarness => "com.deepseek.dsh",
-            Self::AntigravityDesktop => "com.google.antigravity",
-            Self::Zcode => "dev.zcode.app",
-        }
+        self.spec().bundle_id
     }
 
     pub fn app_display_name(&self) -> &'static str {
-        match self {
-            Self::OpenaiDots => "ChatGPT",
-            Self::Cindy => "Cindy",
-            Self::DeepseekHarness => "DeepSeek Harness",
-            Self::AntigravityDesktop => "Antigravity",
-            Self::Zcode => "ZCode",
-        }
+        self.spec().app_display_name
     }
 
     pub fn parse(value: &str) -> Result<Self, ProjectPathError> {
-        match value.trim() {
-            "openai-dots" | "openai dots" | "codex" | "codex-desktop" => Ok(Self::OpenaiDots),
-            "cindy" | "cindy-desktop" => Ok(Self::Cindy),
-            "deepseek-harness" | "deepseek harness" | "dsh" => Ok(Self::DeepseekHarness),
-            "antigravity-desktop" | "antigravity desktop" | "agy" | "antigravity" => {
-                Ok(Self::AntigravityDesktop)
-            }
-            "zcode" | "zcode-desktop" => Ok(Self::Zcode),
-            _ => Err(ProjectPathError::InvalidHost(value.to_string())),
-        }
+        Self::spec_by_id(value)
+            .and_then(|spec| spec.desktop_kind)
+            .ok_or_else(|| ProjectPathError::InvalidHost(value.to_string()))
     }
 }
 
@@ -497,16 +1077,11 @@ pub fn normalize_peer_id(raw: &str) -> Result<String, ProjectPathError> {
 
 fn normalize_single_agent_id(raw: &str) -> Result<String, ProjectPathError> {
     let trimmed = raw.trim();
-    if let Ok(desktop) = DesktopHostKind::parse(trimmed) {
-        return Ok(desktop.as_str().to_string());
+    if let Some(spec) = DesktopHostKind::spec_by_id(trimmed) {
+        return Ok(spec.id.to_string());
     }
-    match trimmed.to_ascii_lowercase().as_str() {
-        "grok" | "grokbot" | "grok-bot" | "grok_bot" | "grok-cli" => Ok("grokbot".to_string()),
-        _ => {
-            validate_project_slug(trimmed)?;
-            Ok(trimmed.to_string())
-        }
-    }
+    validate_project_slug(trimmed)?;
+    Ok(trimmed.to_string())
 }
 
 /// Small text file attachment carried alongside a peer message (modeled on Reason Network's inbox attachments).
@@ -669,7 +1244,18 @@ mod tests {
             assert_eq!(DesktopHostKind::parse(input).unwrap(), expected);
         }
         assert_eq!(DesktopHostKind::ALL.len(), 5);
+        assert_eq!(DesktopHostKind::ALL_SPECS.len(), 6);
         assert!(DesktopHostKind::parse("unknown-host").is_err());
+        let grok = DesktopHostKind::spec_by_id("grok-bot").unwrap();
+        assert_eq!(grok.id, "grokbot");
+        assert_eq!(grok.desktop_kind, None);
+        assert_eq!(grok.primary_channel, HostDispatchChannel::PeerMailbox);
+        for host in DesktopHostKind::ALL {
+            let spec = host.spec();
+            assert_eq!(spec.desktop_kind, Some(host));
+            assert_eq!(DesktopHostKind::spec_by_id(spec.id), Some(spec));
+            assert_eq!(DesktopHostKind::spec_by_id(spec.desktop_target), Some(spec));
+        }
     }
 
     #[test]

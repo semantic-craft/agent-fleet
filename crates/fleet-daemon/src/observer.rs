@@ -484,7 +484,10 @@ impl OpenAiDotsTimelineObserver {
     }
 
     pub fn state_db_path(&self) -> PathBuf {
-        self.codex_root.join("state_5.sqlite")
+        DesktopHostKind::OpenaiDots
+            .spec()
+            .resolve_db_path(&self.codex_root, "state_5")
+            .expect("openai-dots state_5 db path in HostSpec")
     }
 }
 
@@ -505,6 +508,7 @@ impl HostTimelineObserver for OpenAiDotsTimelineObserver {
             self.checkpoints = load_checkpoint_book(ledger.state_root())?;
             self.checkpoints_loaded = true;
         }
+        let spec = DesktopHostKind::OpenaiDots.spec();
         let mut report = ObserverScanReport {
             host: self.host_name().to_string(),
             ..ObserverScanReport::default()
@@ -526,7 +530,7 @@ impl HostTimelineObserver for OpenAiDotsTimelineObserver {
 
         for thread in threads {
             report.sessions_scanned += 1;
-            let cp_key = format!("openai-dots:{}", thread.thread_id);
+            let cp_key = spec.checkpoint_key(&thread.thread_id);
             let rollout_path = if thread.rollout_path.trim().is_empty() {
                 None
             } else {
@@ -554,11 +558,15 @@ impl HostTimelineObserver for OpenAiDotsTimelineObserver {
             );
 
             if let Some(existing_cp) = self.checkpoints.get(&cp_key) {
-                if existing_cp.file_size == file_size
-                    && existing_cp.mtime_ns == mtime_ns
-                    && existing_cp.byte_offset == file_size
-                    && existing_cp.meta_digest == meta_digest
-                {
+                if spec.is_checkpoint_unchanged(
+                    existing_cp.file_size,
+                    existing_cp.mtime_ns,
+                    existing_cp.byte_offset,
+                    &existing_cp.meta_digest,
+                    file_size,
+                    mtime_ns,
+                    &meta_digest,
+                ) {
                     report.sessions_skipped_unchanged += 1;
                     continue;
                 }
@@ -566,7 +574,7 @@ impl HostTimelineObserver for OpenAiDotsTimelineObserver {
 
             let Ok(canonical_sid) = CanonicalSessionId::derive(
                 &self.connector_id,
-                DesktopHostKind::OpenaiDots.as_str(),
+                spec.id,
                 &thread.thread_id,
             ) else {
                 report.errors.push(ObserverErrorRecord {
@@ -589,7 +597,7 @@ impl HostTimelineObserver for OpenAiDotsTimelineObserver {
             let project_id = if !thread.project_id.trim().is_empty() {
                 thread.project_id.clone()
             } else {
-                format!("proj-openai-dots-{slug}")
+                spec.default_project_id(&slug)
             };
             let proj_title = project_map
                 .get(&thread.project_id)
@@ -606,16 +614,12 @@ impl HostTimelineObserver for OpenAiDotsTimelineObserver {
             };
 
             let prev_cp = self.checkpoints.get(&cp_key).cloned().unwrap_or_default();
-            let mut byte_offset = if file_size >= prev_cp.byte_offset && prev_cp.file_size > 0 {
-                prev_cp.byte_offset
-            } else {
-                0
-            };
-            let mut next_order_seq = if byte_offset > 0 && prev_cp.next_order_seq > 0 {
-                prev_cp.next_order_seq
-            } else {
-                10
-            };
+            let (mut byte_offset, mut next_order_seq) = spec.resume_cursor_window(
+                prev_cp.file_size,
+                prev_cp.byte_offset,
+                prev_cp.next_order_seq,
+                file_size,
+            );
 
             let mut session_items = Vec::new();
             let mut session_failed = false;
@@ -806,28 +810,16 @@ impl AntigravityTimelineObserver {
     }
 
     pub fn summaries_db_path(&self) -> PathBuf {
-        self.antigravity_root.join("conversation_summaries.db")
+        DesktopHostKind::AntigravityDesktop
+            .spec()
+            .resolve_db_path(&self.antigravity_root, "conversation_summaries")
+            .expect("antigravity conversation_summaries db path in HostSpec")
     }
 
     fn resolve_cascade_jsonl(&self, conversation_id: &str) -> Option<PathBuf> {
-        let p1 = self
-            .antigravity_root
-            .join("cascades")
-            .join(format!("{conversation_id}.jsonl"));
-        if p1.is_file() {
-            return Some(p1);
-        }
-        let p2 = self
-            .antigravity_root
-            .join("brain")
-            .join(conversation_id)
-            .join(".system_generated")
-            .join("logs")
-            .join("transcript.jsonl");
-        if p2.is_file() {
-            return Some(p2);
-        }
-        None
+        DesktopHostKind::AntigravityDesktop
+            .spec()
+            .resolve_transcript_path(&self.antigravity_root, conversation_id)
     }
 }
 
@@ -848,6 +840,7 @@ impl HostTimelineObserver for AntigravityTimelineObserver {
             self.checkpoints = load_checkpoint_book(ledger.state_root())?;
             self.checkpoints_loaded = true;
         }
+        let spec = DesktopHostKind::AntigravityDesktop.spec();
         let mut report = ObserverScanReport {
             host: self.host_name().to_string(),
             ..ObserverScanReport::default()
@@ -864,7 +857,7 @@ impl HostTimelineObserver for AntigravityTimelineObserver {
 
         for summary in summaries {
             report.sessions_scanned += 1;
-            let cp_key = format!("antigravity-desktop:{}", summary.conversation_id);
+            let cp_key = spec.checkpoint_key(&summary.conversation_id);
             let cascade_path = self.resolve_cascade_jsonl(&summary.conversation_id);
             let (file_size, mtime_ns) = cascade_path
                 .as_deref()
@@ -883,11 +876,15 @@ impl HostTimelineObserver for AntigravityTimelineObserver {
             );
 
             if let Some(existing_cp) = self.checkpoints.get(&cp_key) {
-                if existing_cp.file_size == file_size
-                    && existing_cp.mtime_ns == mtime_ns
-                    && existing_cp.byte_offset == file_size
-                    && existing_cp.meta_digest == meta_digest
-                {
+                if spec.is_checkpoint_unchanged(
+                    existing_cp.file_size,
+                    existing_cp.mtime_ns,
+                    existing_cp.byte_offset,
+                    &existing_cp.meta_digest,
+                    file_size,
+                    mtime_ns,
+                    &meta_digest,
+                ) {
                     report.sessions_skipped_unchanged += 1;
                     continue;
                 }
@@ -895,7 +892,7 @@ impl HostTimelineObserver for AntigravityTimelineObserver {
 
             let Ok(canonical_sid) = CanonicalSessionId::derive(
                 &self.connector_id,
-                DesktopHostKind::AntigravityDesktop.as_str(),
+                spec.id,
                 &summary.conversation_id,
             ) else {
                 continue;
@@ -906,12 +903,12 @@ impl HostTimelineObserver for AntigravityTimelineObserver {
                 .first()
                 .and_then(|u| u.strip_prefix("file://"))
                 .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from("/fixture/Projects/antigravity"));
-            let slug = slug_from_path(&primary_dir, "antigravity");
+                .unwrap_or_else(|| spec.fallback_project_dir());
+            let slug = slug_from_path(&primary_dir, spec.cursor.fallback_slug);
             let project_id = if !summary.project_id.trim().is_empty() {
                 summary.project_id.clone()
             } else {
-                format!("proj-antigravity-desktop-{slug}")
+                spec.default_project_id(&slug)
             };
             let workspace_uris = if summary.workspace_uris.is_empty() {
                 vec![format!("file://{}", primary_dir.display())]
@@ -931,16 +928,12 @@ impl HostTimelineObserver for AntigravityTimelineObserver {
             };
 
             let prev_cp = self.checkpoints.get(&cp_key).cloned().unwrap_or_default();
-            let mut byte_offset = if file_size >= prev_cp.byte_offset && prev_cp.file_size > 0 {
-                prev_cp.byte_offset
-            } else {
-                0
-            };
-            let mut next_order_seq = if byte_offset > 0 && prev_cp.next_order_seq > 0 {
-                prev_cp.next_order_seq
-            } else {
-                10
-            };
+            let (mut byte_offset, mut next_order_seq) = spec.resume_cursor_window(
+                prev_cp.file_size,
+                prev_cp.byte_offset,
+                prev_cp.next_order_seq,
+                file_size,
+            );
 
             let mut session_items = Vec::new();
             let mut session_failed = false;
@@ -1121,12 +1114,15 @@ impl HostTimelineObserver for DeepSeekHarnessTimelineObserver {
             self.checkpoints = load_checkpoint_book(ledger.state_root())?;
             self.checkpoints_loaded = true;
         }
+        let spec = DesktopHostKind::DeepseekHarness.spec();
         let mut report = ObserverScanReport {
             host: self.host_name().to_string(),
             ..ObserverScanReport::default()
         };
 
-        let ws_path = self.dsh_root.join("storages").join("workspace.json");
+        let ws_path = spec
+            .resolve_aux_path_in_root(&self.dsh_root, "workspace_storage")
+            .expect("dsh workspace_storage path in HostSpec");
         let mut session_to_ws: BTreeMap<String, (String, PathBuf, String)> = BTreeMap::new();
         let mut path_to_ws: BTreeMap<PathBuf, (String, String)> = BTreeMap::new();
         if ws_path.exists() {
@@ -1162,7 +1158,12 @@ impl HostTimelineObserver for DeepSeekHarnessTimelineObserver {
         }
 
         // Discover archives from `<dsh_root>/sessions/--*--/<session_id>/session.v4.jsonl.zstd`
-        let sessions_dir = self.dsh_root.join("sessions");
+        let sessions_dir = spec
+            .resolve_aux_path_in_root(&self.dsh_root, "sessions_dir")
+            .expect("dsh sessions_dir path in HostSpec");
+        let session_cache_dir = spec
+            .resolve_aux_path_in_root(&self.dsh_root, "session_cache_dir")
+            .expect("dsh session_cache_dir path in HostSpec");
         let mut archive_entries: Vec<(String, PathBuf)> = Vec::new();
         if sessions_dir.is_dir() {
             if let Ok(buckets) = fs::read_dir(&sessions_dir) {
@@ -1194,12 +1195,20 @@ impl HostTimelineObserver for DeepSeekHarnessTimelineObserver {
 
         for (session_id, archive_path) in archive_entries {
             report.sessions_scanned += 1;
-            let cp_key = format!("deepseek-harness:{session_id}");
+            let cp_key = spec.checkpoint_key(&session_id);
             let (file_size, mtime_ns) =
                 stat_size_and_mtime_ns(&archive_path).unwrap_or((0, 0));
 
             if let Some(existing_cp) = self.checkpoints.get(&cp_key) {
-                if existing_cp.file_size == file_size && existing_cp.mtime_ns == mtime_ns {
+                if spec.is_checkpoint_unchanged(
+                    existing_cp.file_size,
+                    existing_cp.mtime_ns,
+                    existing_cp.byte_offset,
+                    &existing_cp.meta_digest,
+                    file_size,
+                    mtime_ns,
+                    "",
+                ) {
                     report.sessions_skipped_unchanged += 1;
                     continue;
                 }
@@ -1222,18 +1231,13 @@ impl HostTimelineObserver for DeepSeekHarnessTimelineObserver {
 
             let Ok(canonical_sid) = CanonicalSessionId::derive(
                 &self.connector_id,
-                DesktopHostKind::DeepseekHarness.as_str(),
+                spec.id,
                 &session_id,
             ) else {
                 continue;
             };
 
-            let projcache_path = self
-                .dsh_root
-                .join("storages")
-                .join("session_projcache")
-                .join("sessions")
-                .join(format!("{session_id}.json"));
+            let projcache_path = session_cache_dir.join(format!("{session_id}.json"));
             let projcache_doc: Option<Value> = if projcache_path.is_file() {
                 fs::read(&projcache_path)
                     .ok()
@@ -1265,23 +1269,23 @@ impl HostTimelineObserver for DeepSeekHarnessTimelineObserver {
                     if let Some((wid, wtitle)) = path_to_ws.get(cdir) {
                         (wid.clone(), cdir.clone(), wtitle.clone())
                     } else {
-                        let slug = slug_from_path(cdir, "dsh");
+                        let slug = slug_from_path(cdir, spec.cursor.fallback_slug);
                         (
-                            format!("proj-deepseek-harness-{slug}"),
+                            spec.default_project_id(&slug),
                             cdir.clone(),
                             slug,
                         )
                     }
                 } else {
-                    let fallback = PathBuf::from("/fixture/Projects/dsh");
+                    let fallback = spec.fallback_project_dir();
                     (
-                        "proj-deepseek-harness-dsh".into(),
+                        spec.default_project_id(spec.cursor.fallback_slug),
                         fallback,
-                        "dsh".into(),
+                        spec.cursor.fallback_slug.into(),
                     )
                 };
 
-            let slug = slug_from_path(&project_dir, "dsh");
+            let slug = slug_from_path(&project_dir, spec.cursor.fallback_slug);
             let binding = SidebarProjectBinding {
                 host: DesktopHostKind::DeepseekHarness,
                 project_id,
@@ -1395,7 +1399,10 @@ impl CindyTimelineObserver {
     }
 
     pub fn transcripts_dir(&self) -> PathBuf {
-        self.cindy_root.join("transcripts")
+        DesktopHostKind::Cindy
+            .spec()
+            .resolve_aux_path_in_root(&self.cindy_root, "transcripts_dir")
+            .expect("cindy transcripts_dir path in HostSpec")
     }
 }
 
@@ -1416,6 +1423,7 @@ impl HostTimelineObserver for CindyTimelineObserver {
             self.checkpoints = load_checkpoint_book(ledger.state_root())?;
             self.checkpoints_loaded = true;
         }
+        let spec = DesktopHostKind::Cindy.spec();
         let mut report = ObserverScanReport {
             host: self.host_name().to_string(),
             ..ObserverScanReport::default()
@@ -1444,14 +1452,19 @@ impl HostTimelineObserver for CindyTimelineObserver {
                 continue;
             };
             report.sessions_scanned += 1;
-            let cp_key = format!("cindy:{session_key}");
+            let cp_key = spec.checkpoint_key(&session_key);
             let (file_size, mtime_ns) = stat_size_and_mtime_ns(&path).unwrap_or((0, 0));
 
             if let Some(existing_cp) = self.checkpoints.get(&cp_key) {
-                if existing_cp.file_size == file_size
-                    && existing_cp.mtime_ns == mtime_ns
-                    && existing_cp.byte_offset == file_size
-                {
+                if spec.is_checkpoint_unchanged(
+                    existing_cp.file_size,
+                    existing_cp.mtime_ns,
+                    existing_cp.byte_offset,
+                    &existing_cp.meta_digest,
+                    file_size,
+                    mtime_ns,
+                    "",
+                ) {
                     report.sessions_skipped_unchanged += 1;
                     continue;
                 }
@@ -1459,23 +1472,19 @@ impl HostTimelineObserver for CindyTimelineObserver {
 
             let Ok(canonical_sid) = CanonicalSessionId::derive(
                 &self.connector_id,
-                DesktopHostKind::Cindy.as_str(),
+                spec.id,
                 &session_key,
             ) else {
                 continue;
             };
 
             let prev_cp = self.checkpoints.get(&cp_key).cloned().unwrap_or_default();
-            let mut byte_offset = if file_size >= prev_cp.byte_offset && prev_cp.file_size > 0 {
-                prev_cp.byte_offset
-            } else {
-                0
-            };
-            let mut next_order_seq = if byte_offset > 0 && prev_cp.next_order_seq > 0 {
-                prev_cp.next_order_seq
-            } else {
-                10
-            };
+            let (mut byte_offset, mut next_order_seq) = spec.resume_cursor_window(
+                prev_cp.file_size,
+                prev_cp.byte_offset,
+                prev_cp.next_order_seq,
+                file_size,
+            );
 
             let mut file = match File::open(&path) {
                 Ok(f) => f,
@@ -1549,13 +1558,13 @@ impl HostTimelineObserver for CindyTimelineObserver {
 
                         let project_dir = discovered_cwd
                             .clone()
-                            .unwrap_or_else(|| PathBuf::from("/fixture/Projects/cindy"));
-                        let slug = slug_from_path(&project_dir, "cindy");
+                            .unwrap_or_else(|| spec.fallback_project_dir());
+                        let slug = slug_from_path(&project_dir, spec.cursor.fallback_slug);
                         let binding = SidebarProjectBinding {
                             host: DesktopHostKind::Cindy,
                             project_id: discovered_project_id
                                 .clone()
-                                .unwrap_or_else(|| format!("proj-cindy-{slug}")),
+                                .unwrap_or_else(|| spec.default_project_id(&slug)),
                             title: discovered_title.clone().unwrap_or_else(|| slug.clone()),
                             project_dir: project_dir.clone(),
                             workspace_uris: vec![format!("file://{}", project_dir.display())],
@@ -1570,7 +1579,7 @@ impl HostTimelineObserver for CindyTimelineObserver {
                             &val,
                             Some(&binding),
                         ) {
-                            next_order_seq = next_order_seq.saturating_add(10);
+                            next_order_seq = next_order_seq.saturating_add(spec.cursor.order_seq_step);
                             session_items.push(item);
                         }
                     }
@@ -1594,12 +1603,12 @@ impl HostTimelineObserver for CindyTimelineObserver {
 
             if byte_offset == file_size && prev_cp.byte_offset == 0 {
                 let project_dir = discovered_cwd
-                    .unwrap_or_else(|| PathBuf::from("/fixture/Projects/cindy"));
-                let slug = slug_from_path(&project_dir, "cindy");
+                    .unwrap_or_else(|| spec.fallback_project_dir());
+                let slug = slug_from_path(&project_dir, spec.cursor.fallback_slug);
                 let binding = SidebarProjectBinding {
                     host: DesktopHostKind::Cindy,
                     project_id: discovered_project_id
-                        .unwrap_or_else(|| format!("proj-cindy-{slug}")),
+                        .unwrap_or_else(|| spec.default_project_id(&slug)),
                     title: discovered_title.clone().unwrap_or_else(|| slug.clone()),
                     project_dir: project_dir.clone(),
                     workspace_uris: vec![format!("file://{}", project_dir.display())],
@@ -1607,7 +1616,7 @@ impl HostTimelineObserver for CindyTimelineObserver {
                 let meta = SessionMeta {
                     session_id: canonical_sid,
                     connector_id: self.connector_id.clone(),
-                    runtime: DesktopHostKind::Cindy.as_str().to_string(),
+                    runtime: spec.id.to_string(),
                     external_session_id: session_key.clone(),
                     project_slug: slug,
                     title: discovered_title.unwrap_or_else(|| session_key.clone()),
@@ -1669,11 +1678,17 @@ impl ZcodeTimelineObserver {
     }
 
     pub fn tasks_index_db_path(&self) -> PathBuf {
-        self.zcode_root.join("v2").join("tasks-index.sqlite")
+        DesktopHostKind::Zcode
+            .spec()
+            .resolve_db_path(&self.zcode_root, "tasks-index")
+            .expect("zcode tasks-index db path in HostSpec")
     }
 
     pub fn cli_db_path(&self) -> PathBuf {
-        self.zcode_root.join("cli").join("db").join("db.sqlite")
+        DesktopHostKind::Zcode
+            .spec()
+            .resolve_db_path(&self.zcode_root, "cli-db")
+            .expect("zcode cli-db path in HostSpec")
     }
 }
 
@@ -1694,6 +1709,7 @@ impl HostTimelineObserver for ZcodeTimelineObserver {
             self.checkpoints = load_checkpoint_book(ledger.state_root())?;
             self.checkpoints_loaded = true;
         }
+        let spec = DesktopHostKind::Zcode.spec();
         let mut report = ObserverScanReport {
             host: self.host_name().to_string(),
             ..ObserverScanReport::default()
@@ -1715,7 +1731,7 @@ impl HostTimelineObserver for ZcodeTimelineObserver {
 
         for snap in sessions {
             report.sessions_scanned += 1;
-            let cp_key = format!("zcode:{}", snap.session_id);
+            let cp_key = spec.checkpoint_key(&snap.session_id);
             let meta_digest = sha256_hex(
                 format!(
                     "{}\0{}\0{}\0{}\0{}",
@@ -1729,9 +1745,15 @@ impl HostTimelineObserver for ZcodeTimelineObserver {
             );
 
             if let Some(existing_cp) = self.checkpoints.get(&cp_key) {
-                if existing_cp.meta_digest == meta_digest
-                    && existing_cp.byte_offset == snap.message_count as u64
-                {
+                if spec.is_checkpoint_unchanged(
+                    existing_cp.file_size,
+                    existing_cp.mtime_ns,
+                    existing_cp.byte_offset,
+                    &existing_cp.meta_digest,
+                    snap.message_count as u64,
+                    0,
+                    &meta_digest,
+                ) {
                     report.sessions_skipped_unchanged += 1;
                     continue;
                 }
@@ -1739,7 +1761,7 @@ impl HostTimelineObserver for ZcodeTimelineObserver {
 
             let Ok(canonical_sid) = CanonicalSessionId::derive(
                 &self.connector_id,
-                DesktopHostKind::Zcode.as_str(),
+                spec.id,
                 &snap.session_id,
             ) else {
                 continue;
@@ -1748,13 +1770,13 @@ impl HostTimelineObserver for ZcodeTimelineObserver {
             let project_dir = if !snap.cwd.as_os_str().is_empty() {
                 snap.cwd.clone()
             } else {
-                PathBuf::from("/fixture/Projects/zcode")
+                spec.fallback_project_dir()
             };
-            let slug = slug_from_path(&project_dir, "zcode");
+            let slug = slug_from_path(&project_dir, spec.cursor.fallback_slug);
             let project_id = if !snap.project_id.trim().is_empty() {
                 snap.project_id.clone()
             } else {
-                format!("proj-zcode-{slug}")
+                spec.default_project_id(&slug)
             };
             let binding = SidebarProjectBinding {
                 host: DesktopHostKind::Zcode,
@@ -1960,7 +1982,7 @@ impl GrokBotTimelineObserver {
 
 impl HostTimelineObserver for GrokBotTimelineObserver {
     fn host_name(&self) -> &str {
-        "grokbot"
+        DesktopHostKind::ALL_SPECS[5].id
     }
 
     fn connector_id(&self) -> &str {
@@ -1975,22 +1997,23 @@ impl HostTimelineObserver for GrokBotTimelineObserver {
             self.checkpoints = load_checkpoint_book(ledger.state_root())?;
             self.checkpoints_loaded = true;
         }
+        let spec = &DesktopHostKind::ALL_SPECS[5];
         let mut report = ObserverScanReport {
-            host: "grokbot".into(),
+            host: spec.id.into(),
             ..ObserverScanReport::default()
         };
         let all_messages = ledger.list_all_messages()?;
         let mut grouped: BTreeMap<String, Vec<fleet_proto::InboxMessage>> = BTreeMap::new();
         for msg in all_messages {
             let touches_grokbot =
-                msg.from.starts_with("grokbot") || msg.to.starts_with("grokbot");
+                msg.from.starts_with(spec.id) || msg.to.starts_with(spec.id);
             if !touches_grokbot {
                 continue;
             }
             let ext_sid = msg
                 .session_id
                 .clone()
-                .unwrap_or_else(|| format!("grokbot-{}", msg.id));
+                .unwrap_or_else(|| format!("{}-{}", spec.id, msg.id));
             grouped.entry(ext_sid).or_default().push(msg);
         }
 
@@ -1999,32 +2022,40 @@ impl HostTimelineObserver for GrokBotTimelineObserver {
 
         for (ext_sid, msgs) in grouped {
             report.sessions_scanned += 1;
-            let cp_key = format!("grokbot:{ext_sid}");
+            let cp_key = spec.checkpoint_key(&ext_sid);
             let count = msgs.len() as u64;
             let delivered_mask: String = msgs
                 .iter()
                 .map(|m| if m.delivered { '1' } else { '0' })
                 .collect();
             if let Some(existing_cp) = self.checkpoints.get(&cp_key) {
-                if existing_cp.byte_offset == count && existing_cp.meta_digest == delivered_mask {
+                if spec.is_checkpoint_unchanged(
+                    existing_cp.file_size,
+                    existing_cp.mtime_ns,
+                    existing_cp.byte_offset,
+                    &existing_cp.meta_digest,
+                    count,
+                    0,
+                    &delivered_mask,
+                ) {
                     report.sessions_skipped_unchanged += 1;
                     continue;
                 }
             }
 
             let Ok(canonical_sid) =
-                CanonicalSessionId::derive(&self.connector_id, "grokbot", &ext_sid)
+                CanonicalSessionId::derive(&self.connector_id, spec.id, &ext_sid)
             else {
                 continue;
             };
             let slug = msgs
                 .first()
                 .and_then(|m| m.project_slug.clone())
-                .unwrap_or_else(|| "grokbot".into());
+                .unwrap_or_else(|| spec.cursor.fallback_slug.into());
             let meta = SessionMeta {
                 session_id: canonical_sid.clone(),
                 connector_id: self.connector_id.clone(),
-                runtime: "grokbot".into(),
+                runtime: spec.id.into(),
                 external_session_id: ext_sid.clone(),
                 project_slug: slug,
                 title: format!("GrokBot {ext_sid}"),
@@ -2034,7 +2065,7 @@ impl HostTimelineObserver for GrokBotTimelineObserver {
             };
             ledger.upsert_session(&meta)?;
 
-            let mut order_seq: i32 = 10;
+            let mut order_seq: i32 = spec.cursor.initial_order_seq;
             for msg in &msgs {
                 let tier = if msg.delivered {
                     DeliveryTier::Completed
@@ -2043,7 +2074,7 @@ impl HostTimelineObserver for GrokBotTimelineObserver {
                 };
                 if let Ok(seq) = TimelineOrderSeq::try_from(i64::from(order_seq)) {
                     let item = TimelineItem::new(
-                        format!("grokbot:{}", msg.id),
+                        format!("{}:{}", spec.id, msg.id),
                         canonical_sid.clone(),
                         Some(msg.id.clone()),
                         TimelineItemKind::PeerMessage,
@@ -2056,7 +2087,7 @@ impl HostTimelineObserver for GrokBotTimelineObserver {
                     )
                     .with_delivery_tier(tier)
                     .with_peer_sender(msg.from.clone());
-                    order_seq = order_seq.saturating_add(10);
+                    order_seq = order_seq.saturating_add(spec.cursor.order_seq_step);
                     report.items_projected += 1;
                     pending_items.push(item);
                 }
@@ -2094,48 +2125,48 @@ pub fn project_host_timelines(
     host: &str,
     host_root: Option<&Path>,
 ) -> Result<ObserverScanReport, HostAdapterError> {
-    match host.trim() {
-        "openai-dots" => {
+    let trimmed = host.trim();
+    let Some(spec) = DesktopHostKind::spec_by_id(trimmed) else {
+        return Err(HostAdapterError::ExternalAgentProtocol(format!(
+            "unsupported timeline observer host: {trimmed}"
+        )));
+    };
+    match spec.desktop_kind {
+        Some(DesktopHostKind::OpenaiDots) => {
             let root = host_root.ok_or(HostAdapterError::RuntimeNotConfigured(
                 DesktopHostKind::OpenaiDots,
             ))?;
-            let mut obs = OpenAiDotsTimelineObserver::new(connector_id, root.to_path_buf());
-            obs.project_into_ledger(ledger)
+            OpenAiDotsTimelineObserver::new(connector_id, root.to_path_buf())
+                .project_into_ledger(ledger)
         }
-        "antigravity-desktop" => {
+        Some(DesktopHostKind::AntigravityDesktop) => {
             let root = host_root.ok_or(HostAdapterError::RuntimeNotConfigured(
                 DesktopHostKind::AntigravityDesktop,
             ))?;
-            let mut obs = AntigravityTimelineObserver::new(connector_id, root.to_path_buf());
-            obs.project_into_ledger(ledger)
+            AntigravityTimelineObserver::new(connector_id, root.to_path_buf())
+                .project_into_ledger(ledger)
         }
-        "deepseek-harness" => {
+        Some(DesktopHostKind::DeepseekHarness) => {
             let root = host_root.ok_or(HostAdapterError::RuntimeNotConfigured(
                 DesktopHostKind::DeepseekHarness,
             ))?;
-            let mut obs = DeepSeekHarnessTimelineObserver::new(connector_id, root.to_path_buf());
-            obs.project_into_ledger(ledger)
+            DeepSeekHarnessTimelineObserver::new(connector_id, root.to_path_buf())
+                .project_into_ledger(ledger)
         }
-        "cindy" => {
+        Some(DesktopHostKind::Cindy) => {
             let root = host_root.ok_or(HostAdapterError::RuntimeNotConfigured(
                 DesktopHostKind::Cindy,
             ))?;
-            let mut obs = CindyTimelineObserver::new(connector_id, root.to_path_buf());
-            obs.project_into_ledger(ledger)
+            CindyTimelineObserver::new(connector_id, root.to_path_buf())
+                .project_into_ledger(ledger)
         }
-        "zcode" => {
+        Some(DesktopHostKind::Zcode) => {
             let root = host_root.ok_or(HostAdapterError::RuntimeNotConfigured(
                 DesktopHostKind::Zcode,
             ))?;
-            let mut obs = ZcodeTimelineObserver::new(connector_id, root.to_path_buf());
-            obs.project_into_ledger(ledger)
+            ZcodeTimelineObserver::new(connector_id, root.to_path_buf())
+                .project_into_ledger(ledger)
         }
-        "grokbot" => {
-            let mut obs = GrokBotTimelineObserver::new(connector_id);
-            obs.project_into_ledger(ledger)
-        }
-        other => Err(HostAdapterError::ExternalAgentProtocol(format!(
-            "unsupported timeline observer host: {other}"
-        ))),
+        None => GrokBotTimelineObserver::new(connector_id).project_into_ledger(ledger),
     }
 }

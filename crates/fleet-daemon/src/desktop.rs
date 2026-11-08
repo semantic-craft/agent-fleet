@@ -1,5 +1,5 @@
 use crate::{DirectoryError, ExecutionError, NodeDaemon, SessionDirectory};
-use fleet_proto::{DeliveryTier, SessionRecord, SessionSelector};
+use fleet_proto::{DeliveryTier, DesktopHostKind, SessionRecord, SessionSelector};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::{
@@ -135,10 +135,14 @@ impl DesktopDelivery {
         let session = SessionDirectory::discover(&directory, now)?
             .resolve(&selector, now)?
             .clone();
-        if session.id.desktop != "codex" {
-            return Err(DesktopError::Invalid(
-                "this adapter requires desktop=codex".into(),
-            ));
+        let spec = DesktopHostKind::OpenaiDots.spec();
+        if session.id.desktop != spec.desktop_target
+            || spec.primary_channel.as_str() != "desktop-gateway"
+        {
+            return Err(DesktopError::Invalid(format!(
+                "this adapter requires desktop={}",
+                spec.desktop_target
+            )));
         }
         let mut daemon = NodeDaemon::new(directory.clone(), cache_roots)?;
         daemon.select(&selector)?;
