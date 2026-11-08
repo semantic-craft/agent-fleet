@@ -15,15 +15,18 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
     collections::BTreeSet,
+    env,
     ffi::{OsStr, OsString},
     fmt,
-    io::{BufRead, BufReader, Read, Write},
-    net::TcpStream,
+    io::{self, BufRead, BufReader, Read, Write},
+    net::{Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs},
     path::PathBuf,
+    process::{Child, Command, Stdio},
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc, Condvar, Mutex,
     },
+    thread,
     time::{Duration, Instant},
 };
 use tungstenite::{
@@ -251,6 +254,490 @@ pub struct TimelineEmitOutcome {
     pub generation: u64,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EndpointScheme {
+    Plain,
+    Tls,
+}
+
+impl EndpointScheme {
+    pub fn is_tls(self) -> bool {
+        matches!(self, Self::Tls)
+    }
+
+    pub fn ws_scheme(self) -> &'static str {
+        match self {
+            Self::Plain => "ws",
+            Self::Tls => "wss",
+        }
+    }
+
+    pub fn http_scheme(self) -> &'static str {
+        match self {
+            Self::Plain => "http",
+            Self::Tls => "https",
+        }
+    }
+
+    pub fn default_port(self) -> u16 {
+        match self {
+            Self::Plain => 80,
+            Self::Tls => 443,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkbenchEndpoint {
+    scheme: EndpointScheme,
+    host: String,
+    port: u16,
+    explicit_port: bool,
+    ws_path: String,
+    http_base_path: String,
+}
+
+impl WorkbenchEndpoint {
+    pub fn parse(raw_url: &str) -> Result<Self, ConnectorError> {
+        let trimmed = raw_url.trim().trim_end_matches('/');
+        if trimmed.is_empty() {
+            return Err(ConnectorError::InvalidConfig(
+                "server_url must not be empty".into(),
+            ));
+        }
+        let (scheme, is_ws_input, rest) = if let Some(r) = trimmed.strip_prefix("wss://") {
+            (EndpointScheme::Tls, true, r)
+        } else if let Some(r) = trimmed.strip_prefix("https://") {
+            (EndpointScheme::Tls, false, r)
+        } else if let Some(r) = trimmed.strip_prefix("ws://") {
+            (EndpointScheme::Plain, true, r)
+        } else if let Some(r) = trimmed.strip_prefix("http://") {
+            (EndpointScheme::Plain, false, r)
+        } else {
+            return Err(ConnectorError::InvalidConfig(format!(
+                "unsupported server_url scheme: {trimmed}"
+            )));
+        };
+
+        let (authority, raw_path) = match rest.split_once('/') {
+            Some((a, p)) => (a, format!("/{}", p.trim_matches('/'))),
+            None => (rest, String::new()),
+        };
+        if authority.trim().is_empty() {
+            return Err(ConnectorError::InvalidConfig(format!(
+                "missing host in server_url: {trimmed}"
+            )));
+        }
+
+        let (host, port, explicit_port) = if let Some((h, port_str)) = authority.rsplit_once(':') {
+            if h.trim().is_empty() {
+                return Err(ConnectorError::InvalidConfig(format!(
+                    "missing host in server_url: {trimmed}"
+                )));
+            }
+            let p = port_str.parse::<u16>().map_err(|_| {
+                ConnectorError::InvalidConfig(format!("invalid port in {authority}"))
+            })?;
+            (h.to_string(), p, true)
+        } else {
+            (authority.to_string(), scheme.default_port(), false)
+        };
+
+        let normalized_path = if raw_path == "/" {
+            String::new()
+        } else {
+            raw_path
+        };
+
+        let (http_base_path, ws_path) =
+            if let Some(prefix) = normalized_path.strip_suffix("/api/v2/connector/ws") {
+                (prefix.to_string(), normalized_path)
+            } else if let Some(prefix) = normalized_path.strip_suffix("/ws/v2/connector") {
+                (prefix.to_string(), normalized_path)
+            } else if is_ws_input && !normalized_path.is_empty() {
+                (String::new(), normalized_path)
+            } else {
+                (
+                    normalized_path.clone(),
+                    format!("{normalized_path}/api/v2/connector/ws"),
+                )
+            };
+
+        Ok(Self {
+            scheme,
+            host,
+            port,
+            explicit_port,
+            ws_path,
+            http_base_path,
+        })
+    }
+
+    pub fn scheme(&self) -> EndpointScheme {
+        self.scheme
+    }
+
+    pub fn host(&self) -> &str {
+        &self.host
+    }
+
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+
+    pub fn host_header(&self) -> String {
+        if self.explicit_port || self.port != self.scheme.default_port() {
+            format!("{}:{}", self.host, self.port)
+        } else {
+            self.host.clone()
+        }
+    }
+
+    pub fn ws_url(&self) -> String {
+        format!(
+            "{}://{}{}",
+            self.scheme.ws_scheme(),
+            self.host_header(),
+            self.ws_path
+        )
+    }
+
+    pub fn http_url(&self, path: &str) -> String {
+        let normalized = if path.starts_with('/') {
+            path.to_string()
+        } else {
+            format!("/{path}")
+        };
+        format!(
+            "{}://{}{}{}",
+            self.scheme.http_scheme(),
+            self.host_header(),
+            self.http_base_path,
+            normalized
+        )
+    }
+
+    pub fn resolve_socket_addr(&self) -> Result<SocketAddr, ConnectorError> {
+        let addr_str = format!("{}:{}", self.host, self.port);
+        addr_str
+            .to_socket_addrs()
+            .map_err(|e| {
+                ConnectorError::Transport(format!("cannot resolve {addr_str}: {e}"))
+            })?
+            .next()
+            .ok_or_else(|| {
+                ConnectorError::Transport(format!("no socket addresses resolved for {addr_str}"))
+            })
+    }
+}
+
+struct TlsBridgeGuard {
+    child: Child,
+}
+
+impl Drop for TlsBridgeGuard {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+pub struct ConnectorStream {
+    inner: TcpStream,
+    _tls_guard: Option<TlsBridgeGuard>,
+}
+
+impl ConnectorStream {
+    pub fn connect(
+        endpoint: &WorkbenchEndpoint,
+        timeout: Duration,
+    ) -> Result<Self, ConnectorError> {
+        let sock_addr = endpoint.resolve_socket_addr()?;
+        match endpoint.scheme() {
+            EndpointScheme::Plain => {
+                let stream = TcpStream::connect_timeout(&sock_addr, timeout).map_err(|e| {
+                    ConnectorError::Transport(format!(
+                        "TCP connect {}:{}: {e}",
+                        endpoint.host(),
+                        endpoint.port()
+                    ))
+                })?;
+                stream
+                    .set_nodelay(true)
+                    .map_err(|e| ConnectorError::Transport(e.to_string()))?;
+                stream
+                    .set_read_timeout(Some(timeout))
+                    .map_err(|e| ConnectorError::Transport(e.to_string()))?;
+                stream
+                    .set_write_timeout(Some(timeout))
+                    .map_err(|e| ConnectorError::Transport(e.to_string()))?;
+                Ok(Self {
+                    inner: stream,
+                    _tls_guard: None,
+                })
+            }
+            EndpointScheme::Tls => {
+                let probe = TcpStream::connect_timeout(&sock_addr, timeout).map_err(|e| {
+                    ConnectorError::Transport(format!(
+                        "TLS target TCP connect {}:{}: {e}",
+                        endpoint.host(),
+                        endpoint.port()
+                    ))
+                })?;
+                drop(probe);
+
+                let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| {
+                    ConnectorError::Transport(format!("bind TLS bridge listener: {e}"))
+                })?;
+                let local_addr = listener.local_addr().map_err(|e| {
+                    ConnectorError::Transport(format!("TLS bridge local_addr: {e}"))
+                })?;
+
+                let connect_target = format!("{}:{}", endpoint.host(), endpoint.port());
+                let mut cmd = Command::new("openssl");
+                cmd.args([
+                    "s_client",
+                    "-quiet",
+                    "-no_ign_eof",
+                    "-connect",
+                    &connect_target,
+                    "-servername",
+                    endpoint.host(),
+                ]);
+                if let Ok(ca_file) = env::var("FLEET_TLS_CA_CERT") {
+                    if !ca_file.trim().is_empty() {
+                        cmd.args(["-CAfile", ca_file.trim()]);
+                    }
+                }
+                let mut child = cmd
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::null())
+                    .spawn()
+                    .map_err(|e| {
+                        ConnectorError::Transport(format!("spawn openssl s_client: {e}"))
+                    })?;
+
+                let mut child_stdin = child.stdin.take().ok_or_else(|| {
+                    ConnectorError::Transport("openssl s_client stdin unavailable".into())
+                })?;
+                let mut child_stdout = child.stdout.take().ok_or_else(|| {
+                    ConnectorError::Transport("openssl s_client stdout unavailable".into())
+                })?;
+
+                let client_stream =
+                    TcpStream::connect_timeout(&local_addr, timeout).map_err(|e| {
+                        ConnectorError::Transport(format!("connect local TLS bridge: {e}"))
+                    })?;
+                let (bridge_peer, _) = listener.accept().map_err(|e| {
+                    ConnectorError::Transport(format!("accept local TLS bridge: {e}"))
+                })?;
+                let _ = client_stream.set_nodelay(true);
+                let _ = bridge_peer.set_nodelay(true);
+                client_stream
+                    .set_read_timeout(Some(timeout))
+                    .map_err(|e| ConnectorError::Transport(e.to_string()))?;
+                client_stream
+                    .set_write_timeout(Some(timeout))
+                    .map_err(|e| ConnectorError::Transport(e.to_string()))?;
+
+                let mut peer_read = bridge_peer.try_clone().map_err(|e| {
+                    ConnectorError::Transport(format!("clone TLS bridge socket: {e}"))
+                })?;
+                let mut peer_write = bridge_peer;
+
+                thread::spawn(move || {
+                    let mut buf = [0u8; 16 * 1024];
+                    while let Ok(n) = peer_read.read(&mut buf) {
+                        if n == 0 {
+                            break;
+                        }
+                        if child_stdin.write_all(&buf[..n]).is_err()
+                            || child_stdin.flush().is_err()
+                        {
+                            break;
+                        }
+                    }
+                    let _ = child_stdin.flush();
+                });
+
+                thread::spawn(move || {
+                    let mut buf = [0u8; 16 * 1024];
+                    while let Ok(n) = child_stdout.read(&mut buf) {
+                        if n == 0 {
+                            break;
+                        }
+                        if peer_write.write_all(&buf[..n]).is_err()
+                            || peer_write.flush().is_err()
+                        {
+                            break;
+                        }
+                    }
+                    let _ = peer_write.shutdown(Shutdown::Both);
+                });
+
+                Ok(Self {
+                    inner: client_stream,
+                    _tls_guard: Some(TlsBridgeGuard { child }),
+                })
+            }
+        }
+    }
+
+    pub fn set_read_timeout(&self, dur: Option<Duration>) -> io::Result<()> {
+        self.inner.set_read_timeout(dur)
+    }
+
+    pub fn set_write_timeout(&self, dur: Option<Duration>) -> io::Result<()> {
+        self.inner.set_write_timeout(dur)
+    }
+
+    pub fn set_nodelay(&self, nodelay: bool) -> io::Result<()> {
+        self.inner.set_nodelay(nodelay)
+    }
+}
+
+impl Read for ConnectorStream {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.inner.read(buf)
+    }
+}
+
+impl Write for ConnectorStream {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.inner.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+/// Keeps plain HTTP on in-process TCP to avoid `curl` fork/exec overhead against the 10ms P99 loopback gate.
+pub fn execute_workbench_http_raw(
+    endpoint: &WorkbenchEndpoint,
+    method: &str,
+    path: &str,
+    headers: &[(&str, &str)],
+    body: Option<&[u8]>,
+    timeout: Duration,
+) -> Result<(u16, String), ConnectorError> {
+    let normalized_path = if path.starts_with('/') {
+        format!("{}{}", endpoint.http_base_path, path)
+    } else {
+        format!("{}/{}", endpoint.http_base_path, path)
+    };
+    match endpoint.scheme() {
+        EndpointScheme::Plain => {
+            let sock_addr = endpoint.resolve_socket_addr()?;
+            let mut stream = TcpStream::connect_timeout(&sock_addr, timeout).map_err(|e| {
+                ConnectorError::Transport(format!("HTTP connect {sock_addr}: {e}"))
+            })?;
+            let _ = stream.set_nodelay(true);
+            stream
+                .set_read_timeout(Some(timeout))
+                .map_err(|e| ConnectorError::Transport(e.to_string()))?;
+            stream
+                .set_write_timeout(Some(timeout))
+                .map_err(|e| ConnectorError::Transport(e.to_string()))?;
+
+            let payload = body.unwrap_or(&[]);
+            let mut req_header = format!(
+                "{method} {normalized_path} HTTP/1.1\r\nHost: {}\r\n",
+                endpoint.host_header()
+            );
+            for (k, v) in headers {
+                req_header.push_str(&format!("{k}: {v}\r\n"));
+            }
+            if body.is_some() {
+                req_header.push_str(&format!("Content-Length: {}\r\n", payload.len()));
+            }
+            req_header.push_str("Connection: close\r\n\r\n");
+
+            stream
+                .write_all(req_header.as_bytes())
+                .and_then(|_| {
+                    if !payload.is_empty() {
+                        stream.write_all(payload)
+                    } else {
+                        Ok(())
+                    }
+                })
+                .and_then(|_| stream.flush())
+                .map_err(|e| ConnectorError::Transport(format!("HTTP write failed: {e}")))?;
+
+            read_http_response(&mut stream)
+        }
+        EndpointScheme::Tls => {
+            let url = endpoint.http_url(path);
+            let max_time = timeout.as_secs_f64().max(1.0);
+            let mut cmd = Command::new("curl");
+            cmd.args([
+                "-sS",
+                "--max-time",
+                &format!("{max_time:.1}"),
+                "-X",
+                method,
+            ]);
+            if let Ok(ca_file) = env::var("FLEET_TLS_CA_CERT") {
+                if !ca_file.trim().is_empty() {
+                    cmd.args(["--cacert", ca_file.trim()]);
+                }
+            } else if env::var("FLEET_TLS_INSECURE")
+                .is_ok_and(|v| v == "1" || v == "true")
+                || endpoint.host() == "127.0.0.1"
+                || endpoint.host() == "localhost"
+            {
+                cmd.arg("-k");
+            }
+            for (k, v) in headers {
+                cmd.args(["-H", &format!("{k}: {v}")]);
+            }
+            if body.is_some() {
+                cmd.args(["--data-binary", "@-"]);
+            }
+            cmd.args(["-w", "\n%{http_code}", &url]);
+            cmd.stdin(if body.is_some() {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            });
+            cmd.stdout(Stdio::piped());
+            cmd.stderr(Stdio::piped());
+
+            let mut child = cmd.spawn().map_err(|e| {
+                ConnectorError::Transport(format!("spawn curl for {url}: {e}"))
+            })?;
+            if let Some(payload) = body {
+                if let Some(mut stdin) = child.stdin.take() {
+                    stdin.write_all(payload).map_err(|e| {
+                        ConnectorError::Transport(format!("write curl request body: {e}"))
+                    })?;
+                }
+            }
+            let output = child.wait_with_output().map_err(|e| {
+                ConnectorError::Transport(format!("wait curl for {url}: {e}"))
+            })?;
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                return Err(ConnectorError::Transport(format!(
+                    "HTTPS request {method} {url} failed: {stderr}"
+                )));
+            }
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let (resp_body, status_str) = stdout.rsplit_once('\n').ok_or_else(|| {
+                ConnectorError::Protocol(format!("missing status code from curl for {url}"))
+            })?;
+            let status = status_str.trim().parse::<u16>().map_err(|_| {
+                ConnectorError::Protocol(format!(
+                    "invalid HTTP status code from curl: {status_str:?}"
+                ))
+            })?;
+            Ok((status, resp_body.to_string()))
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ConnectorConfig {
     pub server_url: String,
@@ -281,49 +768,17 @@ impl ConnectorConfig {
         }
     }
 
+    pub fn endpoint(&self) -> Result<WorkbenchEndpoint, ConnectorError> {
+        WorkbenchEndpoint::parse(&self.server_url)
+    }
+
     pub fn ws_url(&self) -> Result<String, ConnectorError> {
-        let trimmed = self.server_url.trim().trim_end_matches('/');
-        if trimmed.is_empty() {
-            return Err(ConnectorError::InvalidConfig(
-                "server_url must not be empty".into(),
-            ));
-        }
-        if trimmed.starts_with("ws://") || trimmed.starts_with("wss://") {
-            if trimmed.ends_with("/api/v2/connector/ws") {
-                Ok(trimmed.to_string())
-            } else {
-                Ok(format!("{trimmed}/api/v2/connector/ws"))
-            }
-        } else if let Some(rest) = trimmed.strip_prefix("http://") {
-            Ok(format!("ws://{rest}/api/v2/connector/ws"))
-        } else if let Some(rest) = trimmed.strip_prefix("https://") {
-            Ok(format!("wss://{rest}/api/v2/connector/ws"))
-        } else {
-            Err(ConnectorError::InvalidConfig(format!(
-                "unsupported server_url scheme: {trimmed}"
-            )))
-        }
+        Ok(self.endpoint()?.ws_url())
     }
 
     pub fn http_host_port(&self) -> Result<(String, u16), ConnectorError> {
-        let trimmed = self.server_url.trim().trim_end_matches('/');
-        let without_scheme = trimmed
-            .strip_prefix("http://")
-            .or_else(|| trimmed.strip_prefix("ws://"))
-            .or_else(|| trimmed.strip_prefix("https://"))
-            .or_else(|| trimmed.strip_prefix("wss://"))
-            .ok_or_else(|| {
-                ConnectorError::InvalidConfig(format!("invalid server_url: {trimmed}"))
-            })?;
-        let authority = without_scheme.split('/').next().unwrap_or(without_scheme);
-        if let Some((host, port_str)) = authority.rsplit_once(':') {
-            let port = port_str.parse::<u16>().map_err(|_| {
-                ConnectorError::InvalidConfig(format!("invalid port in {authority}"))
-            })?;
-            Ok((host.to_string(), port))
-        } else {
-            Ok((authority.to_string(), 80))
-        }
+        let ep = self.endpoint()?;
+        Ok((ep.host().to_string(), ep.port()))
     }
 }
 
@@ -934,12 +1389,12 @@ impl ConnectorRpcHandler {
 }
 
 /// Outbound Rust Connector client speaking the Agents-Anywhere v2 Connector protocol
-/// (`WS /api/v2/connector/ws` + chunked HTTP `POST /api/v2/connector/ingest` spillover).
+/// (`WS /api/v2/connector/ws` or `/ws/v2/connector` + chunked HTTP `POST /api/v2/connector/ingest` spillover).
 pub struct ConnectorClient {
     config: ConnectorConfig,
     ledger: FleetLedgerStore,
     handler: ConnectorRpcHandler,
-    ws: Option<WebSocket<TcpStream>>,
+    ws: Option<WebSocket<ConnectorStream>>,
     pending_outbox: Vec<TimelineItem>,
     next_req_seq: u64,
 }
@@ -961,19 +1416,9 @@ impl ConnectorClient {
     }
 
     pub fn connect(&mut self) -> Result<u64, ConnectorError> {
-        let ws_url = self.config.ws_url()?;
-        let (host, port) = self.config.http_host_port()?;
-        let stream = TcpStream::connect((host.as_str(), port))
-            .map_err(|e| ConnectorError::Transport(format!("TCP connect {host}:{port}: {e}")))?;
-        stream
-            .set_nodelay(true)
-            .map_err(|e| ConnectorError::Transport(e.to_string()))?;
-        stream
-            .set_read_timeout(Some(self.config.request_timeout))
-            .map_err(|e| ConnectorError::Transport(e.to_string()))?;
-        stream
-            .set_write_timeout(Some(self.config.request_timeout))
-            .map_err(|e| ConnectorError::Transport(e.to_string()))?;
+        let endpoint = self.config.endpoint()?;
+        let ws_url = endpoint.ws_url();
+        let stream = ConnectorStream::connect(&endpoint, self.config.request_timeout)?;
 
         let mut req = ws_url
             .as_str()
@@ -1215,36 +1660,21 @@ impl ConnectorClient {
         .map_err(|e| ConnectorError::Protocol(e.to_string()))?;
         let wire_bytes = body_json.len();
 
-        let (host, port) = self.config.http_host_port()?;
-        let mut stream = TcpStream::connect((host.as_str(), port)).map_err(|e| {
-            ConnectorError::Transport(format!("HTTP ingest connect {host}:{port}: {e}"))
-        })?;
-        stream
-            .set_read_timeout(Some(self.config.request_timeout))
-            .map_err(|e| ConnectorError::Transport(e.to_string()))?;
-        stream
-            .set_write_timeout(Some(self.config.request_timeout))
-            .map_err(|e| ConnectorError::Transport(e.to_string()))?;
-
-        let req_header = format!(
-            "POST /api/v2/connector/ingest HTTP/1.1\r\n\
-             Host: {host}:{port}\r\n\
-             Authorization: Bearer {}\r\n\
-             X-Connector-Id: {}\r\n\
-             Content-Type: application/json\r\n\
-             Content-Length: {}\r\n\
-             Connection: close\r\n\r\n",
-            self.config.connector_token,
-            self.config.connector_id,
-            body_json.len()
-        );
-        stream
-            .write_all(req_header.as_bytes())
-            .and_then(|_| stream.write_all(body_json.as_bytes()))
-            .and_then(|_| stream.flush())
-            .map_err(|e| ConnectorError::Transport(format!("HTTP ingest write failed: {e}")))?;
-
-        let (status, resp_body) = read_http_response(&mut stream)?;
+        let endpoint = self.config.endpoint()?;
+        let auth_header = format!("Bearer {}", self.config.connector_token);
+        let headers = [
+            ("Authorization", auth_header.as_str()),
+            ("X-Connector-Id", self.config.connector_id.as_str()),
+            ("Content-Type", "application/json"),
+        ];
+        let (status, resp_body) = execute_workbench_http_raw(
+            &endpoint,
+            "POST",
+            "/api/v2/connector/ingest",
+            &headers,
+            Some(body_json.as_bytes()),
+            self.config.request_timeout,
+        )?;
         if status != 200 {
             return Err(ConnectorError::HttpStatus {
                 status,
@@ -1377,4 +1807,48 @@ pub fn run_connector_daemon(
         "handledRpcs": handled_rpcs,
         "elapsedMs": start.elapsed().as_millis() as u64,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn workbench_endpoint_parses_aliyun_wss_and_https_gateway_urls() {
+        let ep_wss =
+            WorkbenchEndpoint::parse("wss://workbench.aliyun.example.com/ws/v2/connector").unwrap();
+        assert_eq!(ep_wss.scheme(), EndpointScheme::Tls);
+        assert_eq!(ep_wss.host(), "workbench.aliyun.example.com");
+        assert_eq!(ep_wss.port(), 443);
+        assert_eq!(
+            ep_wss.ws_url(),
+            "wss://workbench.aliyun.example.com/ws/v2/connector"
+        );
+        assert_eq!(
+            ep_wss.http_url("/api/v2/connector/ingest"),
+            "https://workbench.aliyun.example.com/api/v2/connector/ingest"
+        );
+
+        let ep_https =
+            WorkbenchEndpoint::parse("https://workbench.aliyun.example.com:8443/").unwrap();
+        assert_eq!(ep_https.scheme(), EndpointScheme::Tls);
+        assert_eq!(ep_https.port(), 8443);
+        assert_eq!(
+            ep_https.ws_url(),
+            "wss://workbench.aliyun.example.com:8443/api/v2/connector/ws"
+        );
+        assert_eq!(
+            ep_https.http_url("/api/v2/health"),
+            "https://workbench.aliyun.example.com:8443/api/v2/health"
+        );
+
+        let ep_plain = WorkbenchEndpoint::parse("http://127.0.0.1:5174").unwrap();
+        assert_eq!(ep_plain.scheme(), EndpointScheme::Plain);
+        assert_eq!(ep_plain.port(), 5174);
+        assert_eq!(ep_plain.ws_url(), "ws://127.0.0.1:5174/api/v2/connector/ws");
+        assert_eq!(
+            ep_plain.http_url("/api/v2/providers"),
+            "http://127.0.0.1:5174/api/v2/providers"
+        );
+    }
 }

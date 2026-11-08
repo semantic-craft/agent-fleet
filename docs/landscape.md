@@ -22,7 +22,7 @@
 | `_forks/agenvo` | 上游 Agenvo 的最小 fork（历史 connector／relay）。本机派活已改官方 anet，见 [anet.md](anet.md) | 遗留 |
 | `agent-plugins` | 只做 marketplace／安装根：`claude/`、`codex/`、`zcode/`、`dsh/` 等自有插件；多 agent 派活插件不放这里，在 `agent-fleet/plugins/` | 无关：不是通信基础设施；其中 `dsh/lcu-dsh`（LCU Computer Use 插件）线上在用 |
 | `outer-loop-kit` | 外环业务规则（outer-loop）；ANet 通用派活契约引用本仓 | 治理 |
-| `alma-relay-ops` | 多设备穿透／回家底座的运维仓（上游 yetone/alma-relay）；随 `fleet-workbench-server` 阿里云自托管切换批准后准备退役 | 无关：网络底座，不是派活通道（阿里云切换批准后退役） |
+| `alma-relay-ops` | 多设备穿透／回家底座的运维仓（上游 yetone/alma-relay）；已随 `fleet-workbench-server` 阿里云自托管切换完成退役 | 遗留（已退役）：已被 fleet-workbench-server 阿里云自托管工作台替代，非派活通道 |
 | `_ref/esp32-iphone-agent`、`zotero-bridge` | 硬件 iPhone 操控实验；Zotero 文献桥 | 无关 |
 
 2026-11-04 目录复核：历史条目 `dsh-superagent-prototype` 当前不在 `~/Projects`、`_ref` 或 `_forks` 下，因此移出当前目录表。其迁移或移除原因未核实，不据此声称已归档，也不据此删除或恢复任何内容。

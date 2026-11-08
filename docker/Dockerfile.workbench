@@ -16,6 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     libsqlite3-0 \
     curl \
+    openssl \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=web-builder /srv/workbench/static /srv/workbench/static
 COPY --from=rust-builder /usr/src/agent-fleet/target/release/fleet-workbench-server /usr/local/bin/fleet-workbench-server

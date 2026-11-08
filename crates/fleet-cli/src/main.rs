@@ -1,12 +1,14 @@
 use fleet_daemon::{
-    build_configured_host_adapter, detect_antigravity_runtime, detect_cindy_runtime,
-    detect_dsh_runtime, detect_openai_dots_runtime, detect_zcode_runtime,
-    doctor::evaluate_gate_failures, inspect_host_state, probe_external_agent_live_contract,
-    probe_host_live_contract, project_host_timelines, read_antigravity_latest_response,
-    run_connector_daemon, run_host_poteto_relay, wire_agent_configs, AntigravityRuntimeConfig,
-    CindyRuntimeConfig, ConnectorConfig, DesktopHostAdapter, DshRuntimeConfig,
-    ExternalAgentRegistry, FleetLedgerStore, FleetMailboxStore, HostRuntimeOptions,
-    OpenAiDotsRuntimeConfig, PotetoRelayTask, SessionDirectory, ZcodeRuntimeConfig,
+    build_configured_host_adapter,
+    connector_ws::{execute_workbench_http_raw, WorkbenchEndpoint},
+    detect_antigravity_runtime, detect_cindy_runtime, detect_dsh_runtime,
+    detect_openai_dots_runtime, detect_zcode_runtime, doctor::evaluate_gate_failures,
+    inspect_host_state, probe_external_agent_live_contract, probe_host_live_contract,
+    project_host_timelines, read_antigravity_latest_response, run_connector_daemon,
+    run_host_poteto_relay, wire_agent_configs, AntigravityRuntimeConfig, CindyRuntimeConfig,
+    ConnectorConfig, DesktopHostAdapter, DshRuntimeConfig, ExternalAgentRegistry, FleetLedgerStore,
+    FleetMailboxStore, HostRuntimeOptions, OpenAiDotsRuntimeConfig, PotetoRelayTask,
+    SessionDirectory, ZcodeRuntimeConfig,
 };
 use fleet_proto::{
     normalize_peer_id,
@@ -22,8 +24,7 @@ use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, BTreeSet},
     env, fs,
-    io::{self, BufRead, Read, Write},
-    net::{SocketAddr, TcpStream, ToSocketAddrs},
+    io::{self, BufRead, Write},
     path::{Path, PathBuf},
     process::{Command, ExitCode},
     sync::atomic::{AtomicU64, Ordering},
@@ -534,54 +535,17 @@ fn resolve_workbench_url(options: &BTreeMap<String, String>) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-fn parse_workbench_addr(base_url: &str) -> Result<(String, SocketAddr), String> {
-    let stripped = base_url
-        .trim()
-        .strip_prefix("http://")
-        .or_else(|| base_url.trim().strip_prefix("https://"))
-        .unwrap_or(base_url.trim());
-    let host_port = stripped.split('/').next().unwrap_or(stripped);
-    let addr_str = if host_port.contains(':') {
-        host_port.to_string()
+fn http_get_workbench_json(base_url: &str, path: &str) -> Result<(u16, Value), String> {
+    let endpoint = WorkbenchEndpoint::parse(base_url).map_err(|e| e.to_string())?;
+    let timeout = if endpoint.scheme().is_tls() {
+        Duration::from_secs(3)
     } else {
-        format!("{host_port}:80")
+        Duration::from_millis(500)
     };
-    let sock_addr = addr_str
-        .to_socket_addrs()
-        .map_err(|e| format!("invalid workbench address {addr_str}: {e}"))?
-        .next()
-        .ok_or_else(|| format!("cannot resolve workbench address {addr_str}"))?;
-    Ok((addr_str, sock_addr))
-}
-
-fn read_http_response_json(stream: &mut TcpStream) -> Result<(u16, Value), String> {
-    let mut raw = Vec::new();
-    stream.read_to_end(&mut raw).map_err(|e| e.to_string())?;
-    let text = String::from_utf8_lossy(&raw);
-    let (head, body) = text
-        .split_once("\r\n\r\n")
-        .ok_or_else(|| "malformed HTTP response from workbench server".to_string())?;
-    let status_line = head.lines().next().unwrap_or("");
-    let code = status_line
-        .split_whitespace()
-        .nth(1)
-        .and_then(|s| s.parse::<u16>().ok())
-        .unwrap_or(500);
+    let (code, body) = execute_workbench_http_raw(&endpoint, "GET", path, &[], None, timeout)
+        .map_err(|e| e.to_string())?;
     let val = serde_json::from_str::<Value>(body.trim()).unwrap_or_else(|_| json!({}));
     Ok((code, val))
-}
-
-fn http_get_workbench_json(base_url: &str, path: &str) -> Result<(u16, Value), String> {
-    let (host_header, sock_addr) = parse_workbench_addr(base_url)?;
-    let mut stream = TcpStream::connect_timeout(&sock_addr, Duration::from_millis(500))
-        .map_err(|e| format!("connect {sock_addr}: {e}"))?;
-    let _ = stream.set_nodelay(true);
-    let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
-    let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
-    let req = format!("GET {path} HTTP/1.1\r\nHost: {host_header}\r\nConnection: close\r\n\r\n");
-    stream.write_all(req.as_bytes()).map_err(|e| e.to_string())?;
-    stream.flush().map_err(|e| e.to_string())?;
-    read_http_response_json(&mut stream)
 }
 
 fn http_post_workbench_json(
@@ -589,21 +553,25 @@ fn http_post_workbench_json(
     path: &str,
     payload: &Value,
 ) -> Result<(u16, Value), String> {
-    let (host_header, sock_addr) = parse_workbench_addr(base_url)?;
-    let mut stream = TcpStream::connect_timeout(&sock_addr, Duration::from_millis(500))
-        .map_err(|e| format!("connect {sock_addr}: {e}"))?;
-    let _ = stream.set_nodelay(true);
-    let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
-    let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
+    let endpoint = WorkbenchEndpoint::parse(base_url).map_err(|e| e.to_string())?;
+    let timeout = if endpoint.scheme().is_tls() {
+        Duration::from_secs(3)
+    } else {
+        Duration::from_millis(500)
+    };
     let body_bytes = serde_json::to_vec(payload).map_err(|e| e.to_string())?;
-    let req = format!(
-        "POST {path} HTTP/1.1\r\nHost: {host_header}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-        body_bytes.len()
-    );
-    stream.write_all(req.as_bytes()).map_err(|e| e.to_string())?;
-    stream.write_all(&body_bytes).map_err(|e| e.to_string())?;
-    stream.flush().map_err(|e| e.to_string())?;
-    read_http_response_json(&mut stream)
+    let headers = [("Content-Type", "application/json")];
+    let (code, body) = execute_workbench_http_raw(
+        &endpoint,
+        "POST",
+        path,
+        &headers,
+        Some(&body_bytes),
+        timeout,
+    )
+    .map_err(|e| e.to_string())?;
+    let val = serde_json::from_str::<Value>(body.trim()).unwrap_or_else(|_| json!({}));
+    Ok((code, val))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2395,12 +2363,34 @@ fn run_anet_sync(args: &[String]) -> Result<(), String> {
 }
 
 fn run_connector(args: &[String]) -> Result<(), String> {
-    if args.len() < 4 || args[1].as_str() != "start" {
+    if args.len() < 2 {
         return Err(USAGE.into());
     }
+    let start_idx = if args[1].as_str() == "start" {
+        2
+    } else if args[1].starts_with("--") {
+        1
+    } else {
+        return Err(USAGE.into());
+    };
+    let mut normalized_args = Vec::new();
+    let mut i = start_idx;
+    while i < args.len() {
+        if args[i] == "--once" && (i + 1 == args.len() || args[i + 1].starts_with("--")) {
+            normalized_args.push(args[i].clone());
+            normalized_args.push("true".to_string());
+            i += 1;
+        } else {
+            normalized_args.push(args[i].clone());
+            i += 1;
+        }
+    }
     let allowed = &[
+        "--server",
         "--server-url",
+        "--id",
         "--connector-id",
+        "--token",
         "--connector-token",
         "--projects-root",
         "--state-root",
@@ -2418,15 +2408,28 @@ fn run_connector(args: &[String]) -> Result<(), String> {
         "--zcode-root",
         "--zcode-bin",
     ];
-    let options = parse_key_value_pairs(&args[2..], allowed)?;
-    let server_url = options.get("--server-url").ok_or(USAGE)?.clone();
-    let connector_id = options
-        .get("--connector-id")
+    let options = parse_key_value_pairs(&normalized_args, allowed)?;
+    let server_url = options
+        .get("--server")
+        .or_else(|| options.get("--server-url"))
         .cloned()
+        .or_else(|| env::var("FLEET_WORKBENCH_URL").ok())
+        .or_else(|| env::var("WORKBENCH_SERVER_URL").ok())
+        .filter(|s| !s.trim().is_empty())
+        .ok_or(USAGE)?;
+    let connector_id = options
+        .get("--id")
+        .or_else(|| options.get("--connector-id"))
+        .cloned()
+        .or_else(|| env::var("WORKBENCH_CONNECTOR_ID").ok())
+        .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| "conn-local".to_string());
     let connector_token = options
-        .get("--connector-token")
+        .get("--token")
+        .or_else(|| options.get("--connector-token"))
         .cloned()
+        .or_else(|| env::var("WORKBENCH_CONNECTOR_TOKEN").ok())
+        .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| "dev-token".to_string());
     let projects_root = resolve_projects_root(&options)?;
     let state_root = resolve_state_root(&options)?;

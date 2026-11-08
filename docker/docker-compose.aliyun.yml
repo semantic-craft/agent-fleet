@@ -10,9 +10,11 @@ services:
       - "5174:5174"
     environment:
       WORKBENCH_BIND_ADDR: "0.0.0.0:5174"
+      WORKBENCH_PUBLIC_URL: "${WORKBENCH_PUBLIC_URL:-https://workbench.example.dev}"
+      WORKBENCH_WS_CONNECTOR_PATH: "/ws/v2/connector"
       FLEET_STATE_ROOT: "/var/lib/agent-fleet/state"
       FLEET_PROJECTS_ROOT: "/var/lib/agent-fleet/projects"
-      WORKBENCH_CONNECTOR_TOKEN: "${WORKBENCH_CONNECTOR_TOKEN:-replace-with- connector-token}"
+      WORKBENCH_CONNECTOR_TOKEN: "${WORKBENCH_CONNECTOR_TOKEN:-replace-with-connector-token}"
       AGENT_SERVER_FILES_BACKEND: "s3"
       AGENT_SERVER_S3_ENDPOINT: "${ALIYUN_OSS_ENDPOINT:-https://oss-cn-hangzhou.aliyuncs.com}"
       AGENT_SERVER_S3_REGION: "${ALIYUN_OSS_REGION:-cn-hangzhou}"

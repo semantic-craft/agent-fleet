@@ -1,23 +1,26 @@
 #![cfg(unix)]
 
-use fleet_daemon::{discover_local_runtime_providers, FleetLedgerStore, HostRuntimeOptions};
+use fleet_daemon::{
+    connector_ws::{ConnectorClient, ConnectorConfig, ConnectorError},
+    discover_local_runtime_providers, FleetLedgerStore, HostRuntimeOptions,
+};
 use fleet_proto::{
     timeline::{
-        timeline_content_hash, CanonicalSessionId, TimelineItem, TimelineItemKind,
+        timeline_content_hash, CanonicalSessionId, SessionMeta, TimelineItem, TimelineItemKind,
         TimelineItemStatus, TimelineOrderSeq, TimelineRole, UpdatedSeq,
     },
-    workbench::ProtocolEventEnvelope,
+    workbench::{ConnectorRpcFrame, ProtocolEventEnvelope},
     DeliveryTier,
 };
 use serde_json::{json, Value};
 use std::{
     collections::BTreeMap,
     fs,
-    io::{Read, Write},
+    io::{BufRead, BufReader, Read, Write},
     net::{TcpListener, TcpStream},
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::{Child, Command, Stdio},
     sync::{
         atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering},
         mpsc::{self, Receiver, Sender},
@@ -59,6 +62,9 @@ impl EmbeddedWorkbenchHarness {
 
         let ledger = FleetLedgerStore::open(&state_root).expect("open ledger");
         let next_seq = Arc::new(AtomicI64::new(100));
+        let next_generation = Arc::new(AtomicU64::new(1));
+        let connector_leases: Arc<Mutex<BTreeMap<String, Value>>> =
+            Arc::new(Mutex::new(BTreeMap::new()));
         let subscribers: Arc<Mutex<BTreeMap<String, Vec<Sender<String>>>>> =
             Arc::new(Mutex::new(BTreeMap::new()));
         let stop = Arc::new(AtomicBool::new(false));
@@ -74,8 +80,11 @@ impl EmbeddedWorkbenchHarness {
                     Ok((mut stream, _)) => {
                         let _ = stream.set_nonblocking(false);
                         let _ = stream.set_nodelay(true);
+                        let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
                         let ledger_conn = ledger.clone();
                         let seq_conn = Arc::clone(&next_seq);
+                        let gen_conn = Arc::clone(&next_generation);
+                        let leases_conn = Arc::clone(&connector_leases);
                         let subs_conn = Arc::clone(&subscribers);
                         let stop_conn = Arc::clone(&stop_loop);
                         let sr = state_root_clone.clone();
@@ -94,6 +103,180 @@ impl EmbeddedWorkbenchHarness {
                                 .any(|l| l.to_ascii_lowercase().contains("upgrade: websocket"));
                             if is_ws {
                                 let path = first.split_whitespace().nth(1).unwrap_or("/");
+                                if path == "/api/v2/connector/ws" || path == "/ws/v2/connector" {
+                                    if let Ok(mut ws) = accept(stream) {
+                                        let _ = ws
+                                            .get_ref()
+                                            .set_read_timeout(Some(Duration::from_millis(50)));
+                                        while !stop_conn.load(Ordering::SeqCst) {
+                                            match ws.read() {
+                                                Ok(Message::Text(txt)) => {
+                                                    let Ok(frame) =
+                                                        serde_json::from_str::<ConnectorRpcFrame>(
+                                                            &txt,
+                                                        )
+                                                    else {
+                                                        continue;
+                                                    };
+                                                    match frame.method.as_deref() {
+                                                        Some("connector.hello") => {
+                                                            let leased = gen_conn
+                                                                .fetch_add(1, Ordering::SeqCst);
+                                                            let params: Value = frame
+                                                                .params_json
+                                                                .as_deref()
+                                                                .and_then(|s| {
+                                                                    serde_json::from_str(s).ok()
+                                                                })
+                                                                .unwrap_or_else(|| json!({}));
+                                                            let cid = params
+                                                                .get("connectorId")
+                                                                .and_then(Value::as_str)
+                                                                .unwrap_or("conn-local")
+                                                                .to_string();
+                                                            let providers = params
+                                                                .get("providers")
+                                                                .cloned()
+                                                                .unwrap_or_else(|| json!([]));
+                                                            leases_conn.lock().unwrap().insert(
+                                                                cid.clone(),
+                                                                json!({
+                                                                    "connectorId": cid,
+                                                                    "generation": leased,
+                                                                    "providers": providers,
+                                                                }),
+                                                            );
+                                                            let welcome =
+                                                                ConnectorRpcFrame::new_response(
+                                                                    leased,
+                                                                    frame
+                                                                        .id
+                                                                        .unwrap_or_else(|| {
+                                                                            "hello-1".into()
+                                                                        }),
+                                                                    json!({
+                                                                        "connectorId": cid,
+                                                                        "leasedGeneration": leased,
+                                                                    })
+                                                                    .to_string(),
+                                                                );
+                                                            let wire =
+                                                                serde_json::to_string(&welcome)
+                                                                    .unwrap();
+                                                            if ws
+                                                                .send(Message::Text(wire.into()))
+                                                                .is_err()
+                                                            {
+                                                                break;
+                                                            }
+                                                        }
+                                                        Some("timeline.itemUpsert") => {
+                                                            let params: Value = frame
+                                                                .params_json
+                                                                .as_deref()
+                                                                .and_then(|s| {
+                                                                    serde_json::from_str(s).ok()
+                                                                })
+                                                                .unwrap_or_else(|| json!({}));
+                                                            let items: Vec<TimelineItem> = params
+                                                                .get("items")
+                                                                .and_then(|v| {
+                                                                    serde_json::from_value(
+                                                                        v.clone(),
+                                                                    )
+                                                                    .ok()
+                                                                })
+                                                                .unwrap_or_default();
+                                                            let mut sequenced = Vec::new();
+                                                            for mut it in items {
+                                                                let seq = UpdatedSeq::new(
+                                                                    seq_conn.fetch_add(
+                                                                        1,
+                                                                        Ordering::SeqCst,
+                                                                    ),
+                                                                );
+                                                                it.updated_seq = seq;
+                                                                let _ =
+                                                                    ledger_conn.upsert_session(
+                                                                        &SessionMeta {
+                                                                            session_id: it
+                                                                                .session_id
+                                                                                .clone(),
+                                                                            connector_id: params
+                                                                                .get("connectorId")
+                                                                                .and_then(
+                                                                                    Value::as_str,
+                                                                                )
+                                                                                .unwrap_or(
+                                                                                    "conn-local",
+                                                                                )
+                                                                                .to_string(),
+                                                                            runtime: "zcode"
+                                                                                .to_string(),
+                                                                            external_session_id:
+                                                                                "zcode-e2e-sess-01"
+                                                                                    .to_string(),
+                                                                            project_slug:
+                                                                                "agent-fleet"
+                                                                                    .to_string(),
+                                                                            title: "Aliyun Cutover"
+                                                                                .to_string(),
+                                                                            latest_updated_seq: seq,
+                                                                            delivery_tier: it
+                                                                                .delivery_tier,
+                                                                            sidebar_binding: it
+                                                                                .sidebar_binding
+                                                                                .clone(),
+                                                                        },
+                                                                    );
+                                                                sequenced.push(it);
+                                                            }
+                                                            let _ = ledger_conn
+                                                                .upsert_timeline_batch(&sequenced);
+                                                            let mut guard =
+                                                                subs_conn.lock().unwrap();
+                                                            for it in &sequenced {
+                                                                let env =
+                                                                    ProtocolEventEnvelope::new(
+                                                                        format!(
+                                                                            "evt-{}-{}",
+                                                                            it.item_id,
+                                                                            it.updated_seq.get()
+                                                                        ),
+                                                                        "timeline.item_upsert",
+                                                                        it.session_id.clone(),
+                                                                        it.updated_seq,
+                                                                        1_700_000_000_000,
+                                                                        serde_json::to_string(it)
+                                                                            .unwrap(),
+                                                                    );
+                                                                let wire = env.to_wire_json();
+                                                                if let Some(list) = guard
+                                                                    .get_mut(it.session_id.as_str())
+                                                                {
+                                                                    list.retain(|tx| {
+                                                                        tx.send(wire.clone())
+                                                                            .is_ok()
+                                                                    });
+                                                                }
+                                                            }
+                                                        }
+                                                        _ => {}
+                                                    }
+                                                }
+                                                Ok(Message::Close(_)) => break,
+                                                Err(tungstenite::Error::Io(ref e))
+                                                    if e.kind()
+                                                        == std::io::ErrorKind::WouldBlock
+                                                        || e.kind()
+                                                            == std::io::ErrorKind::TimedOut => {}
+                                                Err(_) => break,
+                                                _ => {}
+                                            }
+                                        }
+                                    }
+                                    return;
+                                }
                                 if let Some(rest) = path.strip_prefix("/api/v2/sessions/") {
                                     if let Some(sid) = rest.strip_suffix("/ws") {
                                         let sid = sid.to_string();
@@ -132,14 +315,51 @@ impl EmbeddedWorkbenchHarness {
                                 return;
                             }
 
-                            let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
-                            let mut buf = [0u8; 65536];
-                            let read_n = stream.read(&mut buf).unwrap_or(0);
-                            if read_n == 0 {
+                            let mut raw = Vec::with_capacity(8192);
+                            let mut chunk = [0u8; 16384];
+                            let mut header_end = None;
+                            let mut expected_len = 0usize;
+                            loop {
+                                match stream.read(&mut chunk) {
+                                    Ok(0) => break,
+                                    Ok(n) => {
+                                        raw.extend_from_slice(&chunk[..n]);
+                                        if header_end.is_none() {
+                                            if let Some(pos) = raw
+                                                .windows(4)
+                                                .position(|w| w == b"\r\n\r\n")
+                                            {
+                                                let end = pos + 4;
+                                                header_end = Some(end);
+                                                let head_txt =
+                                                    String::from_utf8_lossy(&raw[..pos]);
+                                                for line in head_txt.lines() {
+                                                    if let Some((k, v)) = line.split_once(':') {
+                                                        if k.trim()
+                                                            .eq_ignore_ascii_case("content-length")
+                                                        {
+                                                            expected_len =
+                                                                v.trim().parse().unwrap_or(0);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        if let Some(end) = header_end {
+                                            if raw.len() >= end + expected_len {
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    Err(_) => break,
+                                }
+                            }
+                            if raw.is_empty() {
                                 return;
                             }
-                            let req_str = String::from_utf8_lossy(&buf[..read_n]);
-                            let (head, body_str) = req_str.split_once("\r\n\r\n").unwrap_or((&req_str, ""));
+                            let req_str = String::from_utf8_lossy(&raw);
+                            let (head, body_str) =
+                                req_str.split_once("\r\n\r\n").unwrap_or((&req_str, ""));
                             let req_line = head.lines().next().unwrap_or("");
                             let mut parts = req_line.split_whitespace();
                             let method = parts.next().unwrap_or("GET");
@@ -151,12 +371,23 @@ impl EmbeddedWorkbenchHarness {
                                     let providers = discover_local_runtime_providers(
                                         &HostRuntimeOptions::default(),
                                     );
-                                    json!({
-                                        "connectors": [{
+                                    let recorded: Vec<Value> = leases_conn
+                                        .lock()
+                                        .unwrap()
+                                        .values()
+                                        .cloned()
+                                        .collect();
+                                    let connectors = if recorded.is_empty() {
+                                        vec![json!({
                                             "connectorId": "conn-local",
                                             "generation": 1,
                                             "providers": providers,
-                                        }],
+                                        })]
+                                    } else {
+                                        recorded
+                                    };
+                                    json!({
+                                        "connectors": connectors,
                                         "providers": providers,
                                     })
                                 }
@@ -700,4 +931,403 @@ fn bench_e2e_dispatch_and_workbench_stream() {
         "Workbench streaming P99 overhead {:.3} ms exceeded 10.0 ms limit",
         overhead_p99
     );
+}
+
+struct TlsGatewayHarness {
+    https_base_url: String,
+    wss_connector_url: String,
+    cert_path: PathBuf,
+    child: Child,
+}
+
+impl TlsGatewayHarness {
+    fn start(dir: &Path, backend_http_url: &str) -> Self {
+        let cert_path = dir.join("aliyun-gateway-cert.pem");
+        let key_path = dir.join("aliyun-gateway-key.pem");
+        let cert_status = Command::new("openssl")
+            .args([
+                "req",
+                "-x509",
+                "-newkey",
+                "rsa:2048",
+                "-keyout",
+                key_path.to_str().unwrap(),
+                "-out",
+                cert_path.to_str().unwrap(),
+                "-days",
+                "1",
+                "-nodes",
+                "-subj",
+                "/CN=127.0.0.1",
+                "-addext",
+                "subjectAltName=IP:127.0.0.1,DNS:localhost",
+            ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .expect("generate self-signed X.509 cert via openssl");
+        assert!(cert_status.success(), "openssl cert generation succeeded");
+
+        let backend_addr = backend_http_url
+            .strip_prefix("http://")
+            .expect("backend http url");
+        let (backend_host, backend_port) = backend_addr.split_once(':').expect("host:port");
+
+        let proxy_py = r#"
+import socket, ssl, sys, threading
+
+backend_host = sys.argv[1]
+backend_port = int(sys.argv[2])
+cert_file = sys.argv[3]
+key_file = sys.argv[4]
+
+ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+ctx.load_cert_chain(certfile=cert_file, keyfile=key_file)
+
+srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+srv.bind(("127.0.0.1", 0))
+srv.listen(64)
+port = srv.getsockname()[1]
+print(f"READY {port}", flush=True)
+
+def pipe(src, dst):
+    try:
+        while True:
+            data = src.recv(16384)
+            if not data:
+                break
+            dst.sendall(data)
+    except Exception:
+        pass
+    finally:
+        try:
+            dst.shutdown(socket.SHUT_WR)
+        except Exception:
+            pass
+
+def handle(client_sock):
+    tls_conn = None
+    backend = None
+    try:
+        tls_conn = ctx.wrap_socket(client_sock, server_side=True)
+        backend = socket.create_connection((backend_host, backend_port), timeout=5.0)
+        t1 = threading.Thread(target=pipe, args=(tls_conn, backend), daemon=True)
+        t2 = threading.Thread(target=pipe, args=(backend, tls_conn), daemon=True)
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+    except Exception:
+        pass
+    finally:
+        for s in (tls_conn, backend, client_sock):
+            if s is not None:
+                try:
+                    s.close()
+                except Exception:
+                    pass
+
+while True:
+    try:
+        c, _ = srv.accept()
+        threading.Thread(target=handle, args=(c,), daemon=True).start()
+    except Exception:
+        break
+"#;
+
+        let mut child = Command::new("python3")
+            .args([
+                "-u",
+                "-c",
+                proxy_py,
+                backend_host,
+                backend_port,
+                cert_path.to_str().unwrap(),
+                key_path.to_str().unwrap(),
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn python3 TLS reverse proxy");
+
+        let stdout = child.stdout.as_mut().expect("python3 stdout");
+        let mut reader = BufReader::new(stdout);
+        let mut ready_line = String::new();
+        reader
+            .read_line(&mut ready_line)
+            .expect("read READY line from TLS gateway");
+        let tls_port: u16 = ready_line
+            .trim()
+            .strip_prefix("READY ")
+            .expect("READY prefix from TLS gateway")
+            .parse()
+            .expect("parse TLS port");
+
+        Self {
+            https_base_url: format!("https://127.0.0.1:{tls_port}"),
+            wss_connector_url: format!("wss://127.0.0.1:{tls_port}/ws/v2/connector"),
+            cert_path,
+            child,
+        }
+    }
+}
+
+impl Drop for TlsGatewayHarness {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+#[test]
+fn e2e_aliyun_tls_gateway_cutover_connector_lease_handoff_and_doctor_gate() {
+    let base = unique_test_dir("aliyun-tls-cutover");
+    let projects_root = base.join("Projects");
+    let state_root = base.join("state");
+    fs::create_dir_all(projects_root.join("agent-fleet")).unwrap();
+    fs::create_dir_all(&state_root).unwrap();
+    let (zcode_root, zcode_bin) = setup_mock_zcode(&base);
+
+    let harness = EmbeddedWorkbenchHarness::start(
+        state_root.clone(),
+        projects_root.clone(),
+        zcode_bin.clone(),
+    );
+    let tls_gateway = TlsGatewayHarness::start(&base, &harness.base_url);
+
+    let conn1_out = Command::new(env!("CARGO_BIN_EXE_fleet-cli"))
+        .env("FLEET_TLS_CA_CERT", &tls_gateway.cert_path)
+        .args([
+            "connector",
+            "--server",
+            &tls_gateway.wss_connector_url,
+            "--id",
+            "conn-aliyun-1",
+            "--token",
+            "aliyun-secret-token",
+            "--projects-root",
+            projects_root.to_str().unwrap(),
+            "--state-root",
+            state_root.to_str().unwrap(),
+            "--once",
+        ])
+        .output()
+        .expect("run fleet-cli connector --server wss://.../ws/v2/connector --once");
+    assert!(
+        conn1_out.status.success(),
+        "outbound wss connector handshake must succeed: {}",
+        String::from_utf8_lossy(&conn1_out.stderr)
+    );
+    let conn1_json: Value = serde_json::from_slice(&conn1_out.stdout).unwrap();
+    assert_eq!(conn1_json["ok"], true);
+    assert_eq!(conn1_json["connectorId"], "conn-aliyun-1");
+    assert_eq!(conn1_json["leasedGeneration"], 1);
+
+    let conn2_out = Command::new(env!("CARGO_BIN_EXE_fleet-cli"))
+        .env("FLEET_TLS_CA_CERT", &tls_gateway.cert_path)
+        .args([
+            "connector",
+            "--server",
+            &tls_gateway.wss_connector_url,
+            "--id",
+            "conn-aliyun-1",
+            "--token",
+            "aliyun-secret-token",
+            "--projects-root",
+            projects_root.to_str().unwrap(),
+            "--state-root",
+            state_root.to_str().unwrap(),
+            "--once",
+        ])
+        .output()
+        .expect("run second connector handshake for lease handoff");
+    assert!(conn2_out.status.success());
+    let conn2_json: Value = serde_json::from_slice(&conn2_out.stdout).unwrap();
+    assert_eq!(conn2_json["leasedGeneration"], 2);
+
+    let cfg = ConnectorConfig::new(
+        tls_gateway.wss_connector_url.clone(),
+        "conn-aliyun-1",
+        "aliyun-secret-token",
+        projects_root.clone(),
+        state_root.clone(),
+    );
+    let mut live_client = ConnectorClient::new(cfg).unwrap();
+    let leased_gen = live_client.connect().expect("connect live wss ConnectorClient");
+    assert_eq!(leased_gen, 3, "third reconnect must advance lease generation to 3");
+
+    let stale_frame = ConnectorRpcFrame::new_request(1, "stale-req-1", "runtime.ping", "{}");
+    let stale_err = live_client
+        .handler()
+        .handle_frame(&stale_frame)
+        .expect_err("stale generation 1 frame must be fenced when active generation is 3");
+    assert!(
+        matches!(
+            stale_err,
+            ConnectorError::StaleGeneration {
+                active: 3,
+                received: 1
+            }
+        ),
+        "expected StaleGeneration {{ active: 3, received: 1 }}, got {stale_err:?}"
+    );
+
+    let expected_canonical_sid =
+        CanonicalSessionId::derive("local-connector", "zcode", "zcode-e2e-sess-01").unwrap();
+    let ws_url = format!(
+        "{}/api/v2/sessions/{}/ws",
+        harness.ws_base_url,
+        expected_canonical_sid.as_str()
+    );
+    let tcp_addr = harness.base_url.strip_prefix("http://").unwrap();
+    let ws_tcp = TcpStream::connect(tcp_addr).expect("connect ws subscriber");
+    ws_tcp
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    let (mut ws_client, _) = client(&ws_url, ws_tcp).expect("subscribe session ws");
+
+    let send_out = Command::new(env!("CARGO_BIN_EXE_fleet-cli"))
+        .env("FLEET_TLS_CA_CERT", &tls_gateway.cert_path)
+        .args([
+            "send",
+            "--from",
+            "grokbot",
+            "--to",
+            "zcode/agent-fleet",
+            "--delivery-id",
+            "aliyun-https-dispatch-1",
+            "--title",
+            "Aliyun Cutover Verification",
+            "--prompt",
+            "Verify HTTPS/WSS bidirectional timeline sync over Aliyun gateway",
+            "--projects-root",
+            projects_root.to_str().unwrap(),
+            "--state-root",
+            state_root.to_str().unwrap(),
+            "--zcode-root",
+            zcode_root.to_str().unwrap(),
+            "--zcode-bin",
+            zcode_bin.to_str().unwrap(),
+            "--workbench",
+            &tls_gateway.https_base_url,
+        ])
+        .output()
+        .expect("send over HTTPS workbench gateway");
+    assert!(send_out.status.success());
+    let send_json: Value = serde_json::from_slice(&send_out.stdout).unwrap();
+    assert_eq!(send_json["workbench_streamed"], true);
+
+    let ws_msg = ws_client.read().expect("read timeline event from session ws");
+    let Message::Text(ws_txt) = ws_msg else {
+        panic!("expected text frame on session ws");
+    };
+    let ws_env: Value = serde_json::from_str(&ws_txt).unwrap();
+    assert_eq!(ws_env["type"], "timeline.item_upsert");
+    assert_eq!(ws_env["sessionId"], expected_canonical_sid.as_str());
+
+    let followup_item = TimelineItem {
+        item_id: "connector-ws-emit-1".to_string(),
+        session_id: expected_canonical_sid.clone(),
+        turn_id: Some("turn-ws-2".to_string()),
+        kind: TimelineItemKind::AssistantMessage,
+        status: TimelineItemStatus::Completed,
+        role: TimelineRole::Assistant,
+        content: "Desktop connector streamed assistant turn over wss://".to_string(),
+        order_seq: TimelineOrderSeq::try_from(2).unwrap(),
+        updated_seq: UpdatedSeq::new(2),
+        content_hash: timeline_content_hash(
+            "assistant_message",
+            "completed",
+            "assistant",
+            "Desktop connector streamed assistant turn over wss://",
+        ),
+        delivery_tier: Some(DeliveryTier::ThreadVisible),
+        sidebar_binding: None,
+        peer_sender: Some("zcode".to_string()),
+        created_at_ms: 1_700_000_000_500,
+    };
+    let emit_outcome = live_client
+        .emit_timeline_batch(std::slice::from_ref(&followup_item))
+        .expect("emit timeline batch over wss connector");
+    assert_eq!(emit_outcome.accepted, 1);
+
+    let ws_msg2 = ws_client
+        .read()
+        .expect("read wss-emitted timeline event from session ws");
+    let Message::Text(ws_txt2) = ws_msg2 else {
+        panic!("expected second text frame on session ws");
+    };
+    let ws_env2: Value = serde_json::from_str(&ws_txt2).unwrap();
+    assert_eq!(ws_env2["type"], "timeline.item_upsert");
+    assert_eq!(ws_env2["data"]["itemId"], "connector-ws-emit-1");
+
+    let web_post = Command::new("curl")
+        .args([
+            "-sS",
+            "--cacert",
+            tls_gateway.cert_path.to_str().unwrap(),
+            "-X",
+            "POST",
+            "-H",
+            "Content-Type: application/json",
+            "-d",
+            r#"{"prompt":"Mobile/Web follow-up turn over Aliyun HTTPS","role":"user"}"#,
+            &format!(
+                "{}/api/v2/sessions/{}/messages",
+                tls_gateway.https_base_url,
+                expected_canonical_sid.as_str()
+            ),
+        ])
+        .output()
+        .expect("POST /api/v2/sessions/{id}/messages over HTTPS");
+    assert!(web_post.status.success());
+    let web_post_json: Value = serde_json::from_slice(&web_post.stdout).unwrap();
+    assert_eq!(web_post_json["ok"], true);
+
+    let ws_msg3 = ws_client
+        .read()
+        .expect("read mobile/web follow-up turn from session ws");
+    let Message::Text(ws_txt3) = ws_msg3 else {
+        panic!("expected third text frame on session ws");
+    };
+    let ws_env3: Value = serde_json::from_str(&ws_txt3).unwrap();
+    assert!(ws_env3["data"]["content"]
+        .as_str()
+        .unwrap()
+        .contains("Mobile/Web follow-up turn over Aliyun HTTPS"));
+
+    let doctor_out = Command::new(env!("CARGO_BIN_EXE_fleet-cli"))
+        .env("HOME", &base)
+        .env("FLEET_TLS_CA_CERT", &tls_gateway.cert_path)
+        .args([
+            "doctor",
+            "--projects-root",
+            projects_root.to_str().unwrap(),
+            "--state-root",
+            state_root.to_str().unwrap(),
+            "--workbench",
+            &tls_gateway.https_base_url,
+            "--gate",
+        ])
+        .output()
+        .expect("run fleet-cli doctor --workbench https://... --gate");
+    assert!(
+        doctor_out.status.success(),
+        "doctor --workbench https://... --gate must exit 0: stderr={}",
+        String::from_utf8_lossy(&doctor_out.stderr)
+    );
+    let doctor_json: Value = serde_json::from_slice(&doctor_out.stdout).unwrap();
+    assert_eq!(doctor_json["workbench"]["reachable"], true);
+    assert_eq!(doctor_json["workbench"]["health_status"], "ok");
+    assert_eq!(doctor_json["workbench"]["active_connector_leases"], 1);
+    assert_eq!(
+        doctor_json["workbench"]["connectors"][0]["connectorId"],
+        "conn-aliyun-1"
+    );
+    assert_eq!(
+        doctor_json["workbench"]["connectors"][0]["generation"],
+        3
+    );
+    assert_eq!(doctor_json["workbench"]["ready"], true);
 }
