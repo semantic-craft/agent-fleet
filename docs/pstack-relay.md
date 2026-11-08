@@ -248,11 +248,11 @@ Slice B 已将 Cargo 编译与 session directory 隔离行为测试接入同一�
 - **Done Predicate**: `#119` 至 `#124` 全部 `MERGED` 入 `main`；`python3 scripts/release` 退出码 `0`；`~/.local/bin/fleet-cli doctor --gate` 与 `~/.local/bin/fleet-workbench-server --help` 退出码 `0`；`scripts/check` 绿灯。
 - **Evidence**: b73e8eb619ad5e8ab3e5877c8d2fee0381d61e63;~/.local/bin/fleet-cli;~/.local/bin/fleet-workbench-server;scripts/release;docs/pstack-relay.md
 
-### [ ] Slice AC: 阿里云自托管 `fleet-workbench-server` 实网切换、主动外呼 Connector 联调与 `alma-relay-ops` 退役
+### [x] Slice AC: 阿里云自托管 `fleet-workbench-server` 实网切换、主动外呼 Connector 联调与 `alma-relay-ops` 退役
 - **Playbook**: `Feature`
 - **Outcome**: 在受控单会话上下文预算 (`<= 6` 个工作集文件：`docker/Dockerfile.workbench`、`docker/docker-compose.aliyun.yml`、`crates/fleet-daemon/src/connector_ws.rs`、`crates/fleet-cli/src/main.rs`、`docs/landscape.md`) 内完成阿里云节点 `fleet-workbench-server` 部署与本机 `fleet-cli connector --server wss://<aliyun-host>/ws/v2/connector` 实网联调，验证手机/网页端与本机桌面宿主双向时间线同步及代际租约切换，并在 `docs/landscape.md` 完成 `alma-relay-ops` 退役收口。
 - **Done Predicate**: `fleet-cli doctor --workbench https://<aliyun-host> --gate` 退出码 `0`（若无线上凭据则通过本机 TLS/反向代理全真模拟网关与 `unified_workbench_e2e` 验证完整切换契约）；`scripts/check` 绿灯。
-- **Evidence**: PENDING
+- **Evidence**: 27c0b641377b83e7be248c2403c26289d098ec2c;~/.local/bin/fleet-cli;~/.local/bin/fleet-workbench-server;.scratch/pstack-relay/checks/20261108T013919.234637Z/receipt.json;~/Projects/_status/agent-fleet-verify-20261108-1/result.json
 
 ### [ ] Slice AD: 将 6 宿主探测、路径模板与增量游标收敛为声明式 `HostSpec` 驱动表
 - **Playbook**: `Refactoring`
