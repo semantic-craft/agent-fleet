@@ -9,3 +9,4 @@ plugins/**/evidence/
 
 # Rust build output
 /target/
+.scratch/

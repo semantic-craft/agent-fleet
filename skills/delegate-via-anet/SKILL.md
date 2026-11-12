@@ -19,4 +19,4 @@ description: Dispatch and follow work through official Agent Network; agent-flee
 
 Magpie 属独立可选模型路由。点名模型时核对实际运行模型，不修改私人默认。点名其他执行环境时依该环境现行文档和可用工具；本技能不提供退役 Agenvo/CommHub/Herdr 复活步骤。
 
-来源：从 xw-stack 的 delegate-via-anet 与 outer-loop-kit 派活契约提取；2026-11-03 收敛维护权。消费者只保留入口、业务角色与展示规范。
+来源：2026-11-03 从原 xw-stack 的 delegate-via-anet 与 outer-loop-kit 派活契约提取并收敛维护权（后 xw-stack 技能归并入 xw-tooling）。消费者只保留入口、业务角色与展示规范。
