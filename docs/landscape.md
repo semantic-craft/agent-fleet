@@ -18,14 +18,19 @@
 | codex-host（无目录） | 壳。源码在上游，不 clone 进 `~/Projects`，不 fork，不在本仓实现 | 核心＝接线文档；源码仍上游 |
 | PODAS（无目录） | 伞名。`~/Projects` 里没有这个目录，也不是 Git 仓，不是第三正本 | 伞名，无目录 |
 | `_forks/agent-network` | `sleep2agi/agent-network`（文档 anet.sh）的旧实现，与当前 Research 0.3.9 不同；不能作为当前协议来源或被吞并进 fleet | 旧实现，待核实消费者后退役 |
-| `xw-skills` | xw-stack 提供技能分发入口，xw-tooling 维护安装清单与宿主接线；ANet 派发机制正本归 fleet | 分发消费者，保留 |
+| `xw-skills` | `xw-tooling` 统一维护自有技能原件、`skills.toml` 安装清单与宿主接线（原 `xw-stack` 技能已归并入 `xw-tooling`）；ANet 派发机制正本归 fleet | 分发消费者，保留 |
 | `_forks/agenvo` | 上游 Agenvo 的最小 fork（历史 connector／relay）。本机派活已改官方 anet，见 [anet.md](anet.md) | 遗留 |
 | `agent-plugins` | 只做 marketplace／安装根：`claude/`、`codex/`、`zcode/`、`dsh/` 等自有插件；多 agent 派活插件不放这里，在 `agent-fleet/plugins/` | 无关：不是通信基础设施；其中 `dsh/lcu-dsh`（LCU Computer Use 插件）线上在用 |
 | `outer-loop-kit` | 外环业务规则（outer-loop）；ANet 通用派活契约引用本仓 | 治理 |
 | `alma-relay-ops` | 多设备穿透／回家底座的运维仓（上游 yetone/alma-relay）；已随 `fleet-workbench-server` 阿里云自托管切换完成退役 | 遗留（已退役）：已被 fleet-workbench-server 阿里云自托管工作台替代，非派活通道 |
+| `agents-everywhere` | Agents Anywhere 跨设备开源 Agent 工作台前端与客户端（上游 `anywhere-labs/Agents-Anywhere` 自托管 fork，与本仓 v2 引擎配套） | 核心 |
+| `dsh-antigravity-bridge` | DeepSeek Harness 读取与导入本地 Antigravity 会话的 Cordis 插件（上游 `qvsix/dsh-antigravity-bridge`） | 无关 |
+| `dsh-conversation-import` | DeepSeek Harness 导入本地 Codex 会话的插件（上游 `kermars39-web/dsh-conversation-import`） | 无关 |
 | `_ref/esp32-iphone-agent`、`zotero-bridge` | 硬件 iPhone 操控实验；Zotero 文献桥 | 无关 |
 
 2026-11-04 目录复核：历史条目 `dsh-superagent-prototype` 当前不在 `~/Projects`、`_ref` 或 `_forks` 下，因此移出当前目录表。其迁移或移除原因未核实，不据此声称已归档，也不据此删除或恢复任何内容。
+
+2026-11-12 目录盘点更新：补入 `agents-everywhere`、`dsh-antigravity-bridge`、`dsh-conversation-import` 三项 `~/Projects` 目录登记，并同步 `xw-skills` 单一技能源（`xw-stack` 归并入 `xw-tooling`）职责描述。
 
 ## `~/Projects` 的布局
 
